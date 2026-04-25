@@ -264,8 +264,76 @@ def _render_pyvis(
         )
 
     html_text = cast(str, net.generate_html(notebook=False))
+    html_text = _inject_pyvis_theme_switch(html_text)
     output.write_text(html_text, encoding="utf-8")
     return output
+
+
+_PYVIS_THEME_INJECT = """
+<style id="cg-pyvis-theme">
+  html.cg-light, html.cg-light body { background: #f5f7fb !important; color: #0f172a !important; }
+  html.cg-light .card, html.cg-light #mynetwork { background: #ffffff !important; }
+  html.cg-light h1, html.cg-light h2, html.cg-light h3, html.cg-light p { color: #0f172a !important; }
+  html.cg-light #mynetwork { border: 1px solid #e2e8f0 !important; border-radius: 12px; }
+  body { transition: background 200ms ease, color 200ms ease; }
+  #cg-theme-toggle {
+    position: fixed; top: 14px; right: 14px; z-index: 9999;
+    background: rgba(15,23,42,.65); color: #f1f5f9; border: 1px solid #334155;
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; font: 500 12px/1 system-ui;
+  }
+  html.cg-light #cg-theme-toggle { background: #ffffff; color: #0f172a; border-color: #cbd5e1; }
+</style>
+<script>
+(function(){
+  function applyTheme(t){
+    var root = document.documentElement;
+    if (t === 'light') root.classList.add('cg-light');
+    else root.classList.remove('cg-light');
+    if (window.network && window.network.setOptions) {
+      window.network.setOptions({
+        nodes: { font: { color: t === 'light' ? '#0f172a' : '#f1f5f9' } },
+        edges: { font: { color: t === 'light' ? '#475569' : '#cbd5e1' } },
+      });
+    }
+    var mn = document.getElementById('mynetwork');
+    if (mn) mn.style.background = t === 'light' ? '#ffffff' : '#0f172a';
+    try { localStorage.setItem('cg-pyvis-theme', t); } catch(e){}
+  }
+  var p = new URLSearchParams(location.search);
+  var initial = p.get('theme');
+  if (!initial) {
+    try { initial = localStorage.getItem('cg-pyvis-theme'); } catch(e){}
+  }
+  if (!initial) initial = 'dark';
+  function ready(){
+    applyTheme(initial);
+    var btn = document.createElement('button');
+    btn.id = 'cg-theme-toggle';
+    btn.textContent = initial === 'light' ? '☾ dark' : '☀ light';
+    btn.onclick = function(){
+      var cur = document.documentElement.classList.contains('cg-light') ? 'light' : 'dark';
+      var nxt = cur === 'light' ? 'dark' : 'light';
+      applyTheme(nxt);
+      btn.textContent = nxt === 'light' ? '☾ dark' : '☀ light';
+    };
+    document.body.appendChild(btn);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ready);
+  } else { ready(); }
+})();
+</script>
+"""
+
+
+def _inject_pyvis_theme_switch(html_text: str) -> str:
+    """Inject a light/dark toggle into pyvis-generated HTML."""
+    if "cg-pyvis-theme" in html_text:
+        return html_text
+    needle = "</body>"
+    if needle in html_text:
+        return html_text.replace(needle, _PYVIS_THEME_INJECT + needle, 1)
+    return html_text + _PYVIS_THEME_INJECT
 
 
 def _render_index(

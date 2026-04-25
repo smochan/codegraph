@@ -783,6 +783,11 @@ function renderTreemap(host) {
 }
 
 // ---------- Architecture (links to pyvis) ----------
+function pyvisHref(path) {
+  const t = document.documentElement.classList.contains('theme-light') ? 'light' : 'dark';
+  return path + '?theme=' + t;
+}
+
 function renderArchitecture(host) {
   const tile = (href, title, desc, icon) => `
     <a href="${href}" target="_blank" rel="noopener" class="panel p-5 block hover:border-brand-500 transition group">
@@ -801,14 +806,10 @@ function renderArchitecture(host) {
       <i data-lucide="compass" class="icon w-4 h-4"></i>
       <div><b>Interactive node-link explorers.</b> Force-directed graphs powered by pyvis with in-page search and filtering. Best for hands-on exploration.</div>
     </div>
-    <div class="help-card pyvis-warn mb-6" style="border-color:rgba(251,191,36,0.4)">
-      <i data-lucide="info" class="icon w-4 h-4" style="color:var(--accent-amber)"></i>
-      <div>Heads-up: pyvis pages have their own dark canvas and don't follow this theme.</div>
-    </div>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      ${tile('/architecture.html', 'Architecture', 'One node per module, edges aggregated by kind. Best high-level node-link view.', 'network')}
-      ${tile('/callgraph.html', 'Call graph', 'Every function and method, sized by fan-in. Use the filter menu to narrow.', 'workflow')}
-      ${tile('/inheritance.html', 'Inheritance', 'Classes only. INHERITS / IMPLEMENTS edges drawn.', 'git-branch')}
+      ${tile(pyvisHref('/architecture.html'), 'Architecture', 'One node per module, edges aggregated by kind. Best high-level node-link view.', 'network')}
+      ${tile(pyvisHref('/callgraph.html'), 'Call graph', 'Every function and method, sized by fan-in. Use the filter menu to narrow.', 'workflow')}
+      ${tile(pyvisHref('/inheritance.html'), 'Inheritance', 'Classes only. INHERITS / IMPLEMENTS edges drawn.', 'git-branch')}
     </div></div>`;
 }
 
@@ -818,7 +819,7 @@ function renderFiles(host) {
   const rows = files.map(f => {
     const slug = f.file.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_|_$/g, '') || 'file';
     return `<tr>
-      <td><a class="link" href="/files/${slug}.html" target="_blank" rel="noopener"><code>${esc(f.file)}</code></a></td>
+      <td><a class="link" href="${pyvisHref('/files/' + slug + '.html')}" target="_blank" rel="noopener"><code>${esc(f.file)}</code></a></td>
       <td class="text-app-2">${esc(f.language)}</td>
       <td class="num"><span class="pill">${f.symbols}</span></td>
     </tr>`;
@@ -827,10 +828,6 @@ function renderFiles(host) {
     <div class="help-card mb-6">
       <i data-lucide="folder-tree" class="icon w-4 h-4"></i>
       <div><b>Per-file pyvis pages.</b> Click any file to see its symbols + 1-hop neighbours.</div>
-    </div>
-    <div class="help-card pyvis-warn mb-6" style="border-color:rgba(251,191,36,0.4)">
-      <i data-lucide="info" class="icon w-4 h-4" style="color:var(--accent-amber)"></i>
-      <div>Heads-up: pyvis pages have their own dark canvas and don't follow this theme.</div>
     </div>
     <div class="panel p-5">
       <div class="section-h"><h2>Files (${files.length})</h2></div>

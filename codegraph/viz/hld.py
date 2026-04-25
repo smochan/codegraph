@@ -1,15 +1,25 @@
-"""Hand-rolled High-Level-Design view for the codegraph repo itself.
+"""Generic High-Level-Design view derived from any repo's package structure.
 
-The first iteration is intentionally specialised for ``codegraph``'s own
-package layout so we can establish what "good" looks like before generalising.
-The detection strategy lives in ``LAYERS`` below; cross-layer call counts are
-derived live from the graph.
+Classification strategy:
+
+1. Compute the longest common qualname prefix of all MODULE nodes (the
+   "root" package). Strip it.
+2. For each module, walk its qualname segments from rightmost to leftmost
+   (also splitting snake_case tokens like ``store_sqlite``). The first
+   token that matches a layer pattern in :data:`LAYER_CATALOG` wins.
+3. If nothing matches, the module's first non-root segment becomes its own
+   ad-hoc layer. This keeps the diagram useful even for domain-specific
+   package names (``users``, ``billing``, ...).
+
+The catalog patterns intentionally cover the most common architectural
+concepts (cli/api, pipeline, parsers, resolve, domain, storage, analysis,
+visualisation, infra). Unknown subpackages get a neutral grey "other" layer.
 """
 from __future__ import annotations
 
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import networkx as nx
@@ -26,38 +36,122 @@ class Layer:
     text_color: str = "#0b1220"
 
 
-# Top-to-bottom layered architecture for codegraph's own repo.
-# Order matters: it drives vertical placement.
+@dataclass(frozen=True)
+class LayerSpec:
+    tier: int
+    id: str
+    title: str
+    subtitle: str
+    color: str
+    patterns: tuple[str, ...] = field(default_factory=tuple)
+
+
+# Generic catalog: the bigger the tier number, the lower the layer sits in
+# the rendered top-to-bottom flowchart.
+LAYER_CATALOG: list[LayerSpec] = [
+    LayerSpec(1, "cli", "CLI / API", "user-facing entrypoints", "#a78bfa", (
+        "cli", "api", "routes", "handlers", "controllers", "app", "main",
+        "entry", "entrypoint", "server", "rpc",
+    )),
+    LayerSpec(2, "pipeline", "Pipeline", "build / orchestration", "#fcd34d", (
+        "pipeline", "builder", "build", "orchestrator", "scheduler",
+        "jobs", "tasks", "worker", "queue", "runner",
+    )),
+    LayerSpec(3, "parsers", "Ingestion", "extractors / parsers", "#fb923c", (
+        "parser", "parsers", "extract", "extractor", "extractors",
+        "ingest", "reader", "loader", "scraper", "scrape", "import",
+    )),
+    LayerSpec(4, "resolve", "Resolution", "linking / binding", "#f472b6", (
+        "resolve", "resolver", "resolvers", "link", "linker", "binding",
+    )),
+    LayerSpec(5, "domain", "Domain", "core business logic", "#c084fc", (
+        "service", "services", "domain", "logic", "core", "engine",
+        "usecase", "usecases",
+    )),
+    LayerSpec(6, "storage", "Storage", "data + persistence", "#60a5fa", (
+        "store", "storage", "db", "database", "repo", "repository",
+        "persistence", "schema", "sqlite", "postgres", "mysql",
+        "mongo", "redis", "model", "models", "entities",
+    )),
+    LayerSpec(7, "analysis", "Analysis", "metrics / checks", "#34d399", (
+        "analysis", "analyze", "analyzer", "metric", "metrics",
+        "check", "checks", "lint", "quality", "insight", "insights",
+        "stats", "report", "reporting",
+    )),
+    LayerSpec(8, "viz", "Visualisation", "render / dashboards", "#22d3ee", (
+        "viz", "visual", "visualization", "visualisation", "render",
+        "renderer", "dashboard", "ui", "frontend", "web", "html",
+    )),
+    LayerSpec(9, "infra", "Infra / utils", "shared helpers", "#94a3b8", (
+        "util", "utils", "helper", "helpers", "common", "internal",
+        "tools", "misc", "support", "config", "settings", "constants",
+    )),
+]
+
+# Backward-compat: the catalog used to be exposed as ``LAYERS``.
 LAYERS: list[Layer] = [
-    Layer("cli",       "CLI",                "user-facing typer commands",  "#a78bfa"),
-    Layer("pipeline",  "Build pipeline",     "orchestrator",                "#fcd34d"),
-    Layer("parsers",   "Ingestion",          "language parsers (AST -> nodes)", "#fb923c"),
-    Layer("resolve",   "Resolution",         "cross-file CALLS / IMPORTS",  "#f472b6"),
-    Layer("storage",   "Storage",            "SQLite + NetworkX model",     "#60a5fa"),
-    Layer("analysis",  "Analysis",           "metrics, cycles, hotspots, untested", "#34d399"),
-    Layer("viz",       "Visualisation",      "mermaid / html / svg / dashboard", "#22d3ee"),
+    Layer(s.id, s.title, s.subtitle, s.color) for s in LAYER_CATALOG
 ]
 
-# Mapping from qualname-prefix-or-exact-match to layer id.
-# Most-specific entries first.
-_QUALNAME_RULES: list[tuple[str, str]] = [
-    ("codegraph.cli",                "cli"),
-    ("codegraph.graph.builder",      "pipeline"),
-    ("codegraph.parsers.",           "parsers"),
-    ("codegraph.resolve.",           "resolve"),
-    ("codegraph.graph.schema",       "storage"),
-    ("codegraph.graph.store_",       "storage"),
-    ("codegraph.graph.",             "storage"),
-    ("codegraph.analysis.",          "analysis"),
-    ("codegraph.viz.",               "viz"),
-]
+_FALLBACK_TIER = 5
+_FALLBACK_COLOR = "#94a3b8"
 
 
-def _layer_for_qualname(qn: str) -> str | None:
-    for prefix, lid in _QUALNAME_RULES:
-        if qn == prefix.rstrip(".") or qn.startswith(prefix):
-            return lid
+def _split_token(seg: str) -> list[str]:
+    return [p for p in re.split(r"[_\-]", seg.lower()) if p]
+
+
+def _classify_segments(segments: list[str]) -> str | None:
+    """Return the catalog id matching the rightmost meaningful token, else None."""
+    pattern_to_id: dict[str, str] = {}
+    for spec in LAYER_CATALOG:
+        for pat in spec.patterns:
+            pattern_to_id.setdefault(pat, spec.id)
+    for seg in reversed(segments):
+        token = seg.lower()
+        if token in pattern_to_id:
+            return pattern_to_id[token]
+        for part in _split_token(seg):
+            if part in pattern_to_id:
+                return pattern_to_id[part]
     return None
+
+
+def _common_root(qualnames: list[str]) -> str:
+    if not qualnames:
+        return ""
+    split = [qn.split(".") for qn in qualnames if qn]
+    if not split:
+        return ""
+    common: list[str] = []
+    for segs in zip(*split, strict=False):
+        if len(set(segs)) == 1:
+            common.append(segs[0])
+        else:
+            break
+    # If the only common segment IS each module's full qualname (i.e. flat
+    # one-segment package set), don't strip — we'd have nothing left.
+    if len(common) >= max(len(s) for s in split):
+        common = common[:-1]
+    return ".".join(common)
+
+
+def _is_skippable_module(qn: str, file: str) -> bool:
+    """Skip test modules + bare package __init__ shells from HLD."""
+    if _is_test_module(qn, file):
+        return True
+    f = (file or "").replace("\\", "/").lower()
+    return f.endswith("/__init__.py") or f == "__init__.py"
+
+
+def _is_test_module(qn: str, file: str) -> bool:
+    if not qn:
+        return False
+    f = (file or "").replace("\\", "/").lower()
+    if "/tests/" in f or "/test/" in f or f.startswith("tests/") or f.startswith("test/"):
+        return True
+    segs = qn.split(".")
+    return any(s == "tests" or s == "test" or s.startswith("test_") for s in segs)
 
 
 def _file_path_to_module_qualname(graph: nx.MultiDiGraph) -> dict[str, str]:
@@ -68,13 +162,67 @@ def _file_path_to_module_qualname(graph: nx.MultiDiGraph) -> dict[str, str]:
         f = attrs.get("file")
         qn = attrs.get("qualname")
         if isinstance(f, str) and isinstance(qn, str) and qn:
+            if _is_skippable_module(qn, f):
+                continue
             out[f] = qn
     return out
 
 
-def _node_to_layer(graph: nx.MultiDiGraph) -> tuple[
-    dict[str, str], dict[str, str]
-]:
+def _module_qualnames(graph: nx.MultiDiGraph) -> list[str]:
+    return [
+        str(attrs.get("qualname"))
+        for _nid, attrs in graph.nodes(data=True)
+        if kind_str(attrs.get("kind")) == "MODULE"
+        and attrs.get("qualname")
+        and not _is_skippable_module(
+            str(attrs.get("qualname") or ""), str(attrs.get("file") or "")
+        )
+    ]
+
+
+def _layer_id_for(qn: str, root: str) -> str:
+    """Return the layer id for a module qualname, given the stripped root."""
+    if root and (qn == root or qn.startswith(root + ".")):
+        rest = qn[len(root) + 1:] if qn != root else ""
+    else:
+        rest = qn
+    segments = [s for s in rest.split(".") if s]
+    classified = _classify_segments(segments) if segments else None
+    if classified:
+        return classified
+    if segments:
+        return segments[0].lower()
+    return "main"
+
+
+def derive_layers(graph: nx.MultiDiGraph) -> tuple[list[Layer], str]:
+    """Inspect the graph and return (ordered Layers used, root prefix)."""
+    qns = _module_qualnames(graph)
+    root = _common_root(qns)
+    used: dict[str, int] = defaultdict(int)
+    for qn in qns:
+        used[_layer_id_for(qn, root)] += 1
+
+    catalog_by_id = {s.id: s for s in LAYER_CATALOG}
+    layers: list[tuple[int, str, Layer]] = []
+    for lid, _count in used.items():
+        spec = catalog_by_id.get(lid)
+        if spec is not None:
+            layers.append((spec.tier, lid, Layer(
+                spec.id, spec.title, spec.subtitle, spec.color,
+            )))
+        else:
+            # Ad-hoc layer named after the package segment.
+            layers.append((_FALLBACK_TIER, lid, Layer(
+                lid, lid.title(), "module group", _FALLBACK_COLOR,
+            )))
+    layers.sort(key=lambda t: (t[0], t[1]))
+    return [lay for _t, _id, lay in layers], root
+
+
+def _node_to_layer(
+    graph: nx.MultiDiGraph, root: str
+) -> tuple[dict[str, str], dict[str, str]]:
     """Return (node_id -> layer_id, node_id -> module_qualname)."""
     file_to_module_qn = _file_path_to_module_qualname(graph)
     node_to_layer: dict[str, str] = {}
@@ -83,23 +231,18 @@ def _node_to_layer(graph: nx.MultiDiGraph) -> tuple[
         kind = kind_str(attrs.get("kind"))
         qn = str(attrs.get("qualname") or "")
         f = attrs.get("file")
-        # MODULE: classify by its own qualname.
-        if kind == "MODULE" and qn:
-            lid = _layer_for_qualname(qn)
-            if lid:
-                node_to_layer[nid] = lid
-                node_to_module_qn[nid] = qn
+        if _is_skippable_module(qn, str(f or "")):
             continue
-        # Symbols: classify via their file's MODULE qualname (more reliable
-        # than the symbol's own qualname for nested classes / methods).
+        if kind == "MODULE" and qn:
+            node_to_layer[nid] = _layer_id_for(qn, root)
+            node_to_module_qn[nid] = qn
+            continue
         module_qn = file_to_module_qn.get(f) if isinstance(f, str) else None
         if not module_qn and qn:
             module_qn = qn.rsplit(".", 1)[0] if "." in qn else qn
         if module_qn:
-            lid = _layer_for_qualname(module_qn)
-            if lid:
-                node_to_layer[nid] = lid
-                node_to_module_qn[nid] = module_qn
+            node_to_layer[nid] = _layer_id_for(module_qn, root)
+            node_to_module_qn[nid] = module_qn
     return node_to_layer, node_to_module_qn
 
 
@@ -110,12 +253,13 @@ def _short_name(qn: str) -> str:
 @dataclass
 class HldPayload:
     layers: list[dict[str, Any]]
-    edges: list[dict[str, Any]]      # cross-layer call edges with weight
-    components: dict[str, list[dict[str, Any]]]  # layer_id -> modules
-    modules: dict[str, dict[str, Any]]  # module_qualname -> drill-down info
+    edges: list[dict[str, Any]]
+    components: dict[str, list[dict[str, Any]]]
+    modules: dict[str, dict[str, Any]]
     mermaid_layered: str
     mermaid_context: str
     metrics: dict[str, int]
+    root: str = ""
 
 
 def _build_modules_drilldown(
@@ -123,11 +267,6 @@ def _build_modules_drilldown(
     node_to_layer: dict[str, str],
     node_to_module: dict[str, str],
 ) -> dict[str, dict[str, Any]]:
-    """Per-module symbol breakdown with direct call relations.
-
-    Used by the HLD navigator UI to drill from layer -> module -> symbol
-    -> (callers / callees) without leaving the page.
-    """
     modules: dict[str, dict[str, Any]] = {}
     for nid, attrs in graph.nodes(data=True):
         if kind_str(attrs.get("kind")) != "MODULE":
@@ -188,9 +327,10 @@ def _build_modules_drilldown(
 
 
 def build_hld(graph: nx.MultiDiGraph) -> HldPayload:
-    node_to_layer, node_to_module = _node_to_layer(graph)
+    layers_used, root = derive_layers(graph)
+    layer_order = [lay.id for lay in layers_used]
+    node_to_layer, node_to_module = _node_to_layer(graph, root)
 
-    # 1. Components per layer (one card per MODULE).
     components: dict[str, list[dict[str, Any]]] = defaultdict(list)
     seen_modules: set[str] = set()
     module_symbols: dict[str, int] = defaultdict(int)
@@ -216,7 +356,6 @@ def build_hld(graph: nx.MultiDiGraph) -> HldPayload:
     for lid in components:
         components[lid].sort(key=lambda c: (-int(c["symbols"]), c["qualname"]))
 
-    # 2. Cross-layer aggregated edge weights (CALLS + IMPORTS).
     pair_w: dict[tuple[str, str, str], int] = defaultdict(int)
     for src, dst, data in graph.edges(data=True):
         ek = kind_str(data.get("kind"))
@@ -232,12 +371,11 @@ def build_hld(graph: nx.MultiDiGraph) -> HldPayload:
         for (s, d, k), w in sorted(pair_w.items(), key=lambda kv: -kv[1])
     ]
 
-    # 3. Mermaid: hand-styled layered flowchart.
-    mermaid_layered = _render_layered_mermaid(components, edges)
-    mermaid_context = _render_context_mermaid()
+    mermaid_layered = _render_layered_mermaid(layers_used, components, edges)
+    mermaid_context = _render_context_mermaid(root)
 
     metrics = {
-        "layers": sum(1 for lid in (lay.id for lay in LAYERS) if components.get(lid)),
+        "layers": sum(1 for lid in layer_order if components.get(lid)),
         "components": sum(len(v) for v in components.values()),
         "cross_layer_edges": len(edges),
         "total_cross_layer_calls": sum(
@@ -246,13 +384,9 @@ def build_hld(graph: nx.MultiDiGraph) -> HldPayload:
     }
     return HldPayload(
         layers=[
-            {
-                "id": lay.id,
-                "title": lay.title,
-                "subtitle": lay.subtitle,
-                "color": lay.color,
-            }
-            for lay in LAYERS
+            {"id": lay.id, "title": lay.title, "subtitle": lay.subtitle,
+             "color": lay.color}
+            for lay in layers_used
         ],
         edges=edges,
         components=dict(components),
@@ -260,10 +394,8 @@ def build_hld(graph: nx.MultiDiGraph) -> HldPayload:
         mermaid_layered=mermaid_layered,
         mermaid_context=mermaid_context,
         metrics=metrics,
+        root=root,
     )
-
-
-# ----------------------- mermaid rendering helpers -----------------------
 
 
 _SAFE_RE = re.compile(r"[^a-zA-Z0-9]")
@@ -274,24 +406,23 @@ def _safe_id(qn: str) -> str:
 
 
 def _layer_safe(lid: str) -> str:
-    return f"L_{lid}"
+    return f"L_{_SAFE_RE.sub('_', lid)}"
 
 
 def _render_layered_mermaid(
+    layers_used: list[Layer],
     components: dict[str, list[dict[str, Any]]],
     edges: list[dict[str, Any]],
     *,
     max_per_layer: int = 8,
 ) -> str:
     lines: list[str] = ["flowchart TB"]
-    # Subgraphs in declared order.
-    for lay in LAYERS:
+    for lay in layers_used:
         comps = components.get(lay.id, [])
         if not comps:
             continue
         lines.append(f'    subgraph {_layer_safe(lay.id)}["<b>{lay.title}</b>"]')
         lines.append("    direction LR")
-        # Only show the heaviest N modules to keep the diagram readable.
         ranked = sorted(comps, key=lambda c: -int(c.get("symbols") or 0))
         shown = ranked[:max_per_layer]
         hidden = len(ranked) - len(shown)
@@ -306,8 +437,6 @@ def _render_layered_mermaid(
             )
         lines.append("    end")
 
-    # Aggregate edges to single inter-layer arrows: layer -> layer with total
-    # weight (sum of CALLS+IMPORTS) so we get one clean arrow per layer pair.
     layer_pair: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"calls": 0, "imports": 0}
     )
@@ -331,18 +460,18 @@ def _render_layered_mermaid(
         lines.append(f"    {_layer_safe(s)} --\"{label}\"--> {_layer_safe(d)}")
         edge_styles.append((edge_idx, calls + imports))
 
-    # Style block: per-layer subgraph fill, edge thickness by weight.
-    # Subgraph backgrounds use a translucent panel color so the diagram
-    # works in both light and dark themes.
     lines.append("")
-    for lay in LAYERS:
+    for lay in layers_used:
         if components.get(lay.id):
             lines.append(
-                f"    classDef {lay.id}_node fill:{lay.color},"
-                f"stroke:{lay.color},color:#0b1220,rx:8,ry:8"
+                f"    classDef {_SAFE_RE.sub('_', lay.id)}_node "
+                f"fill:{lay.color},stroke:{lay.color},color:#0b1220,rx:8,ry:8"
             )
             for c in components.get(lay.id, []):
-                lines.append(f"    class {_safe_id(c['qualname'])} {lay.id}_node")
+                lines.append(
+                    f"    class {_safe_id(c['qualname'])} "
+                    f"{_SAFE_RE.sub('_', lay.id)}_node"
+                )
             lines.append(
                 f"    style {_layer_safe(lay.id)} fill:transparent,"
                 f"stroke:{lay.color},stroke-width:2px,stroke-dasharray:0"
@@ -360,14 +489,15 @@ def _render_layered_mermaid(
     return "\n".join(lines)
 
 
-def _render_context_mermaid() -> str:
+def _render_context_mermaid(root: str = "") -> str:
+    proj = root or "your repo"
     return "\n".join([
         "flowchart LR",
         '    user(["<b>Developer</b><br>runs codegraph"])',
-        '    repo[("<b>Source repo</b><br>any language")]',
-        '    cli{{"<b>codegraph CLI</b><br>build · analyze · viz · explore"}}',
+        f'    repo[("<b>{proj}</b><br>source repository")]',
+        '    cli{{"<b>codegraph CLI</b><br>build · analyze · viz · serve"}}',
         '    db[("<b>.codegraph/graph.db</b><br>SQLite store")]',
-        '    out[/"<b>.codegraph/explore/</b><br>HTML dashboard + node-link views"/]',
+        '    out[/"<b>.codegraph/explore/</b><br>HTML dashboard"/]',
         "    user -- commands --> cli",
         "    cli -- reads --> repo",
         "    cli -- writes --> db",
@@ -385,4 +515,12 @@ def _render_context_mermaid() -> str:
     ])
 
 
-__all__ = ["LAYERS", "HldPayload", "Layer", "build_hld"]
+__all__ = [
+    "LAYERS",
+    "LAYER_CATALOG",
+    "HldPayload",
+    "Layer",
+    "LayerSpec",
+    "build_hld",
+    "derive_layers",
+]
