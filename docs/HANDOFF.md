@@ -52,7 +52,7 @@ for Python).
 | 0 | Repo bootstrap | ✅ done |
 | 1 | Core graph MVP (schema, SQLite, Python+TS extractors, init/build/status/viz) | ✅ done |
 | 2 | Language breadth (JS, Go, Java, Rust, C#, Ruby, PHP) | ⬜ pending |
-| 3 | Analysis (blast_radius, dead_code, cycles, untested, hotspots, metrics, `analyze`) | ⬜ pending |
+| 3 | Analysis (blast_radius, dead_code, cycles, untested, hotspots, metrics, `analyze`) | ✅ done |
 | 4 | PR review (differ, YAML rules, risk scorer, baseline backends, git hook) | ⬜ pending |
 | 5 | MCP server for Claude Code (`mcp serve` + curated subgraph tools) | ⬜ pending |
 | 6 | Visualization polish (pyvis HTML, graphviz SVG, richer Mermaid) | ⬜ pending |
@@ -138,7 +138,7 @@ extractor dispatch, or tree-sitter grammar regression.
 
 ### Test / quality status at handoff
 
-- `pytest -q` → **40 passed / 0 failed**
+- `pytest -q` → **64 passed / 0 failed**
 - `ruff check codegraph tests` → clean
 - `mypy codegraph` (strict) → clean
 - CI on `main` → green ([latest run](https://github.com/smochan/codegraph/actions))
@@ -208,13 +208,18 @@ Then tell the agent which phase to tackle. Suggested prompt:
 - Sub-agents can fan out one-per-language; they're independent.
 
 ### Phase 3 — analysis
-- New module `codegraph/analysis/` with `blast_radius.py`, `dead_code.py`, `cycles.py`,
-  `untested.py`, `hotspots.py`, `metrics.py`.
-- New module `codegraph/resolve/` for cross-file CALLS resolution: build an index
-  `qualname → node_id`, walk edges with `dst` starting `unresolved::`, attempt match,
-  rewrite. Heuristic: prefer same-package, then imports, then global.
-- Wire CLI `query callers/subgraph/untested/deadcode/cycles` and `analyze`
-  (markdown + json output).
+- ✅ Implemented in `codegraph/analysis/` — `blast_radius.py`, `dead_code.py`,
+  `cycles.py`, `untested.py`, `hotspots.py`, `metrics.py`, plus `report.py`
+  (markdown / json renderer + `find_symbol`).
+- ✅ Cross-file resolution lives in `codegraph/resolve/calls.py`. It runs
+  automatically at the end of every `GraphBuilder.build()`. Strategy:
+  exact qualname → same-module → import binding → unique tail-match → unique
+  bare-name. Anything ambiguous is left as `unresolved::*` so analyses stay
+  safe.
+- ✅ CLI wired: `codegraph analyze [--format markdown|json] [--output FILE]
+  [--hotspots N]` and `codegraph query {callers|subgraph|untested|deadcode|
+  cycles}` — see `tests/test_cli_analyze_query.py` for usage.
+- Store gained `delete_edge(src, dst, kind)` and `count_unresolved_edges()`.
 
 ### Phase 4 — PR review
 - `codegraph/review/differ.py` — diff two SQLite graphs (or a graph vs a baseline JSON).
@@ -279,13 +284,8 @@ gh run list --limit 5
 
 A good resume prompt:
 
-> Read `docs/HANDOFF.md` and `docs/plan.md`. We finished Phase 0 + Phase 1
-> (40 tests passing, CI green). Now deliver **Phase 3 (analysis)** end-to-end:
-> implement `codegraph/analysis/*` (blast_radius, dead_code, cycles, untested,
-> hotspots, metrics) plus a `codegraph/resolve/` cross-file CALLS resolver,
-> wire the CLI `query` and `analyze` subcommands, add tests, keep ruff + mypy
-> strict + pytest clean, commit with the Copilot trailer, push to origin main,
-> verify CI green.
-
-Swap "Phase 3" for whichever phase you want next. The agent can also dispatch
-sub-agents per language (Phase 2) or per analysis (Phase 3).
+> Read `docs/HANDOFF.md` and `docs/plan.md`. We finished Phase 0, 1, and 3
+> (64 tests passing, CI green). Now deliver **Phase 2 (language breadth)** or
+> **Phase 4 (PR review)** end-to-end, following the same standards: real
+> implementations, tests passing, ruff + mypy strict clean, CI green, well-
+> organized commits with the Copilot co-author trailer, push to `origin main`.
