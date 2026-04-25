@@ -55,7 +55,7 @@ for Python).
 | 3 | Analysis (blast_radius, dead_code, cycles, untested, hotspots, metrics, `analyze`) | ✅ done |
 | 4 | PR review (differ, YAML rules, risk scorer, baseline backends, git hook) | ⬜ pending |
 | 5 | MCP server for Claude Code (`mcp serve` + curated subgraph tools) | ⬜ pending |
-| 6 | Visualization polish (pyvis HTML, graphviz SVG, richer Mermaid) | ⬜ pending |
+| 6 | Visualization polish (pyvis HTML, graphviz SVG, richer Mermaid) | ✅ done |
 | 7 | Open-source release (PyPI publish, README polish, examples, v0.1.0 tag) | ⬜ pending |
 
 Dependencies: 2,3,6 depend on 1; 4 depends on 3; 5 depends on 3; 7 depends on 2,4,5,6.
@@ -138,7 +138,7 @@ extractor dispatch, or tree-sitter grammar regression.
 
 ### Test / quality status at handoff
 
-- `pytest -q` → **64 passed / 0 failed**
+- `pytest -q` → **73 passed / 0 failed**
 - `ruff check codegraph tests` → clean
 - `mypy codegraph` (strict) → clean
 - CI on `main` → green ([latest run](https://github.com/smochan/codegraph/actions))
@@ -239,9 +239,15 @@ Then tell the agent which phase to tackle. Suggested prompt:
   `~/.config/Claude/claude_desktop_config.json` and project-local `.mcp.json` if present.
 
 ### Phase 6 — viz polish
-- pyvis interactive HTML at `codegraph/viz/html.py`.
-- Optional graphviz → SVG at `codegraph/viz/svg.py` (gracefully no-op if `dot` missing).
-- Improve Mermaid: cluster by file, color by NodeKind, edge style by EdgeKind.
+- ✅ `codegraph/viz/` package: `mermaid.py` (file-clustered, kind-colored,
+  edge-styled flowchart with a built-in legend), `html.py` (pyvis interactive
+  graph with Barnes-Hut layout, hover-tooltips, dark theme), `svg.py`
+  (graphviz-backed; raises ``GraphvizUnavailableError`` if `dot` or the
+  `graphviz` package is missing so the CLI degrades gracefully).
+- pyvis is now a required dependency; graphviz remains optional under the
+  `viz` extra.
+- CLI: `codegraph viz --out {mermaid,html,svg} [--output PATH] [--scope X]
+  [--limit N] [--no-cluster]`.
 
 ### Phase 7 — release
 - Bump to `0.1.0`. Tag on GitHub. Publish to PyPI (`hatch build`, `hatch publish`

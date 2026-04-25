@@ -8,5 +8,5 @@ See the working plan in the session for full details. Phases:
 3. **Analysis** — blast radius, dead code, cycles, untested, hotspots, metrics. ✅ done
 4. **PR review** — differ, YAML rules, risk scorer, baseline backends, git hook.
 5. **MCP integration** — `mcp serve` with focused subgraph tools for Claude Code.
-6. **Visualization polish** — pyvis HTML, graphviz SVG.
+6. **Visualization polish** — pyvis HTML, graphviz SVG. ✅ done
 7. **Release** — publish to PyPI, push to GitHub.
