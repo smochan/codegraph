@@ -510,6 +510,80 @@ def explore(
 
 
 @app.command()
+def serve(
+    port: int = typer.Option(8765, "--port", "-p", help="Port to bind."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind."),
+    no_open: bool = typer.Option(
+        False, "--no-open", help="Don't auto-open the browser."
+    ),
+    explore_dir: str = typer.Option(
+        ".codegraph/explore",
+        "--explore-dir",
+        help="Folder of pyvis pages (architecture/callgraph/...) to also serve.",
+    ),
+) -> None:
+    """Run the interactive dashboard as a local web app."""
+    from codegraph.graph.builder import GraphBuilder
+    from codegraph.graph.store_networkx import to_digraph
+    from codegraph.graph.store_sqlite import SQLiteGraphStore
+    from codegraph.viz.explore import render_explore
+    from codegraph.web import DashboardState
+    from codegraph.web import serve as run_server
+
+    repo_root = Path.cwd()
+    data_dir = _get_data_dir(repo_root)
+    db_path = data_dir / "graph.db"
+    if not db_path.exists():
+        console.print(
+            "[yellow]No graph found. Run [bold]codegraph build[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    explore_path = Path(explore_dir)
+    if not explore_path.is_absolute():
+        explore_path = repo_root / explore_path
+
+    def _load_graph() -> nx.MultiDiGraph:
+        store = SQLiteGraphStore(db_path)
+        try:
+            return to_digraph(store)
+        finally:
+            store.close()
+
+    def _rebuild() -> nx.MultiDiGraph:
+        store = SQLiteGraphStore(db_path)
+        try:
+            GraphBuilder(repo_root, store).build(incremental=False)
+            graph = to_digraph(store)
+        finally:
+            store.close()
+        # Refresh pyvis pages too so the Files / Explorers tabs stay in sync.
+        try:
+            render_explore(graph, explore_path)
+        except Exception as exc:
+            console.print(
+                f"[yellow]warn:[/yellow] failed to refresh explore pages: {exc}"
+            )
+        return graph
+
+    # Make sure pyvis pages exist on first run.
+    if not (explore_path / "architecture.html").exists():
+        console.print("[dim]First run: generating pyvis pages...[/dim]")
+        try:
+            render_explore(_load_graph(), explore_path)
+        except Exception as exc:
+            console.print(f"[yellow]warn:[/yellow] {exc}")
+
+    state = DashboardState(
+        repo_root=repo_root,
+        explore_dir=explore_path,
+        graph_loader=_load_graph,
+        rebuild=_rebuild,
+    )
+    run_server(state, host=host, port=port, open_browser=not no_open)
+
+
+@app.command()
 def review(
     target: str = typer.Option("main", help="Target branch to PR into."),
     block_on: str = typer.Option("high", help="critical|high|medium"),

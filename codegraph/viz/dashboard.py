@@ -79,15 +79,14 @@ def _file_stats(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
     ]
 
 
-def render_dashboard(
+def build_dashboard_payload(
     graph: nx.MultiDiGraph,
-    out_path: Path,
     *,
     matrix_top_n: int = 36,
     sankey_links: int = 50,
     flow_count: int = 8,
-) -> Path:
-    """Render the single-page dashboard to ``out_path`` (typically index.html)."""
+) -> dict[str, Any]:
+    """Compute the full data payload (no HTML). Pure: no I/O."""
     cleaned = _strip_noise(graph)
     metrics = compute_metrics(cleaned)
     cycles = find_cycles(cleaned)
@@ -102,7 +101,7 @@ def render_dashboard(
     files = _file_stats(cleaned)
     hld = build_hld(cleaned)
 
-    payload = {
+    return {
         "metrics": {
             "nodes": metrics.total_nodes,
             "edges": metrics.total_edges,
@@ -146,6 +145,26 @@ def render_dashboard(
         },
     }
 
+
+def render_dashboard(
+    graph: nx.MultiDiGraph,
+    out_path: Path,
+    *,
+    matrix_top_n: int = 36,
+    sankey_links: int = 50,
+    flow_count: int = 8,
+) -> Path:
+    """Render the (legacy) single-page dashboard to ``out_path``.
+
+    The new web UI in ``codegraph/web/`` is the preferred path; this
+    function is retained for offline ``codegraph explore`` output.
+    """
+    payload = build_dashboard_payload(
+        graph,
+        matrix_top_n=matrix_top_n,
+        sankey_links=sankey_links,
+        flow_count=flow_count,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(_HTML_TEMPLATE.replace("__DATA__", to_json(payload)),
                         encoding="utf-8")
@@ -678,4 +697,4 @@ renderFiles();
 </script></body></html>"""
 
 
-__all__ = ["render_dashboard"]
+__all__ = ["build_dashboard_payload", "render_dashboard"]
