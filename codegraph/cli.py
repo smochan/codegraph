@@ -758,9 +758,26 @@ def hook_uninstall() -> None:
 
 
 @mcp_app.command("serve")
-def mcp_serve() -> None:
-    """Run as an MCP server exposing focused subgraph tools to AI assistants."""
-    _stub("mcp serve")
+def mcp_serve(
+    db: str | None = typer.Option(
+        None,
+        "--db",
+        help="Path to graph.db (default: .codegraph/graph.db in cwd).",
+    ),
+    name: str = typer.Option(
+        "codegraph",
+        "--name",
+        help="Server name advertised over MCP.",
+    ),
+) -> None:
+    """Run as an MCP stdio server exposing focused subgraph tools to AI assistants."""
+    from codegraph.mcp_server.server import run
+
+    db_path = Path(db) if db else None
+    try:
+        run(db_path=db_path, server_name=name)
+    except KeyboardInterrupt:
+        raise typer.Exit(0) from None
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ dependencies = [
     "questionary>=2.0",
     "platformdirs>=4.2",
     "pyvis>=0.3.2",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]

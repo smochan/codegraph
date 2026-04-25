@@ -310,12 +310,56 @@ git log --oneline
 gh run list --limit 5
 ```
 
+## Phase 5 — MCP server (`codegraph mcp serve`)
+
+### How to launch
+
+```bash
+# In any repo that has a built graph:
+codegraph mcp serve                           # auto-resolves .codegraph/graph.db
+codegraph mcp serve --db path/to/graph.db    # explicit db path
+codegraph mcp serve --name my-project        # custom server name (default: codegraph)
+```
+
+The server uses the **stdio transport** (JSON-RPC over stdin/stdout) and is
+compatible with Claude Code, Claude Desktop, and any MCP client.
+
+### Claude Code config snippet
+
+Add to your Claude Code MCP config (usually `~/.claude.json` or via `claude mcp add`):
+
+```json
+{"mcpServers":{"codegraph":{"command":"codegraph","args":["mcp","serve","--db",".codegraph/graph.db"]}}}
+```
+
+### Exposed tools
+
+| Tool | Description |
+|------|-------------|
+| `find_symbol` | Substring search for symbols by qualname; optional `kind` filter, `limit` |
+| `callers` | Reverse BFS from a symbol — who calls it? (configurable `depth`) |
+| `callees` | Forward BFS from a symbol — what does it call? (configurable `depth`) |
+| `blast_radius` | Set of nodes transitively referencing a symbol (wraps `analysis.blast_radius`) |
+| `subgraph` | Induced subgraph of listed symbols expanded `depth` hops over CALLS+IMPORTS+INHERITS |
+| `dead_code` | Unreferenced functions/classes with no incoming reference edges |
+| `cycles` | Import and call strongly-connected-components (cycles) |
+| `untested` | Functions/methods with no incoming CALLS from a test module |
+| `hotspots` | Top-N callables ranked by fan-in × 2 + fan-out + LOC/50 |
+| `metrics` | Aggregate counts: total nodes/edges, breakdown by kind, top files |
+
+### Implementation notes
+
+- Module: `codegraph/mcp_server/server.py` (kept under `mcp_server/` to avoid shadowing the `mcp` SDK)
+- Tool handlers are pure functions `(graph, **args) -> dict|list` — fully testable without MCP machinery
+- Graph is loaded once per process and cached; pass `--db` to reload from a different path
+- 14 new tests in `tests/test_mcp_server.py`
+
 ## When resuming: tell the agent
 
 A good resume prompt:
 
-> Read `docs/HANDOFF.md` and `docs/plan.md`. We finished Phase 0, 1, and 3
-> (64 tests passing, CI green). Now deliver **Phase 2 (language breadth)** or
-> **Phase 4 (PR review)** end-to-end, following the same standards: real
-> implementations, tests passing, ruff + mypy strict clean, CI green, well-
-> organized commits with the Copilot co-author trailer, push to `origin main`.
+> Read `docs/HANDOFF.md` and `docs/plan.md`. We finished Phase 0, 1, 3, 5,
+> and 6 (108 tests passing, CI green). Now deliver the remaining phases
+> following the same standards: real implementations, tests passing,
+> ruff + mypy strict clean, CI green, well-organized commits with the
+> Copilot co-author trailer, push to `origin main`.
