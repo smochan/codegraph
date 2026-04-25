@@ -17,6 +17,34 @@ an accurate, lightweight map of your codebase, no daemon required.
 
 ---
 
+## Why codegraph?
+
+Existing tools each solve a slice; codegraph stitches them together for the
+AI-assisted workflow.
+
+| | codegraph | Sourcegraph | GitHub Code Search | LSP / IDE | grep / ripgrep | tree-sitter alone |
+|---|---|---|---|---|---|---|
+| Multi-language graph (calls / inheritance / imports) | ✅ | ✅ | partial | per-language | ❌ | DIY |
+| Single-binary, runs locally | ✅ | ❌ heavyweight | ❌ cloud | ✅ | ✅ | ✅ |
+| Built-in PR risk review (diff + rules + SARIF) | ✅ | partial / paid | ❌ | ❌ | ❌ | ❌ |
+| MCP server for Claude / AI agents | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Web dashboard with HLD + focus graph | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Dead code / cycles / hotspots out-of-the-box | ✅ | ❌ | ❌ | partial | ❌ | ❌ |
+| Zero-config: one SQLite file, no daemon | ✅ | ❌ | n/a | ✅ | ✅ | ✅ |
+| Open source, MIT, free for any size repo | ✅ | partial (OSS core) | n/a | mixed | ✅ | ✅ |
+
+**Where codegraph fits:** between "I just want to grep the repo" and "let's run a
+self-hosted Sourcegraph instance." It's the lightest tool that gives both
+*humans* (dashboard, analysis) and *AI agents* (MCP) a real graph of the code,
+not just text matches.
+
+**Where it doesn't (yet):** only Python / TypeScript / JavaScript extractors
+ship today. Go, Java, Rust, C#, Ruby, PHP are in the roadmap (Phase 2) — adding
+each is a single-file tree-sitter mapping. Until then you'll get module-level
+nodes but not function-level granularity for those languages.
+
+---
+
 ## Quickstart
 
 ```bash
