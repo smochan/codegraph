@@ -323,3 +323,113 @@ input.search:focus {
 .qn-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
 .qn-mono .qn-dim { color: var(--txt-3); }
 .qn-mono .qn-key { color: var(--txt-0); }
+
+/* ---------- Icon button (header) ---------- */
+.icon-btn {
+  width: 32px; height: 32px; display: inline-flex;
+  align-items: center; justify-content: center;
+  border-radius: 8px; color: var(--txt-2);
+  border: 1px solid var(--line);
+  background: rgba(22,31,51,0.6);
+  cursor: pointer; transition: color .15s, background .15s, border-color .15s;
+}
+.icon-btn:hover {
+  color: var(--txt-0); background: rgba(29,41,66,0.8);
+  border-color: var(--line-strong);
+}
+.icon-btn svg { width: 16px; height: 16px; }
+
+/* Default = dark mode visible icon */
+html.theme-light .theme-dark-only { display: none !important; }
+html:not(.theme-light) .theme-light-only { display: none !important; }
+
+/* ---------- Sidebar collapsed ---------- */
+html.sb-collapsed #sidebar {
+  width: 64px;
+}
+html.sb-collapsed #sidebar .sb-label,
+html.sb-collapsed #sidebar .nav-section,
+html.sb-collapsed #sidebar .nav-item span { display: none; }
+html.sb-collapsed #sidebar .nav-item { justify-content: center; padding: 8px; }
+html.sb-collapsed #sidebar #rebuild-btn { padding: 8px 0; }
+
+/* =========================================================
+   Light theme palette
+   ========================================================= */
+html.theme-light {
+  --bg-0: #f4f6fb;
+  --bg-1: #ffffff;
+  --bg-2: #f7f9fd;
+  --bg-3: #eef2f9;
+  --bg-4: #dde4f0;
+  --line: rgba(15, 23, 42, 0.10);
+  --line-strong: rgba(15, 23, 42, 0.18);
+  --txt-0: #0f172a;
+  --txt-1: #1e293b;
+  --txt-2: #475569;
+  --txt-3: #94a3b8;
+  --brand: #4f46e5;
+  --brand-strong: #4338ca;
+  --accent-cyan: #0891b2;
+  --accent-emerald: #059669;
+  --accent-amber: #b45309;
+  --accent-rose: #dc2626;
+  --accent-violet: #7c3aed;
+}
+html.theme-light body { background: var(--bg-0); color: var(--txt-0); }
+html.theme-light .app-bg {
+  background:
+    radial-gradient(900px 600px at 12% -10%, rgba(99,102,241,0.10), transparent 60%),
+    radial-gradient(800px 540px at 100% 0%,  rgba(8,145,178,0.08),  transparent 65%),
+    radial-gradient(700px 500px at 50% 110%, rgba(124,58,237,0.07), transparent 60%),
+    linear-gradient(180deg, #f4f6fb 0%, #eef2f9 100%);
+}
+html.theme-light .panel,
+html.theme-light .stat-card {
+  background: linear-gradient(180deg, #ffffff, #f7f9fd);
+  box-shadow: 0 1px 0 0 rgba(255,255,255,1) inset,
+              0 8px 24px -16px rgba(15,23,42,0.18);
+}
+html.theme-light .stat-card::before {
+  background: linear-gradient(135deg, rgba(99,102,241,0.18), transparent 60%);
+}
+html.theme-light aside,
+html.theme-light header {
+  background: rgba(255,255,255,0.78) !important;
+}
+html.theme-light .nav-item:hover { background: rgba(99,102,241,0.07); }
+html.theme-light .nav-item.active {
+  background: linear-gradient(90deg, rgba(99,102,241,0.16), rgba(99,102,241,0.04));
+}
+html.theme-light .matrix-wrap,
+html.theme-light table.matrix .corner,
+html.theme-light table.matrix thead th,
+html.theme-light table.matrix tbody th { background: #ffffff; }
+html.theme-light .mermaid-host {
+  background:
+    radial-gradient(800px 400px at 50% -20%, rgba(99,102,241,0.06), transparent 60%),
+    #ffffff;
+}
+html.theme-light .pill { background: rgba(99,102,241,0.08); color: var(--txt-1); }
+html.theme-light code {
+  background: rgba(15,23,42,0.04); color: var(--txt-1);
+}
+html.theme-light input.search { background: #ffffff; color: var(--txt-0); }
+html.theme-light .icon-btn { background: rgba(255,255,255,0.7); }
+html.theme-light .icon-btn:hover { background: #ffffff; }
+html.theme-light .help-card {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(8,145,178,0.04) 60%, transparent),
+              #ffffff;
+  border-color: rgba(99,102,241,0.25);
+}
+html.theme-light .toast {
+  background: #ffffff;
+  box-shadow: 0 12px 32px -8px rgba(15,23,42,0.18);
+}
+html.theme-light .flow-item:hover { background: rgba(99,102,241,0.06); }
+html.theme-light .flow-item.active {
+  background: linear-gradient(90deg, rgba(99,102,241,0.14), rgba(99,102,241,0.04));
+  border-color: rgba(99,102,241,0.4);
+}
+html.theme-light .qn-mono .qn-key { color: var(--txt-0); }
+html.theme-light .swatch { box-shadow: 0 0 0 1px rgba(15,23,42,0.15), inset 0 1px 0 rgba(255,255,255,0.6); }

@@ -40,14 +40,14 @@ tailwind.config = {
 <script src="https://unpkg.com/lucide@0.414.0"></script>
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body class="text-ink-50 font-sans antialiased min-h-screen">
+<body class="text-ink-50 font-sans antialiased min-h-screen" id="app-body">
 <div class="app-bg"></div>
-<div class="flex min-h-screen relative">
+<div class="flex min-h-screen relative" id="app-shell">
   <!-- Sidebar -->
-  <aside class="w-60 shrink-0 border-r border-ink-600/60 bg-ink-900/70 backdrop-blur flex flex-col sticky top-0 h-screen">
+  <aside id="sidebar" class="w-60 shrink-0 border-r border-ink-600/60 bg-ink-900/70 backdrop-blur flex flex-col sticky top-0 h-screen transition-[width] duration-200">
     <div class="px-5 py-5 border-b border-ink-600/60 flex items-center gap-2.5">
-      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 via-brand-600 to-accent-cyan flex items-center justify-center text-ink-950 font-bold text-sm shadow-glow">cg</div>
-      <div class="min-w-0">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 via-brand-600 to-accent-cyan flex items-center justify-center text-ink-950 font-bold text-sm shadow-glow flex-none">cg</div>
+      <div class="min-w-0 sb-label">
         <div class="font-semibold text-sm tracking-tight">codegraph</div>
         <div class="text-[11px] text-ink-200 truncate" id="repo-name">loading…</div>
       </div>
@@ -55,20 +55,31 @@ tailwind.config = {
     <nav class="flex-1 p-3 space-y-0.5 overflow-y-auto" id="nav"></nav>
     <div class="p-3 border-t border-ink-600/60 space-y-2">
       <button id="rebuild-btn" class="w-full flex items-center justify-center gap-2 rounded-md bg-ink-700/80 hover:bg-ink-600 text-sm py-2 transition border border-ink-500/60 hover:border-brand-500">
-        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>Rebuild</span>
+        <i data-lucide="refresh-cw" class="w-3.5 h-3.5 flex-none"></i><span class="sb-label">Rebuild</span>
       </button>
-      <div class="text-[10px] text-ink-300 text-center font-mono" id="last-built"></div>
+      <div class="text-[10px] text-ink-300 text-center font-mono sb-label" id="last-built"></div>
     </div>
   </aside>
 
   <!-- Main -->
   <main class="flex-1 min-w-0 flex flex-col">
-    <header class="sticky top-0 z-10 border-b border-ink-600/60 bg-ink-900/70 backdrop-blur px-8 py-4 flex items-center justify-between">
-      <div>
-        <div class="text-[11px] uppercase tracking-[0.14em] text-ink-300 font-medium" id="crumb">Dashboard</div>
-        <h1 class="text-lg font-semibold mt-0.5 tracking-tight" id="page-title">Overview</h1>
+    <header class="sticky top-0 z-10 border-b border-ink-600/60 bg-ink-900/70 backdrop-blur px-6 md:px-8 py-4 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3 min-w-0">
+        <button id="sb-toggle" class="icon-btn" title="Toggle sidebar" aria-label="Toggle sidebar">
+          <i data-lucide="panel-left"></i>
+        </button>
+        <div class="min-w-0">
+          <div class="text-[11px] uppercase tracking-[0.14em] text-ink-300 font-medium" id="crumb">Dashboard</div>
+          <h1 class="text-lg font-semibold mt-0.5 tracking-tight truncate" id="page-title">Overview</h1>
+        </div>
       </div>
-      <div class="flex items-center gap-2 text-xs text-ink-200" id="header-stats"></div>
+      <div class="flex items-center gap-2 text-xs text-ink-200">
+        <div id="header-stats" class="flex items-center gap-2"></div>
+        <button id="theme-toggle" class="icon-btn ml-1" title="Toggle theme" aria-label="Toggle theme">
+          <i data-lucide="moon" class="theme-dark-only"></i>
+          <i data-lucide="sun"  class="theme-light-only"></i>
+        </button>
+      </div>
     </header>
     <div class="flex-1 overflow-y-auto" id="view-host">
       <div class="flex items-center justify-center h-full">

@@ -1,6 +1,16 @@
 /* codegraph dashboard - vanilla JS app */
 'use strict';
 
+// ----- Theme + sidebar persistence (apply early) -----
+(function applyEarlyPrefs() {
+  try {
+    const t = localStorage.getItem('cg-theme');
+    if (t === 'light') document.documentElement.classList.add('theme-light');
+    if (localStorage.getItem('cg-sb') === 'collapsed')
+      document.documentElement.classList.add('sb-collapsed');
+  } catch (e) { /* ignore */ }
+})();
+
 const state = {
   data: null,
   view: 'overview',
@@ -47,21 +57,35 @@ function toast(msg, kind) {
 }
 
 // ---- Mermaid ----
-mermaid.initialize({
-  startOnLoad: false, theme: 'base',
-  themeVariables: {
-    fontFamily: 'Inter, system-ui, sans-serif', fontSize: '14px',
-    background: 'transparent',
-    primaryColor: '#1d2942', primaryTextColor: '#e6ecf5',
-    primaryBorderColor: '#3b4a6a', lineColor: '#5b6b8c',
-    secondaryColor: '#161f33', tertiaryColor: '#0f1626',
-    clusterBkg: 'rgba(15,22,38,0.6)', clusterBorder: '#3b4a6a',
-    nodeBorder: '#3b4a6a', mainBkg: '#1d2942',
-    edgeLabelBackground: '#0a0f1c', titleColor: '#c4cfe2',
-  },
-  flowchart: { padding: 18, nodeSpacing: 38, rankSpacing: 54,
-               curve: 'basis', htmlLabels: true, useMaxWidth: true },
-});
+function mermaidThemeVars() {
+  const light = document.documentElement.classList.contains('theme-light');
+  return light
+    ? { fontFamily: 'Inter, system-ui, sans-serif', fontSize: '14px',
+        background: 'transparent',
+        primaryColor: '#eef2ff', primaryTextColor: '#0f172a',
+        primaryBorderColor: '#a5b4fc', lineColor: '#6366f1',
+        secondaryColor: '#f5f3ff', tertiaryColor: '#ffffff',
+        clusterBkg: 'rgba(238,242,255,0.7)', clusterBorder: '#a5b4fc',
+        nodeBorder: '#a5b4fc', mainBkg: '#eef2ff',
+        edgeLabelBackground: '#ffffff', titleColor: '#1e293b' }
+    : { fontFamily: 'Inter, system-ui, sans-serif', fontSize: '14px',
+        background: 'transparent',
+        primaryColor: '#1d2942', primaryTextColor: '#e6ecf5',
+        primaryBorderColor: '#3b4a6a', lineColor: '#5b6b8c',
+        secondaryColor: '#161f33', tertiaryColor: '#0f1626',
+        clusterBkg: 'rgba(15,22,38,0.6)', clusterBorder: '#3b4a6a',
+        nodeBorder: '#3b4a6a', mainBkg: '#1d2942',
+        edgeLabelBackground: '#0a0f1c', titleColor: '#c4cfe2' };
+}
+function initMermaid() {
+  mermaid.initialize({
+    startOnLoad: false, theme: 'base',
+    themeVariables: mermaidThemeVars(),
+    flowchart: { padding: 18, nodeSpacing: 38, rankSpacing: 54,
+                 curve: 'basis', htmlLabels: true, useMaxWidth: true },
+  });
+}
+initMermaid();
 
 // ---- Sidebar ----
 function buildNav() {
@@ -226,17 +250,17 @@ function renderHld(host) {
         ${card(m.cross_layer_edges, 'Cross-layer edges')}
         ${card(m.total_cross_layer_calls, 'Cross-layer calls')}
       </div>
-      <div class="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
-        <div class="space-y-4 min-w-0">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="lg:col-span-2 space-y-4 min-w-0">
+          <div class="panel p-5">
+            <div class="section-h"><h2>Layered architecture</h2>
+              <span class="text-[11px] text-ink-200">live data · hover edges for counts</span></div>
+            <div class="mermaid-host" style="min-height:520px"><pre class="mermaid">${esc(hld.mermaid_layered)}</pre></div>
+          </div>
           <div class="panel p-5">
             <div class="section-h"><h2>System context</h2>
               <span class="text-[11px] text-ink-200">C4-style</span></div>
-            <div class="mermaid-host"><pre class="mermaid">${esc(hld.mermaid_context)}</pre></div>
-          </div>
-          <div class="panel p-5">
-            <div class="section-h"><h2>Layered architecture</h2>
-              <span class="text-[11px] text-ink-200">live data</span></div>
-            <div class="mermaid-host"><pre class="mermaid">${esc(hld.mermaid_layered)}</pre></div>
+            <div class="mermaid-host" style="min-height:280px"><pre class="mermaid">${esc(hld.mermaid_context)}</pre></div>
           </div>
         </div>
         <div class="space-y-4">
@@ -568,6 +592,19 @@ async function load() {
   const hash = (location.hash || '#overview').slice(1);
   activate(VIEWS.find(v => v.id === hash) ? hash : 'overview');
 }
+
+document.getElementById('sb-toggle').addEventListener('click', () => {
+  const collapsed = document.documentElement.classList.toggle('sb-collapsed');
+  try { localStorage.setItem('cg-sb', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
+});
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const light = document.documentElement.classList.toggle('theme-light');
+  try { localStorage.setItem('cg-theme', light ? 'light' : 'dark'); } catch (e) {}
+  // Re-init mermaid with new theme + re-render current view so SVGs redraw.
+  initMermaid();
+  if (state.data) render(state.view);
+});
 
 document.getElementById('rebuild-btn').addEventListener('click', async (e) => {
   const btn = e.currentTarget;

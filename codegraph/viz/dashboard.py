@@ -34,11 +34,19 @@ def _hotspot_scores_by_file(graph: nx.MultiDiGraph) -> dict[str, int]:
 
 
 def _strip_noise(graph: nx.MultiDiGraph) -> nx.MultiDiGraph:
-    drop = [
-        nid for nid, attrs in graph.nodes(data=True)
-        if (isinstance(nid, str) and nid.startswith("unresolved::"))
-        or kind_str(attrs.get("kind")) == "FILE"
-    ]
+    drop: list[str] = []
+    for nid, attrs in graph.nodes(data=True):
+        if isinstance(nid, str) and nid.startswith("unresolved::"):
+            drop.append(nid)
+            continue
+        kind = kind_str(attrs.get("kind"))
+        if kind == "FILE":
+            drop.append(nid)
+            continue
+        # External / language-stub MODULE nodes have no file path and no
+        # symbols inside them; they only clutter sankey + treemap.
+        if kind == "MODULE" and not attrs.get("file"):
+            drop.append(nid)
     if not drop:
         return graph
     g = graph.copy()
