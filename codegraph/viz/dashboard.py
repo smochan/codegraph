@@ -23,6 +23,7 @@ from codegraph.viz.diagrams import (
     render_flow_diagram,
     to_json,
 )
+from codegraph.viz.hld import build_hld
 
 
 def _hotspot_scores_by_file(graph: nx.MultiDiGraph) -> dict[str, int]:
@@ -99,6 +100,7 @@ def render_dashboard(
     treemap = build_treemap(cleaned, hotspot_scores=_hotspot_scores_by_file(cleaned))
     flows = _flows_payload(cleaned, limit=flow_count)
     files = _file_stats(cleaned)
+    hld = build_hld(cleaned)
 
     payload = {
         "metrics": {
@@ -134,6 +136,14 @@ def render_dashboard(
         "treemap": treemap,
         "flows": flows,
         "files": files,
+        "hld": {
+            "layers": hld.layers,
+            "components": hld.components,
+            "edges": hld.edges,
+            "metrics": hld.metrics,
+            "mermaid_layered": hld.mermaid_layered,
+            "mermaid_context": hld.mermaid_context,
+        },
     }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,6 +257,46 @@ input.search { width: 100%; padding: 8px 10px; background: #0b1220; color: var(-
 .iframe-views a:hover { border-color: var(--accent); }
 .iframe-views .t { font-weight: 600; font-size: 14px; }
 .iframe-views .d { color: var(--muted); font-size: 12px; margin-top: 4px; }
+/* ---- HLD ---- */
+.hld-grid { display: grid; grid-template-columns: 1fr 320px; gap: 18px;
+       align-items: start; }
+.hld-mini-cards { display: grid; grid-template-columns: repeat(4, 1fr);
+       gap: 10px; margin-bottom: 16px; }
+.hld-card { background: var(--panel); border: 1px solid var(--border);
+       border-radius: 10px; padding: 14px 16px; }
+.hld-card .num { font-size: 22px; font-weight: 600; }
+.hld-card .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.08em; margin-top: 4px; }
+.hld-canvas { background: #0f172a; border: 1px solid var(--border);
+       border-radius: 12px; padding: 22px; overflow: auto; }
+.hld-canvas h3 { margin: 0 0 14px; font-size: 12px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.1em; }
+.hld-canvas + .hld-canvas { margin-top: 18px; }
+.hld-canvas .mermaid { display: flex; justify-content: center; }
+.hld-canvas .mermaid svg { max-width: 100%; height: auto; }
+.hld-side { background: var(--panel); border: 1px solid var(--border);
+       border-radius: 10px; padding: 16px; position: sticky; top: 90px;
+       max-height: calc(100vh - 110px); overflow-y: auto; }
+.hld-side h3 { margin: 0 0 10px; font-size: 12px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.1em; }
+.layer-row { display: flex; align-items: center; gap: 10px; padding: 8px 6px;
+       border-radius: 6px; }
+.layer-row:hover { background: #1a2540; }
+.layer-swatch { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+.layer-row .meta { font-size: 11px; color: var(--muted); }
+.legend-edges { font-size: 12px; margin-top: 14px; }
+.legend-edges .row { display: flex; justify-content: space-between;
+       padding: 4px 0; border-bottom: 1px solid var(--border); }
+.legend-edges .row:last-child { border-bottom: none; }
+.legend-edges b { font-weight: 500; color: var(--fg); }
+.help-card { background: linear-gradient(135deg,#1a2540,#0f172a);
+       border: 1px solid var(--accent); border-radius: 10px; padding: 16px 18px;
+       margin-bottom: 18px; font-size: 13px; color: var(--fg); }
+.help-card b { color: var(--accent); }
+@media (max-width: 1100px) {
+  .hld-grid { grid-template-columns: 1fr; }
+  .hld-side { position: static; max-height: none; }
+}
 </style></head><body>
 <header>
   <h1>codegraph dashboard <small>multi-view code intelligence</small></h1>
@@ -255,6 +305,7 @@ input.search { width: 100%; padding: 8px 10px; background: #0b1220; color: var(-
 <div class="tooltip" id="tt"></div>
 <main>
   <section class="panel active" id="p-overview"></section>
+  <section class="panel" id="p-hld"></section>
   <section class="panel" id="p-architecture"></section>
   <section class="panel" id="p-flows"></section>
   <section class="panel" id="p-matrix"></section>
@@ -266,6 +317,7 @@ input.search { width: 100%; padding: 8px 10px; background: #0b1220; color: var(-
 const DATA = __DATA__;
 const TABS = [
   {id: "overview",     label: "Overview"},
+  {id: "hld",          label: "HLD"},
   {id: "architecture", label: "Architecture"},
   {id: "flows",        label: "Flows"},
   {id: "matrix",       label: "Matrix"},
@@ -291,6 +343,7 @@ function activate(id) {
   if (id === "sankey")  drawSankey();
   if (id === "treemap") drawTreemap();
   if (id === "flows")   ensureFlow();
+  if (id === "hld")     ensureHld();
 }
 activate("overview");
 
@@ -313,6 +366,12 @@ function renderOverview() {
     + `<td class="num">${h.fan_in}</td><td class="num">${h.fan_out}</td>`
     + `<td class="num">${h.loc}</td><td class="num">${h.score}</td></tr>`).join("");
   document.getElementById("p-overview").innerHTML = `
+    <div class="help-card">
+      <b>Where to start?</b> Open the <b>HLD</b> tab for a clean layered
+      architecture diagram. Use <b>Flows</b> to follow specific call chains.
+      The <b>Matrix</b> shows who calls whom; the <b>Sankey</b> shows the
+      heaviest flows. Cards below summarise the whole repo.
+    </div>
     <div class="cards">
       ${card(m.nodes, "Nodes")}
       ${card(m.edges, "Edges")}
@@ -332,6 +391,73 @@ function renderOverview() {
       ${hotspots}</table></div>`;
 }
 renderOverview();
+
+// ---- HLD (hand-rolled, lazy-rendered) ----
+let hldBuilt = false;
+function ensureHld() {
+  if (hldBuilt) return;
+  hldBuilt = true;
+  const hld = DATA.hld;
+  if (!hld) {
+    document.getElementById("p-hld").innerHTML =
+      '<div class="empty">No HLD payload — rebuild the dashboard.</div>';
+    return;
+  }
+  const m = hld.metrics;
+  const card = (n, l) => `<div class="hld-card"><div class="num">${n}</div>`
+    + `<div class="lbl">${l}</div></div>`;
+
+  const layerSide = hld.layers.filter(L => (hld.components[L.id] || []).length)
+    .map(L => {
+      const comps = hld.components[L.id] || [];
+      return `<div class="layer-row">
+        <div class="layer-swatch" style="background:${L.color}"></div>
+        <div><div><b>${L.title}</b></div>
+        <div class="meta">${comps.length} module${comps.length===1?"":"s"} - ${escapeHtml(L.subtitle)}</div></div>
+      </div>`;
+    }).join("");
+
+  const edgeRows = hld.edges.slice(0, 20).map(e => {
+    const sl = hld.layers.find(L => L.id === e.source) || {title: e.source};
+    const tl = hld.layers.find(L => L.id === e.target) || {title: e.target};
+    return `<div class="row"><span>${sl.title} <span class="muted">--></span> ${tl.title} `
+      + `<span class="muted">(${e.kind.toLowerCase()})</span></span><b>${e.weight}</b></div>`;
+  }).join("");
+
+  document.getElementById("p-hld").innerHTML = `
+    <div class="help-card">
+      <b>How to read this page.</b> Top diagram = system context (who uses what).
+      Below = layered architecture: each colored band is a layer, each box is a
+      Python module, arrow labels show how many calls/imports cross that
+      boundary. Thicker arrows = heavier traffic. Use Cmd/Ctrl + scroll to zoom.
+    </div>
+    <div class="hld-mini-cards">
+      ${card(m.layers, "Layers")}
+      ${card(m.components, "Modules")}
+      ${card(m.cross_layer_edges, "Cross-layer edges")}
+      ${card(m.total_cross_layer_calls, "Cross-layer calls")}
+    </div>
+    <div class="hld-grid">
+      <div>
+        <div class="hld-canvas">
+          <h3>System context</h3>
+          <pre class="mermaid" id="hld-context">${escapeHtml(hld.mermaid_context)}</pre>
+        </div>
+        <div class="hld-canvas">
+          <h3>Layered architecture (live data)</h3>
+          <pre class="mermaid" id="hld-layered">${escapeHtml(hld.mermaid_layered)}</pre>
+        </div>
+      </div>
+      <aside class="hld-side">
+        <h3>Layers</h3>
+        ${layerSide}
+        <h3 style="margin-top:18px">Top cross-layer flows</h3>
+        <div class="legend-edges">${edgeRows || '<div class="muted">none</div>'}</div>
+      </aside>
+    </div>`;
+  mermaid.run({nodes: document.querySelectorAll("#p-hld .mermaid")});
+}
+
 
 // ---- architecture (links to pyvis pages) ----
 function renderArchitecture() {
