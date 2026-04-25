@@ -147,6 +147,7 @@ def build_dashboard_payload(
             "layers": hld.layers,
             "components": hld.components,
             "edges": hld.edges,
+            "modules": hld.modules,
             "metrics": hld.metrics,
             "mermaid_layered": hld.mermaid_layered,
             "mermaid_context": hld.mermaid_context,

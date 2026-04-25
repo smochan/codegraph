@@ -112,9 +112,79 @@ class HldPayload:
     layers: list[dict[str, Any]]
     edges: list[dict[str, Any]]      # cross-layer call edges with weight
     components: dict[str, list[dict[str, Any]]]  # layer_id -> modules
+    modules: dict[str, dict[str, Any]]  # module_qualname -> drill-down info
     mermaid_layered: str
     mermaid_context: str
     metrics: dict[str, int]
+
+
+def _build_modules_drilldown(
+    graph: nx.MultiDiGraph,
+    node_to_layer: dict[str, str],
+    node_to_module: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Per-module symbol breakdown with direct call relations.
+
+    Used by the HLD navigator UI to drill from layer -> module -> symbol
+    -> (callers / callees) without leaving the page.
+    """
+    modules: dict[str, dict[str, Any]] = {}
+    for nid, attrs in graph.nodes(data=True):
+        if kind_str(attrs.get("kind")) != "MODULE":
+            continue
+        qn = str(attrs.get("qualname") or "")
+        lid = node_to_layer.get(nid)
+        if not qn or not lid:
+            continue
+        modules.setdefault(qn, {
+            "qualname": qn, "name": _short_name(qn), "layer": lid,
+            "file": str(attrs.get("file") or ""), "symbols": [],
+        })
+
+    out_calls: dict[str, list[str]] = defaultdict(list)
+    in_calls: dict[str, list[str]] = defaultdict(list)
+    for src, dst, data in graph.edges(data=True):
+        if kind_str(data.get("kind")) != "CALLS":
+            continue
+        src_qn = graph.nodes[src].get("qualname")
+        dst_qn = graph.nodes[dst].get("qualname")
+        if dst_qn:
+            out_calls[src].append(str(dst_qn))
+        if src_qn:
+            in_calls[dst].append(str(src_qn))
+
+    sym_by_module: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for nid, attrs in graph.nodes(data=True):
+        kind = kind_str(attrs.get("kind"))
+        if kind not in ("FUNCTION", "METHOD", "CLASS"):
+            continue
+        mqn = node_to_module.get(nid)
+        if not mqn or mqn not in modules:
+            continue
+        sym_qn = str(attrs.get("qualname") or "")
+        line = attrs.get("line_start") or 0
+        try:
+            line_int = int(line)
+        except (TypeError, ValueError):
+            line_int = 0
+        sym = {
+            "qualname": sym_qn,
+            "name": _short_name(sym_qn) or str(attrs.get("name") or ""),
+            "kind": kind,
+            "line": line_int,
+            "fan_in": len(in_calls.get(nid, [])),
+            "fan_out": len(out_calls.get(nid, [])),
+            "callers": sorted(set(in_calls.get(nid, [])))[:14],
+            "callees": sorted(set(out_calls.get(nid, [])))[:14],
+        }
+        sym_by_module[mqn].append(sym)
+
+    for mqn, syms in sym_by_module.items():
+        syms.sort(key=lambda s: (
+            0 if s["kind"] == "CLASS" else 1, -int(s["fan_in"]), s["name"]
+        ))
+        modules[mqn]["symbols"] = syms
+    return modules
 
 
 def build_hld(graph: nx.MultiDiGraph) -> HldPayload:
@@ -186,6 +256,7 @@ def build_hld(graph: nx.MultiDiGraph) -> HldPayload:
         ],
         edges=edges,
         components=dict(components),
+        modules=_build_modules_drilldown(graph, node_to_layer, node_to_module),
         mermaid_layered=mermaid_layered,
         mermaid_context=mermaid_context,
         metrics=metrics,

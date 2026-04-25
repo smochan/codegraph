@@ -433,3 +433,139 @@ html.theme-light .flow-item.active {
 }
 html.theme-light .qn-mono .qn-key { color: var(--txt-0); }
 html.theme-light .swatch { box-shadow: 0 0 0 1px rgba(15,23,42,0.15), inset 0 1px 0 rgba(255,255,255,0.6); }
+
+/* ---------- Semantic text helpers (theme-aware) ---------- */
+.text-app   { color: var(--txt-0); }
+.text-app-1 { color: var(--txt-1); }
+.text-app-2 { color: var(--txt-2); }
+.text-app-3 { color: var(--txt-3); }
+
+/* ---------- HLD Navigator ---------- */
+.hld-cols {
+  display: grid; gap: 12px;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1.3fr);
+  background: rgba(15,22,38,0.4);
+  border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px;
+}
+@media (max-width: 900px) { .hld-cols { grid-template-columns: 1fr; } }
+.hld-col {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px;
+  max-height: 460px; overflow-y: auto;
+}
+.hld-col-h {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--txt-2);
+  padding: 4px 8px 8px;
+}
+.hld-row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 9px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .12s, border-color .12s;
+}
+.hld-row:hover { background: rgba(99,102,241,0.08); }
+.hld-row.active {
+  background: linear-gradient(90deg, rgba(99,102,241,0.18), rgba(99,102,241,0.04));
+  border-color: rgba(129,140,248,0.4);
+}
+.hld-row-t {
+  font-size: 13px; font-weight: 500; color: var(--txt-0);
+  line-height: 1.35; word-break: break-word;
+}
+.hld-row-s {
+  font-size: 11px; color: var(--txt-2);
+  margin-top: 2px; word-break: break-all;
+}
+.hld-ico   { width: 14px; height: 14px; flex: none; color: var(--txt-2); }
+.hld-chev  { width: 14px; height: 14px; flex: none; color: var(--txt-3); }
+.hld-empty { padding: 14px 10px; font-size: 12px; color: var(--txt-3); font-style: italic; }
+
+.hld-crumb {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--txt-2); flex-wrap: wrap;
+}
+.crumb-link { color: var(--brand); cursor: pointer; }
+.crumb-link:hover { text-decoration: underline; }
+.crumb-sep { color: var(--txt-3); }
+
+.hld-detail {
+  margin-top: 14px;
+}
+.hld-detail:empty { display: none; }
+.hld-detail-head {
+  background: rgba(99,102,241,0.06);
+  border: 1px solid rgba(129,140,248,0.25);
+  border-radius: 10px; padding: 12px 14px;
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.hld-detail-title {
+  font-size: 14px; font-weight: 600; color: var(--txt-0);
+  word-break: break-word; line-height: 1.35;
+}
+.hld-detail-meta {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  margin-top: 6px;
+}
+.call-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; border-radius: 7px; cursor: pointer;
+  font-size: 12.5px; color: var(--txt-1);
+  border: 1px solid transparent;
+  transition: background .12s, border-color .12s;
+}
+.call-row:hover {
+  background: rgba(99,102,241,0.08);
+  border-color: rgba(129,140,248,0.3);
+}
+.call-row .hld-ico { color: var(--brand); }
+
+/* =========================================================
+   Light theme: override Tailwind ink-* utilities so they
+   read as theme-aware values. Tailwind CDN injects fixed
+   hex; we win with !important + html.theme-light prefix.
+   ========================================================= */
+html.theme-light {
+  /* Body text default */
+  color: var(--txt-0);
+}
+html.theme-light .text-ink-50,
+html.theme-light .text-ink-100  { color: var(--txt-0) !important; }
+html.theme-light .text-ink-200  { color: var(--txt-2) !important; }
+html.theme-light .text-ink-300  { color: var(--txt-3) !important; }
+html.theme-light .text-ink-950  { color: #ffffff !important; }
+html.theme-light .bg-ink-600,
+html.theme-light .bg-ink-700,
+html.theme-light .bg-ink-700\/60,
+html.theme-light .bg-ink-700\/80,
+html.theme-light .bg-ink-700\/95,
+html.theme-light .bg-ink-900,
+html.theme-light .bg-ink-900\/70,
+html.theme-light .bg-ink-900\/80,
+html.theme-light .bg-ink-950 {
+  background-color: rgba(255,255,255,0.78) !important;
+}
+html.theme-light .border-ink-500\/60,
+html.theme-light .border-ink-500\/80,
+html.theme-light .border-ink-600,
+html.theme-light .border-ink-600\/60 {
+  border-color: var(--line-strong) !important;
+}
+html.theme-light input,
+html.theme-light input.search { color: var(--txt-0); }
+html.theme-light .text-accent-amber { color: #b45309 !important; }
+html.theme-light .text-accent-rose  { color: #be123c !important; }
+html.theme-light .hld-col       { background: #ffffff; }
+html.theme-light .hld-cols      { background: rgba(99,102,241,0.04); }
+html.theme-light .hld-detail-head { background: rgba(99,102,241,0.06); }
+html.theme-light .stat-num      { color: var(--txt-0); }
+html.theme-light .stat-lbl      { color: var(--txt-2); }
+html.theme-light .nav-item      { color: var(--txt-2); }
+html.theme-light .nav-item:hover,
+html.theme-light .nav-item.active { color: var(--txt-0); }
+html.theme-light table.data td  { color: var(--txt-1); }
+html.theme-light table.data th  { color: var(--txt-2); }
+html.theme-light .toast         { color: var(--txt-0); }
+html.theme-light .pill          { color: var(--txt-1); }

@@ -208,41 +208,23 @@ function renderOverview(host) {
 }
 
 // ---------- HLD ----------
+const hldNav = { layer: null, module: null, symbol: null };
+
 function renderHld(host) {
   const hld = state.data.hld;
-  if (!hld) { host.innerHTML = '<div class="p-8 text-ink-200">No HLD payload.</div>'; return; }
+  if (!hld) { host.innerHTML = '<div class="text-app-2 p-8">No HLD payload.</div>'; return; }
   const m = hld.metrics;
   const card = (n, l) => `
     <div class="stat-card"><div class="stat-num">${n}</div>
     <div class="stat-lbl">${l}</div></div>`;
-  const layerRow = L => {
-    const c = (hld.components[L.id] || []).length;
-    return `<div class="flex items-center gap-3 p-2 rounded-md hover:bg-ink-700/60 transition">
-      <div class="swatch" style="background:${L.color}"></div>
-      <div class="flex-1 min-w-0">
-        <div class="text-[13px] font-medium text-ink-50 truncate">${esc(L.title)}</div>
-        <div class="text-[11px] text-ink-200 truncate">${c} module${c===1?'':'s'} · ${esc(L.subtitle)}</div>
-      </div>
-      <span class="pill">${c}</span>
-    </div>`;
-  };
-  const edgeRow = e => {
-    const sl = hld.layers.find(L => L.id === e.source) || {title: e.source};
-    const tl = hld.layers.find(L => L.id === e.target) || {title: e.target};
-    return `<tr><td>${esc(sl.title)}</td>
-      <td class="text-ink-200 text-center">→</td>
-      <td>${esc(tl.title)}</td>
-      <td class="num"><span class="pill ${e.kind==='CALLS'?'pill-cool':''}">${e.weight}</span></td>
-      <td class="text-ink-200 text-[11px] uppercase tracking-wider">${e.kind}</td></tr>`;
-  };
 
   host.innerHTML = `
     <div class="p-8 space-y-6 max-w-7xl mx-auto">
       <div class="help-card">
         <i data-lucide="map" class="icon w-4 h-4"></i>
-        <div><b>How to read this.</b> Top diagram = system context (the world the CLI lives in).
-        Below = layered architecture: each colored band is a layer of the codebase, each box inside is a Python module
-        (label = name, badge = symbol count). Arrow labels show real call/import counts crossing layer boundaries; thicker arrows = heavier traffic.</div>
+        <div><b>How to read this.</b> The diagram below is the system at a glance. Use the
+        <b>Navigator</b> to drill: <i>Layer → Module → Symbol</i>. Selecting a symbol shows
+        what it calls and who calls it — click any of those to jump straight to that symbol.</div>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         ${card(m.layers, 'Layers')}
@@ -250,35 +232,215 @@ function renderHld(host) {
         ${card(m.cross_layer_edges, 'Cross-layer edges')}
         ${card(m.total_cross_layer_calls, 'Cross-layer calls')}
       </div>
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div class="lg:col-span-2 space-y-4 min-w-0">
-          <div class="panel p-5">
-            <div class="section-h"><h2>Layered architecture</h2>
-              <span class="text-[11px] text-ink-200">live data · hover edges for counts</span></div>
-            <div class="mermaid-host" style="min-height:520px"><pre class="mermaid">${esc(hld.mermaid_layered)}</pre></div>
-          </div>
-          <div class="panel p-5">
-            <div class="section-h"><h2>System context</h2>
-              <span class="text-[11px] text-ink-200">C4-style</span></div>
-            <div class="mermaid-host" style="min-height:280px"><pre class="mermaid">${esc(hld.mermaid_context)}</pre></div>
-          </div>
+      <div class="panel p-5">
+        <div class="section-h"><h2>Layered architecture</h2>
+          <span class="text-[11px] text-app-2">live data · hover edges for counts</span></div>
+        <div class="mermaid-host" style="min-height:480px"><pre class="mermaid">${esc(hld.mermaid_layered)}</pre></div>
+      </div>
+      <div class="panel p-5">
+        <div class="section-h">
+          <h2>Navigator</h2>
+          <div id="hld-crumb" class="hld-crumb"></div>
         </div>
-        <div class="space-y-4">
-          <div class="panel p-5">
-            <div class="section-h"><h2>Layers</h2></div>
-            <div class="space-y-1">${hld.layers.filter(L=>(hld.components[L.id]||[]).length).map(layerRow).join('')}</div>
+        <div class="hld-cols">
+          <div class="hld-col" id="hld-col-layers"></div>
+          <div class="hld-col" id="hld-col-modules"></div>
+          <div class="hld-col" id="hld-col-symbols"></div>
+        </div>
+        <div id="hld-detail" class="hld-detail"></div>
+      </div>
+      <div class="panel p-5">
+        <div class="section-h"><h2>System context</h2>
+          <span class="text-[11px] text-app-2">C4-style</span></div>
+        <div class="mermaid-host" style="min-height:240px"><pre class="mermaid">${esc(hld.mermaid_context)}</pre></div>
+      </div>
+    </div>`;
+
+  if (hldNav.layer && !(hld.components[hldNav.layer] || []).length) hldNav.layer = null;
+  hldRenderNav();
+  mermaid.run({ nodes: host.querySelectorAll('.mermaid') });
+}
+
+function hldRenderNav() {
+  const hld = state.data.hld;
+  const layers = hld.layers.filter(L => (hld.components[L.id] || []).length);
+
+  const colLayers = document.getElementById('hld-col-layers');
+  const colMods   = document.getElementById('hld-col-modules');
+  const colSyms   = document.getElementById('hld-col-symbols');
+  const crumb     = document.getElementById('hld-crumb');
+  const detail    = document.getElementById('hld-detail');
+
+  // ---- Layers column
+  colLayers.innerHTML = `<div class="hld-col-h">Layers</div>` +
+    layers.map(L => {
+      const n = (hld.components[L.id] || []).length;
+      const active = hldNav.layer === L.id ? ' active' : '';
+      return `<div class="hld-row${active}" data-layer="${L.id}">
+        <span class="swatch" style="background:${L.color}"></span>
+        <div class="flex-1 min-w-0">
+          <div class="hld-row-t">${esc(L.title)}</div>
+          <div class="hld-row-s">${esc(L.subtitle)}</div>
+        </div>
+        <span class="pill">${n}</span>
+        <i data-lucide="chevron-right" class="hld-chev"></i>
+      </div>`;
+    }).join('');
+  colLayers.querySelectorAll('[data-layer]').forEach(el => {
+    el.onclick = () => { hldNav.layer = el.dataset.layer;
+      hldNav.module = null; hldNav.symbol = null; hldRenderNav(); };
+  });
+
+  // ---- Modules column
+  if (!hldNav.layer) {
+    colMods.innerHTML = `<div class="hld-col-h">Modules</div>
+      <div class="hld-empty">Pick a layer →</div>`;
+  } else {
+    const modules = (hld.components[hldNav.layer] || [])
+      .slice().sort((a, b) => b.symbols - a.symbols);
+    colMods.innerHTML = `<div class="hld-col-h">Modules · ${esc(layerTitle(hldNav.layer))}</div>` +
+      modules.map(c => {
+        const active = hldNav.module === c.qualname ? ' active' : '';
+        return `<div class="hld-row${active}" data-module="${esc(c.qualname)}">
+          <i data-lucide="package" class="hld-ico"></i>
+          <div class="flex-1 min-w-0">
+            <div class="hld-row-t qn-mono">${formatQn(c.qualname, {maxParts: 2})}</div>
+            <div class="hld-row-s">${esc(c.file || '')}</div>
           </div>
-          <div class="panel p-5">
-            <div class="section-h"><h2>Top cross-layer flows</h2></div>
-            <table class="data">
-              <thead><tr><th>From</th><th></th><th>To</th><th class="num">Wt</th><th>Kind</th></tr></thead>
-              <tbody>${hld.edges.slice(0, 18).map(edgeRow).join('') || '<tr><td colspan="5" class="text-ink-200">none</td></tr>'}</tbody>
-            </table>
+          <span class="pill">${c.symbols}</span>
+          <i data-lucide="chevron-right" class="hld-chev"></i>
+        </div>`;
+      }).join('') || '<div class="hld-empty">No modules.</div>';
+    colMods.querySelectorAll('[data-module]').forEach(el => {
+      el.onclick = () => { hldNav.module = el.dataset.module;
+        hldNav.symbol = null; hldRenderNav(); };
+    });
+  }
+
+  // ---- Symbols column
+  if (!hldNav.module) {
+    colSyms.innerHTML = `<div class="hld-col-h">Symbols</div>
+      <div class="hld-empty">Pick a module →</div>`;
+  } else {
+    const mod = (hld.modules || {})[hldNav.module];
+    const symbols = mod ? (mod.symbols || []) : [];
+    colSyms.innerHTML = `<div class="hld-col-h">Symbols · ${esc(shortQn(hldNav.module))}</div>` +
+      (symbols.length
+        ? symbols.map(s => {
+            const active = hldNav.symbol === s.qualname ? ' active' : '';
+            return `<div class="hld-row${active}" data-symbol="${esc(s.qualname)}">
+              <i data-lucide="${kindIcon(s.kind)}" class="hld-ico" style="color:${kindColor(s.kind)}"></i>
+              <div class="flex-1 min-w-0">
+                <div class="hld-row-t qn-mono">${esc(s.name)}</div>
+                <div class="hld-row-s">${s.kind} · L${s.line || '?'}</div>
+              </div>
+              <span class="pill" title="fan-in / fan-out">${s.fan_in}/${s.fan_out}</span>
+            </div>`;
+          }).join('')
+        : '<div class="hld-empty">No symbols recorded.</div>');
+    colSyms.querySelectorAll('[data-symbol]').forEach(el => {
+      el.onclick = () => { hldNav.symbol = el.dataset.symbol; hldRenderNav(); };
+    });
+  }
+
+  // ---- Crumb
+  const parts = [];
+  parts.push(`<a class="crumb-link" data-jump="root">All layers</a>`);
+  if (hldNav.layer) parts.push(`<span class="crumb-sep">/</span>
+    <a class="crumb-link" data-jump="layer">${esc(layerTitle(hldNav.layer))}</a>`);
+  if (hldNav.module) parts.push(`<span class="crumb-sep">/</span>
+    <a class="crumb-link qn-mono" data-jump="module">${esc(shortQn(hldNav.module))}</a>`);
+  if (hldNav.symbol) parts.push(`<span class="crumb-sep">/</span>
+    <span class="qn-mono">${esc(shortQn(hldNav.symbol))}</span>`);
+  crumb.innerHTML = parts.join(' ');
+  crumb.querySelectorAll('[data-jump]').forEach(el => {
+    el.onclick = () => {
+      if (el.dataset.jump === 'root') { hldNav.layer = hldNav.module = hldNav.symbol = null; }
+      else if (el.dataset.jump === 'layer') { hldNav.module = hldNav.symbol = null; }
+      else if (el.dataset.jump === 'module') { hldNav.symbol = null; }
+      hldRenderNav();
+    };
+  });
+
+  // ---- Detail panel (only when a symbol is selected)
+  if (hldNav.symbol) {
+    const mod = (hld.modules || {})[hldNav.module];
+    const sym = mod && (mod.symbols || []).find(s => s.qualname === hldNav.symbol);
+    if (sym) detail.innerHTML = symbolDetailHtml(sym, mod);
+    detail.querySelectorAll('[data-jumpqn]').forEach(el => {
+      el.onclick = () => jumpToQualname(el.dataset.jumpqn);
+    });
+  } else {
+    detail.innerHTML = '';
+  }
+
+  lucide.createIcons();
+}
+
+function symbolDetailHtml(sym, mod) {
+  const callRow = qn => `<div class="call-row" data-jumpqn="${esc(qn)}">
+    <i data-lucide="arrow-right" class="hld-ico"></i>
+    <span class="qn-mono">${formatQn(qn, {maxParts: 3})}</span></div>`;
+  const callerRow = qn => `<div class="call-row" data-jumpqn="${esc(qn)}">
+    <i data-lucide="arrow-left" class="hld-ico"></i>
+    <span class="qn-mono">${formatQn(qn, {maxParts: 3})}</span></div>`;
+
+  return `
+    <div class="hld-detail-head">
+      <div class="flex items-start gap-3 min-w-0 flex-1">
+        <i data-lucide="${kindIcon(sym.kind)}" class="hld-ico" style="color:${kindColor(sym.kind)};margin-top:6px"></i>
+        <div class="min-w-0">
+          <div class="hld-detail-title qn-mono">${formatQn(sym.qualname, {maxParts: 5})}</div>
+          <div class="hld-detail-meta">
+            <span class="pill">${sym.kind}</span>
+            <span class="pill">L${sym.line || '?'}</span>
+            <span class="pill pill-cool" title="fan-in">in: ${sym.fan_in}</span>
+            <span class="pill pill-warm" title="fan-out">out: ${sym.fan_out}</span>
+            <span class="text-[11px] text-app-2">${esc(mod ? mod.file : '')}</span>
           </div>
         </div>
       </div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+      <div>
+        <div class="hld-col-h flex items-center gap-1.5"><i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>Called by (${sym.fan_in})</div>
+        ${(sym.callers && sym.callers.length)
+          ? sym.callers.map(callerRow).join('')
+          : '<div class="hld-empty">No callers in graph.</div>'}
+      </div>
+      <div>
+        <div class="hld-col-h flex items-center gap-1.5"><i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>Calls (${sym.fan_out})</div>
+        ${(sym.callees && sym.callees.length)
+          ? sym.callees.map(callRow).join('')
+          : '<div class="hld-empty">Calls nothing tracked.</div>'}
+      </div>
     </div>`;
-  mermaid.run({ nodes: host.querySelectorAll('.mermaid') });
+}
+
+function jumpToQualname(qn) {
+  // Find the module that owns this qualname (longest prefix match) and select it.
+  const mods = (state.data.hld.modules || {});
+  const candidates = Object.keys(mods).filter(mq => qn === mq || qn.startsWith(mq + '.'));
+  if (!candidates.length) return;
+  const mqn = candidates.sort((a, b) => b.length - a.length)[0];
+  const mod = mods[mqn];
+  hldNav.layer = mod.layer;
+  hldNav.module = mqn;
+  hldNav.symbol = (mod.symbols || []).some(s => s.qualname === qn) ? qn : null;
+  hldRenderNav();
+}
+
+function layerTitle(id) {
+  const L = (state.data.hld.layers || []).find(x => x.id === id);
+  return L ? L.title : id;
+}
+function kindIcon(k) {
+  return k === 'CLASS' ? 'box' : k === 'METHOD' ? 'corner-down-right' : 'function-square';
+}
+function kindColor(k) {
+  return k === 'CLASS' ? 'var(--accent-violet)'
+       : k === 'METHOD' ? 'var(--accent-cyan)'
+       : 'var(--accent-emerald)';
 }
 
 // ---------- Flows ----------
