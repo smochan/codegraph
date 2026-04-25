@@ -222,9 +222,7 @@ function renderHld(host) {
     <div class="p-8 space-y-6 max-w-7xl mx-auto">
       <div class="help-card">
         <i data-lucide="map" class="icon w-4 h-4"></i>
-        <div><b>How to read this.</b> The diagram below is the system at a glance. Use the
-        <b>Navigator</b> to drill: <i>Layer → Module → Symbol</i>. Selecting a symbol shows
-        what it calls and who calls it — click any of those to jump straight to that symbol.</div>
+        <div><b>How to read this.</b> Top = system context. Below = the layered architecture (heaviest modules per layer; <code>+N more</code> means more exist — see Navigator). The <b>Navigator</b> drills <i>Layer → Module → Symbol</i>; selecting a symbol draws a live focus graph of who calls it and what it calls.</div>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         ${card(m.layers, 'Layers')}
@@ -233,9 +231,14 @@ function renderHld(host) {
         ${card(m.total_cross_layer_calls, 'Cross-layer calls')}
       </div>
       <div class="panel p-5">
+        <div class="section-h"><h2>System context</h2>
+          <span class="text-[11px] text-app-2">C4-style</span></div>
+        <div class="mermaid-host" style="min-height:240px"><pre class="mermaid">${esc(hld.mermaid_context)}</pre></div>
+      </div>
+      <div class="panel p-5">
         <div class="section-h"><h2>Layered architecture</h2>
-          <span class="text-[11px] text-app-2">live data · hover edges for counts</span></div>
-        <div class="mermaid-host" style="min-height:480px"><pre class="mermaid">${esc(hld.mermaid_layered)}</pre></div>
+          <span class="text-[11px] text-app-2">top modules per layer · <code>+N more</code> = drill in Navigator</span></div>
+        <div class="mermaid-host" style="min-height:520px"><pre class="mermaid">${esc(hld.mermaid_layered)}</pre></div>
       </div>
       <div class="panel p-5">
         <div class="section-h">
@@ -248,11 +251,7 @@ function renderHld(host) {
           <div class="hld-col" id="hld-col-symbols"></div>
         </div>
         <div id="hld-detail" class="hld-detail"></div>
-      </div>
-      <div class="panel p-5">
-        <div class="section-h"><h2>System context</h2>
-          <span class="text-[11px] text-app-2">C4-style</span></div>
-        <div class="mermaid-host" style="min-height:240px"><pre class="mermaid">${esc(hld.mermaid_context)}</pre></div>
+        <svg id="hld-focus" class="hld-focus" style="display:none"></svg>
       </div>
     </div>`;
 
@@ -362,7 +361,8 @@ function hldRenderNav() {
     };
   });
 
-  // ---- Detail panel (only when a symbol is selected)
+  // ---- Detail panel + focus graph (only when a symbol is selected)
+  const focus = document.getElementById('hld-focus');
   if (hldNav.symbol) {
     const mod = (hld.modules || {})[hldNav.module];
     const sym = mod && (mod.symbols || []).find(s => s.qualname === hldNav.symbol);
@@ -370,8 +370,10 @@ function hldRenderNav() {
     detail.querySelectorAll('[data-jumpqn]').forEach(el => {
       el.onclick = () => jumpToQualname(el.dataset.jumpqn);
     });
+    if (sym) drawFocusGraph(focus, sym);
   } else {
     detail.innerHTML = '';
+    if (focus) { focus.style.display = 'none'; focus.innerHTML = ''; }
   }
 
   lucide.createIcons();
@@ -441,6 +443,99 @@ function kindColor(k) {
   return k === 'CLASS' ? 'var(--accent-violet)'
        : k === 'METHOD' ? 'var(--accent-cyan)'
        : 'var(--accent-emerald)';
+}
+
+/* Radial focus graph for the selected symbol. Center = symbol; left arc =
+   callers; right arc = callees. Edges are dashed and animated (CSS) to give
+   a sense of data flowing inward / outward. Click any node to jump. */
+function drawFocusGraph(svg, sym) {
+  if (!svg) return;
+  const callers = (sym.callers || []).slice(0, 8);
+  const callees = (sym.callees || []).slice(0, 8);
+  if (!callers.length && !callees.length) {
+    svg.style.display = 'none'; svg.innerHTML = ''; return;
+  }
+  svg.style.display = 'block';
+  d3.select(svg).selectAll('*').remove();
+
+  const W = svg.parentElement.clientWidth - 4;
+  const H = 320;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+
+  const cx = W / 2, cy = H / 2;
+  const R = Math.min(H * 0.42, W * 0.32);
+
+  const arcPositions = (n, side) => {
+    if (n === 0) return [];
+    const span = Math.min(Math.PI * 0.85, 0.5 + n * 0.18);
+    const start = side === 'left' ? Math.PI - span / 2 : -span / 2;
+    return d3.range(n).map(i => {
+      const t = n === 1 ? 0.5 : i / (n - 1);
+      const a = start + t * span;
+      return [cx + R * Math.cos(a), cy + R * Math.sin(a)];
+    });
+  };
+
+  const left  = arcPositions(callers.length, 'left');
+  const right = arcPositions(callees.length, 'right');
+
+  const root = d3.select(svg);
+  const g = root.append('g');
+
+  // Edges (callers → center, center → callees). dashoffset CSS animation.
+  callers.forEach((qn, i) => {
+    const [x, y] = left[i];
+    g.append('path')
+      .attr('class', 'focus-edge focus-in')
+      .attr('d', `M${x},${y} Q${(x+cx)/2},${(y+cy)/2 - 18} ${cx},${cy}`);
+  });
+  callees.forEach((qn, i) => {
+    const [x, y] = right[i];
+    g.append('path')
+      .attr('class', 'focus-edge focus-out')
+      .attr('d', `M${cx},${cy} Q${(cx+x)/2},${(cy+y)/2 - 18} ${x},${y}`);
+  });
+
+  // Caller / callee nodes.
+  const node = (qn, x, y, side) => {
+    const grp = g.append('g')
+      .attr('class', 'focus-node')
+      .attr('transform', `translate(${x},${y})`)
+      .style('cursor', 'pointer')
+      .on('click', () => jumpToQualname(qn));
+    grp.append('circle').attr('r', 8)
+       .attr('class', side === 'in' ? 'focus-dot focus-dot-in' : 'focus-dot focus-dot-out');
+    const label = shortQn(qn);
+    grp.append('text')
+       .attr('y', 22).attr('text-anchor', 'middle')
+       .attr('class', 'focus-label')
+       .text(label.length > 26 ? label.slice(0, 25) + '…' : label);
+  };
+  callers.forEach((qn, i) => node(qn, left[i][0], left[i][1], 'in'));
+  callees.forEach((qn, i) => node(qn, right[i][0], right[i][1], 'out'));
+
+  // Center node.
+  const center = g.append('g').attr('transform', `translate(${cx},${cy})`);
+  center.append('circle').attr('r', 22).attr('class', 'focus-core');
+  center.append('circle').attr('r', 28).attr('class', 'focus-core-ring');
+  center.append('text').attr('y', 5).attr('text-anchor', 'middle')
+        .attr('class', 'focus-core-label')
+        .text(shortQn(sym.qualname).slice(0, 18));
+
+  // Side captions.
+  if (callers.length) {
+    g.append('text').attr('x', 16).attr('y', 22)
+     .attr('class', 'focus-caption')
+     .text(`called by · ${sym.fan_in}`);
+  }
+  if (callees.length) {
+    g.append('text').attr('x', W - 16).attr('y', 22)
+     .attr('text-anchor', 'end')
+     .attr('class', 'focus-caption')
+     .text(`calls · ${sym.fan_out}`);
+  }
 }
 
 // ---------- Flows ----------
@@ -690,14 +785,14 @@ function renderTreemap(host) {
 // ---------- Architecture (links to pyvis) ----------
 function renderArchitecture(host) {
   const tile = (href, title, desc, icon) => `
-    <a href="${href}" class="panel p-5 block hover:border-brand-500 transition group">
+    <a href="${href}" target="_blank" rel="noopener" class="panel p-5 block hover:border-brand-500 transition group">
       <div class="flex items-start gap-3">
-        <div class="w-10 h-10 rounded-lg bg-ink-700 flex items-center justify-center text-brand-500 group-hover:bg-brand-600 group-hover:text-white transition">
+        <div class="w-10 h-10 rounded-lg bg-app-3 flex items-center justify-center text-brand-500 group-hover:bg-brand-600 group-hover:text-white transition">
           <i data-lucide="${icon}" class="w-5 h-5"></i>
         </div>
         <div>
           <div class="font-semibold text-[15px]">${title}</div>
-          <div class="text-[12px] text-ink-200 mt-1 leading-relaxed">${desc}</div>
+          <div class="text-[12px] text-app-2 mt-1 leading-relaxed">${desc}</div>
         </div>
       </div>
     </a>`;
@@ -705,6 +800,10 @@ function renderArchitecture(host) {
     <div class="help-card mb-6">
       <i data-lucide="compass" class="icon w-4 h-4"></i>
       <div><b>Interactive node-link explorers.</b> Force-directed graphs powered by pyvis with in-page search and filtering. Best for hands-on exploration.</div>
+    </div>
+    <div class="help-card pyvis-warn mb-6" style="border-color:rgba(251,191,36,0.4)">
+      <i data-lucide="info" class="icon w-4 h-4" style="color:var(--accent-amber)"></i>
+      <div>Heads-up: pyvis pages have their own dark canvas and don't follow this theme.</div>
     </div>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       ${tile('/architecture.html', 'Architecture', 'One node per module, edges aggregated by kind. Best high-level node-link view.', 'network')}
@@ -719,8 +818,8 @@ function renderFiles(host) {
   const rows = files.map(f => {
     const slug = f.file.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_|_$/g, '') || 'file';
     return `<tr>
-      <td><a class="link" href="/files/${slug}.html"><code>${esc(f.file)}</code></a></td>
-      <td class="text-ink-200">${esc(f.language)}</td>
+      <td><a class="link" href="/files/${slug}.html" target="_blank" rel="noopener"><code>${esc(f.file)}</code></a></td>
+      <td class="text-app-2">${esc(f.language)}</td>
       <td class="num"><span class="pill">${f.symbols}</span></td>
     </tr>`;
   }).join('');
@@ -728,6 +827,10 @@ function renderFiles(host) {
     <div class="help-card mb-6">
       <i data-lucide="folder-tree" class="icon w-4 h-4"></i>
       <div><b>Per-file pyvis pages.</b> Click any file to see its symbols + 1-hop neighbours.</div>
+    </div>
+    <div class="help-card pyvis-warn mb-6" style="border-color:rgba(251,191,36,0.4)">
+      <i data-lucide="info" class="icon w-4 h-4" style="color:var(--accent-amber)"></i>
+      <div>Heads-up: pyvis pages have their own dark canvas and don't follow this theme.</div>
     </div>
     <div class="panel p-5">
       <div class="section-h"><h2>Files (${files.length})</h2></div>

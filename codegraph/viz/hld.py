@@ -280,6 +280,8 @@ def _layer_safe(lid: str) -> str:
 def _render_layered_mermaid(
     components: dict[str, list[dict[str, Any]]],
     edges: list[dict[str, Any]],
+    *,
+    max_per_layer: int = 8,
 ) -> str:
     lines: list[str] = ["flowchart TB"]
     # Subgraphs in declared order.
@@ -287,14 +289,21 @@ def _render_layered_mermaid(
         comps = components.get(lay.id, [])
         if not comps:
             continue
-        lines.append(f'    subgraph {_layer_safe(lay.id)}["<b>{lay.title}</b><br>'
-                     f'<span style=\'opacity:0.6\'>{lay.subtitle}</span>"]')
+        lines.append(f'    subgraph {_layer_safe(lay.id)}["<b>{lay.title}</b>"]')
         lines.append("    direction LR")
-        for c in comps:
+        # Only show the heaviest N modules to keep the diagram readable.
+        ranked = sorted(comps, key=lambda c: -int(c.get("symbols") or 0))
+        shown = ranked[:max_per_layer]
+        hidden = len(ranked) - len(shown)
+        for c in shown:
             qn = c["qualname"]
             label = _short_name(qn)
             badge = f" · {c['symbols']}" if c["symbols"] else ""
             lines.append(f'        {_safe_id(qn)}["{label}{badge}"]')
+        if hidden > 0:
+            lines.append(
+                f'        {_safe_id(lay.id + "_more")}(["+{hidden} more"])'
+            )
         lines.append("    end")
 
     # Aggregate edges to single inter-layer arrows: layer -> layer with total
@@ -323,18 +332,20 @@ def _render_layered_mermaid(
         edge_styles.append((edge_idx, calls + imports))
 
     # Style block: per-layer subgraph fill, edge thickness by weight.
+    # Subgraph backgrounds use a translucent panel color so the diagram
+    # works in both light and dark themes.
     lines.append("")
     for lay in LAYERS:
         if components.get(lay.id):
             lines.append(
                 f"    classDef {lay.id}_node fill:{lay.color},"
-                f"stroke:#1e293b,color:{lay.text_color},rx:6,ry:6"
+                f"stroke:{lay.color},color:#0b1220,rx:8,ry:8"
             )
             for c in components.get(lay.id, []):
                 lines.append(f"    class {_safe_id(c['qualname'])} {lay.id}_node")
             lines.append(
-                f"    style {_layer_safe(lay.id)} fill:#0f172a,stroke:{lay.color},"
-                f"stroke-width:2px,color:#e2e8f0"
+                f"    style {_layer_safe(lay.id)} fill:transparent,"
+                f"stroke:{lay.color},stroke-width:2px,stroke-dasharray:0"
             )
 
     if edge_styles:
@@ -343,7 +354,7 @@ def _render_layered_mermaid(
             thickness = 1 + round((w / max_w) * 4)
             lines.append(
                 f"    linkStyle {idx} stroke:#94a3b8,stroke-width:{thickness}px,"
-                "color:#cbd5e1,fill:none"
+                "fill:none"
             )
 
     return "\n".join(lines)

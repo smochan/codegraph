@@ -345,7 +345,7 @@ html:not(.theme-light) .theme-light-only { display: none !important; }
 
 /* ---------- Sidebar collapsed ---------- */
 html.sb-collapsed #sidebar {
-  width: 64px;
+  width: 64px !important;
 }
 html.sb-collapsed #sidebar .sb-label,
 html.sb-collapsed #sidebar .nav-section,
@@ -569,3 +569,96 @@ html.theme-light table.data td  { color: var(--txt-1); }
 html.theme-light table.data th  { color: var(--txt-2); }
 html.theme-light .toast         { color: var(--txt-0); }
 html.theme-light .pill          { color: var(--txt-1); }
+
+/* ---------- HLD focus graph (D3 SVG) ---------- */
+.hld-focus {
+  display: block; width: 100%; height: 320px;
+  margin-top: 14px; border-radius: 12px;
+  background:
+    radial-gradient(600px 320px at 50% 50%, rgba(99,102,241,0.06), transparent 70%),
+    var(--bg-2);
+  border: 1px solid var(--line);
+}
+.focus-edge {
+  fill: none; stroke-width: 1.5;
+  stroke-dasharray: 6 6;
+  animation: focus-flow 1.6s linear infinite;
+}
+.focus-in  { stroke: var(--accent-cyan);    stroke-dashoffset: 0; }
+.focus-out { stroke: var(--brand);          animation-direction: reverse; }
+@keyframes focus-flow { to { stroke-dashoffset: -24; } }
+.focus-dot       { stroke: var(--bg-1); stroke-width: 2; }
+.focus-dot-in    { fill: var(--accent-cyan); }
+.focus-dot-out   { fill: var(--brand); }
+.focus-core      { fill: var(--brand-strong); stroke: var(--bg-1); stroke-width: 3; }
+.focus-core-ring {
+  fill: none; stroke: var(--brand); stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  animation: focus-spin 8s linear infinite;
+  transform-origin: center;
+}
+@keyframes focus-spin { to { stroke-dashoffset: -64; } }
+.focus-core-label {
+  fill: #ffffff; font-size: 11px; font-weight: 600;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  paint-order: stroke; pointer-events: none;
+}
+.focus-label {
+  fill: var(--txt-1); font-size: 11px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  pointer-events: none;
+}
+.focus-caption {
+  fill: var(--txt-2); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;
+}
+.focus-node:hover .focus-dot { stroke: var(--brand); stroke-width: 3; }
+.focus-node:hover .focus-label { fill: var(--txt-0); }
+
+/* ---------- Sidebar collapse: fully icon-only ---------- */
+html.sb-collapsed #sidebar > div:first-child {
+  /* shrink the header so logo centers nicely */
+  padding: 18px 10px;
+}
+html.sb-collapsed #sidebar > div:first-child > div:last-child { display: none; }
+html.sb-collapsed #sidebar > div:last-child {
+  /* footer (rebuild + last-built) */
+  padding: 8px 8px 12px;
+}
+html.sb-collapsed #sidebar #rebuild-btn span { display: none; }
+html.sb-collapsed #sidebar #last-built { display: none; }
+html.sb-collapsed #sidebar .nav-section { display: none; }
+html.sb-collapsed #sidebar .nav-item span { display: none; }
+html.sb-collapsed #sidebar .nav-item { padding: 9px 0; justify-content: center; }
+html.sb-collapsed #sidebar .nav-item.active { box-shadow: inset 3px 0 0 0 var(--brand); }
+
+/* ---------- Light theme: extra Tailwind utility coverage ---------- */
+html.theme-light .hover\:bg-ink-600:hover,
+html.theme-light .hover\:bg-ink-700:hover,
+html.theme-light .hover\:bg-ink-700\/60:hover { background-color: rgba(99,102,241,0.08) !important; }
+html.theme-light .hover\:border-brand-500:hover { border-color: var(--brand) !important; }
+html.theme-light .text-brand-500 { color: var(--brand) !important; }
+html.theme-light .group:hover .group-hover\:bg-brand-600 { background-color: var(--brand) !important; }
+html.theme-light .group:hover .group-hover\:text-white   { color: #ffffff !important; }
+html.theme-light .from-brand-500   { --tw-gradient-from: #6366f1 var(--tw-gradient-from-position) !important; }
+html.theme-light .via-brand-600    { --tw-gradient-via:  #4f46e5 var(--tw-gradient-via-position) !important; }
+html.theme-light .to-accent-cyan   { --tw-gradient-to:   #0891b2 var(--tw-gradient-to-position) !important; }
+
+/* Crumb / page title default text */
+html.theme-light #page-title { color: var(--txt-0); }
+html.theme-light #crumb      { color: var(--txt-2); }
+
+/* Mermaid container in light mode (reduce harsh contrast) */
+html.theme-light .mermaid-host svg {
+  filter: drop-shadow(0 6px 16px rgba(15,23,42,0.10));
+}
+
+/* Pyvis pages render their own dark bg; in light mode show a thin
+   hint banner above the iframe-style links so users know they open
+   externally and inherit dark styling. */
+html.theme-light .pyvis-warn { display: flex !important; }
+.pyvis-warn { display: none; }
+
+.bg-app-1 { background: var(--bg-1); }
+.bg-app-2 { background: var(--bg-2); }
+.bg-app-3 { background: var(--bg-3); }
