@@ -249,6 +249,30 @@ Then tell the agent which phase to tackle. Suggested prompt:
 - CLI: `codegraph viz --out {mermaid,html,svg} [--output PATH] [--scope X]
   [--limit N] [--no-cluster]`.
 
+### Phase 6.5 — multi-view explorer dashboard
+- ✅ `codegraph/viz/explore.py` builds a folder of linked HTML pages so a real
+  repo can be browsed at multiple zoom levels:
+  - `index.html` — hand-rolled dashboard: project metrics, breakdowns by node /
+    edge kind / language, top hotspots, links to every other view.
+  - `architecture.html` — module-level diagram. CLASS/FUNCTION/METHOD nodes
+    are collapsed into their parent MODULE; CALLS+IMPORTS+INHERITS edges are
+    aggregated with `weight=count` and rendered with proportional thickness
+    plus an `xN` label.
+  - `callgraph.html` — only FUNCTION/METHOD nodes + CALLS edges. Each node is
+    sized by fan-in (callers); top-N degree-ranked when over the cap.
+  - `inheritance.html` — only CLASS nodes + INHERITS/IMPLEMENTS edges.
+  - `files/<slug>.html` — one detail page per top-N most populated file,
+    showing the file's symbols + 1-hop neighbours so cross-file calls remain
+    in context.
+- Every pyvis page exposes the built-in `select_menu` + `filter_menu` so users
+  can search by qualname or filter by group/file/language without leaving the
+  page. All pages use `cdn_resources="in_line"` so the folder works over
+  `file://` with no server.
+- `unresolved::*` ghost nodes and FILE nodes are stripped before rendering so
+  drawings reflect the *real* graph.
+- CLI: `codegraph explore [--output DIR] [--top-files N] [--callgraph-limit N]`.
+  Default output `.codegraph/explore/`.
+
 ### Phase 7 — release
 - Bump to `0.1.0`. Tag on GitHub. Publish to PyPI (`hatch build`, `hatch publish`
   or `uv build` + `twine`). Update README with badges + screenshots. Add `examples/`.

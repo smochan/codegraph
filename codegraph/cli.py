@@ -473,6 +473,43 @@ def analyze(
 
 
 @app.command()
+def explore(
+    output: str = typer.Option(
+        ".codegraph/explore", "--output", "-o", help="Output directory."
+    ),
+    top_files: int = typer.Option(
+        25, "--top-files", help="How many file-detail pages to generate."
+    ),
+    callgraph_limit: int = typer.Option(
+        400,
+        "--callgraph-limit",
+        help="Cap nodes shown on the callgraph page (degree-ranked).",
+    ),
+) -> None:
+    """Build an interactive multi-page dashboard (overview + drill-downs)."""
+    from codegraph.viz.explore import render_explore
+
+    graph = _open_graph(Path.cwd())
+    if graph is None:
+        raise typer.Exit(1)
+
+    out_dir = Path(output)
+    if not out_dir.is_absolute():
+        out_dir = Path.cwd() / out_dir
+    result = render_explore(
+        graph,
+        out_dir,
+        top_files=top_files,
+        callgraph_limit=callgraph_limit,
+    )
+    console.print(
+        f"[green]✓[/green] dashboard written to {result.out_dir} "
+        f"({len(result.pages)} pages)"
+    )
+    console.print(f"[bold]Open:[/bold] open {result.out_dir / 'index.html'}")
+
+
+@app.command()
 def review(
     target: str = typer.Option("main", help="Target branch to PR into."),
     block_on: str = typer.Option("high", help="critical|high|medium"),
