@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from codegraph import __version__
@@ -23,7 +25,14 @@ def test_help_lists_subcommands() -> None:
         assert cmd in result.stdout
 
 
-def test_init_stub() -> None:
-    result = runner.invoke(app, ["init"])
+def test_init_non_interactive_smoke(tmp_path: Path) -> None:
+    import os
+
+    orig = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        result = runner.invoke(app, ["init", "--non-interactive"])
+    finally:
+        os.chdir(orig)
     assert result.exit_code == 0
-    assert "init" in result.stdout
+    assert (tmp_path / ".codegraph.yml").exists()
