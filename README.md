@@ -116,6 +116,9 @@ Then, inside a Claude Code conversation, you can ask:
 
 ## Development
 
+New to the repo? Read [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)
+for the full walkthrough.
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
