@@ -363,3 +363,58 @@ A good resume prompt:
 > following the same standards: real implementations, tests passing,
 > ruff + mypy strict clean, CI green, well-organized commits with the
 > Copilot co-author trailer, push to `origin main`.
+
+## Phase 4 — PR review (delivered)
+
+Phase 4 wires up risk-scored PR review on top of the existing graph store.
+
+**Modules** (`codegraph/review/`)
+
+- `baseline.py` — `save_baseline(db_path, baseline_path)` copies the live
+  `graph.db` aside; `load_baseline(path)` returns a `nx.MultiDiGraph` (or
+  `None`).
+- `differ.py` — `diff_graphs(old, new)` produces a `GraphDiff` with
+  `added/removed/modified_nodes` and `added/removed_edges`. Node identity is
+  `(qualname, kind)`; *modified* means same key but different
+  `file/line_start/signature` (with `details = {field: {old, new}}`).
+- `risk.py` — `score_change(change, *, new_graph, old_graph, extra=...)`
+  returns a `Risk(score, level, reasons)`. Heuristics: high fan-in (+40),
+  removed-still-referenced (+50), in-hotspot-file (+20), new dead code (+10),
+  signature param-count change (+20), introduces-cycle (+30). Cap 100.
+  Levels: low ≤ 20, med 21–50, high 51–80, critical ≥ 81.
+- `rules.py` — `Rule` schema with `when` ∈ {`added_node`, `removed_node`,
+  `modified_node`, `removed_referenced`, `introduces_cycle`, `high_fan_in`,
+  `new_dead_code`} plus `match` filters (kind / qualname prefix / regex /
+  file glob). `load_rules(path | None)` reads YAML or falls back to
+  `DEFAULT_RULES`. `evaluate_rules(diff, ...)` returns sorted `Finding`s.
+- `hook.py` — `install_hook / uninstall_hook / is_installed` writing a
+  marker-tagged shell script under `.git/hooks/`.
+
+**CLI**
+
+- `codegraph baseline save [-o PATH]` / `codegraph baseline status` /
+  `codegraph baseline push --target <branch>` (CI-friendly alias).
+- `codegraph review --target main --block-on high --fail-on high
+  --baseline PATH --format markdown|json|sarif --output FILE
+  --rules PATH`. Exit 0 = no blocking findings, 1 = blocking findings or
+  build error, 2 = no baseline.
+- `codegraph hook install [--hook pre-push] [--target main] [--force]` and
+  `codegraph hook uninstall`.
+
+**Fixtures + tests**
+
+- `tests/fixtures/python_sample_v2/` mirrors `python_sample` but mutates
+  `Dog.speak` (adds `loud: bool = False`), removes `Dog.fetch`, and adds
+  `utils.new_function`.
+- `tests/test_review_differ.py`, `test_review_risk.py`,
+  `test_review_rules.py`, `test_review_cli.py` — 22 new tests covering
+  diffing, scoring, rule evaluation, and the CLI surface (markdown/json/
+  sarif outputs, baseline lifecycle, hook install/uninstall, exit codes).
+
+**Quality gates** (`source .venv/bin/activate`):
+
+```
+ruff check .          # clean
+mypy --strict codegraph  # 42 files, no issues
+pytest -q             # 130 passed
+```

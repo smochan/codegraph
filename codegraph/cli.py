@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import networkx as nx
 import typer
@@ -11,6 +11,10 @@ from rich.console import Console
 from rich.table import Table
 
 from codegraph import __version__
+
+if TYPE_CHECKING:
+    from codegraph.review.differ import EdgeChange, GraphDiff, NodeChange
+    from codegraph.review.rules import Finding
 
 app = typer.Typer(
     name="codegraph",
@@ -586,10 +590,219 @@ def serve(
 @app.command()
 def review(
     target: str = typer.Option("main", help="Target branch to PR into."),
-    block_on: str = typer.Option("high", help="critical|high|medium"),
+    block_on: str = typer.Option(
+        "high", "--block-on", help="critical|high|med|low"
+    ),
+    fail_on: str | None = typer.Option(
+        None,
+        "--fail-on",
+        help="Exit non-zero if any finding has at least this severity. "
+        "Defaults to --block-on.",
+    ),
+    baseline: str | None = typer.Option(
+        None, "--baseline", help="Path to baseline graph.db (default: .codegraph/baseline.db)."
+    ),
+    fmt: str = typer.Option(
+        "markdown", "--format", help="markdown|json|sarif"
+    ),
+    output: str | None = typer.Option(
+        None, "--output", help="Write report to file instead of stdout."
+    ),
+    rules_file: str | None = typer.Option(
+        None, "--rules", help="Path to rules YAML (default: .codegraph/rules.yml)."
+    ),
 ) -> None:
-    """Diff vs baseline; produce risk-scored PR review."""
-    _stub("review")
+    """Diff vs baseline; produce a risk-scored PR review."""
+    from codegraph.review.baseline import load_baseline
+    from codegraph.review.differ import diff_graphs
+    from codegraph.review.rules import (
+        evaluate_rules,
+        load_rules,
+        severity_at_least,
+    )
+
+    repo_root = Path.cwd()
+    data_dir = _get_data_dir(repo_root)
+    db_path = data_dir / "graph.db"
+    if not db_path.exists():
+        console.print(
+            "[yellow]No graph found. Run [bold]codegraph build[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    baseline_path = Path(baseline) if baseline else data_dir / "baseline.db"
+    old_graph = load_baseline(baseline_path)
+    if old_graph is None:
+        console.print(
+            f"[yellow]No baseline found at {baseline_path}. "
+            f"Run [bold]codegraph baseline save[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(2)
+
+    new_graph = _open_graph(repo_root)
+    if new_graph is None:
+        raise typer.Exit(1)
+
+    diff = diff_graphs(old_graph, new_graph)
+    rules = load_rules(Path(rules_file) if rules_file else None)
+    findings = evaluate_rules(
+        diff, new_graph=new_graph, old_graph=old_graph, rules=rules
+    )
+
+    threshold = (fail_on or block_on).lower()
+    text = _render_review(diff, findings, fmt=fmt, target=target)
+    if output:
+        Path(output).write_text(text)
+        console.print(f"[green]✓[/green] wrote review to {output}")
+    else:
+        print(text)
+
+    blocking = [f for f in findings if severity_at_least(f.severity, threshold)]
+    if blocking:
+        raise typer.Exit(1)
+
+
+def _render_review(
+    diff: GraphDiff,
+    findings: list[Finding],
+    *,
+    fmt: str,
+    target: str,
+) -> str:
+    import json
+
+    if fmt == "json":
+        payload = {
+            "target": target,
+            "diff": {
+                "added_nodes": [_nc_to_dict(n) for n in diff.added_nodes],
+                "removed_nodes": [_nc_to_dict(n) for n in diff.removed_nodes],
+                "modified_nodes": [_nc_to_dict(n) for n in diff.modified_nodes],
+                "added_edges": [_ec_to_dict(e) for e in diff.added_edges],
+                "removed_edges": [_ec_to_dict(e) for e in diff.removed_edges],
+            },
+            "findings": [_finding_to_dict(f) for f in findings],
+        }
+        return json.dumps(payload, indent=2, sort_keys=True)
+    if fmt == "sarif":
+        return _render_sarif(findings)
+    return _render_markdown(diff, findings, target=target)
+
+
+def _nc_to_dict(n: NodeChange) -> dict[str, object]:
+    return {
+        "qualname": n.qualname,
+        "kind": n.kind,
+        "file": n.file,
+        "line_start": n.line_start,
+        "signature": n.signature,
+        "change_kind": n.change_kind,
+        "details": n.details,
+    }
+
+
+def _ec_to_dict(e: EdgeChange) -> dict[str, object]:
+    return {
+        "src_qualname": e.src_qualname,
+        "dst_qualname": e.dst_qualname,
+        "kind": e.kind,
+        "change_kind": e.change_kind,
+    }
+
+
+def _finding_to_dict(f: Finding) -> dict[str, object]:
+    return {
+        "rule_id": f.rule_id,
+        "severity": f.severity,
+        "message": f.message,
+        "qualname": f.qualname,
+        "file": f.file,
+        "line": f.line,
+        "score": f.score,
+        "reasons": list(f.reasons),
+    }
+
+
+def _render_markdown(
+    diff: GraphDiff, findings: list[Finding], *, target: str
+) -> str:
+    lines: list[str] = [f"# codegraph review (target: {target})", ""]
+    lines.append(
+        f"**Diff**: +{len(diff.added_nodes)} / -{len(diff.removed_nodes)} / "
+        f"~{len(diff.modified_nodes)} nodes, "
+        f"+{len(diff.added_edges)} / -{len(diff.removed_edges)} edges"
+    )
+    lines.append("")
+    lines.append(f"## Findings ({len(findings)})")
+    if not findings:
+        lines.append("")
+        lines.append("_No findings._")
+        return "\n".join(lines) + "\n"
+    lines.append("")
+    lines.append("| severity | rule | qualname | file:line | score | message |")
+    lines.append("|---|---|---|---|---|---|")
+    for f in findings:
+        loc = f"{f.file}:{f.line}" if f.file else ""
+        lines.append(
+            f"| {f.severity} | {f.rule_id} | `{f.qualname}` | {loc} | "
+            f"{f.score} | {f.message} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _render_sarif(findings: list[Finding]) -> str:
+    import json
+
+    _sev_map = {
+        "low": "note",
+        "med": "warning",
+        "high": "error",
+        "critical": "error",
+    }
+    rule_ids = sorted({f.rule_id for f in findings})
+    sarif = {
+        "version": "2.1.0",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "codegraph",
+                        "informationUri": "https://github.com/smochan/codegraph",
+                        "rules": [
+                            {"id": rid, "name": rid} for rid in rule_ids
+                        ],
+                    }
+                },
+                "results": [
+                    {
+                        "ruleId": f.rule_id,
+                        "level": _sev_map.get(f.severity, "warning"),
+                        "message": {"text": f.message},
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": f.file or ""},
+                                    "region": {
+                                        "startLine": max(1, f.line or 1)
+                                    },
+                                }
+                            }
+                        ]
+                        if f.file
+                        else [],
+                        "properties": {
+                            "score": f.score,
+                            "qualname": f.qualname,
+                            "reasons": list(f.reasons),
+                        },
+                    }
+                    for f in findings
+                ],
+            }
+        ],
+    }
+    return json.dumps(sarif, indent=2, sort_keys=True)
 
 
 def _print_node_table(
@@ -739,22 +952,115 @@ def query_cycles() -> None:
             console.print("  - " + " → ".join(cyc))
 
 
+@baseline_app.command("save")
+def baseline_save(
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output baseline path (default: .codegraph/baseline.db).",
+    ),
+) -> None:
+    """Snapshot the current graph as the local baseline."""
+    from codegraph.review.baseline import save_baseline
+
+    repo_root = Path.cwd()
+    data_dir = _get_data_dir(repo_root)
+    db_path = data_dir / "graph.db"
+    if not db_path.exists():
+        console.print(
+            "[yellow]No graph found. Run [bold]codegraph build[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(1)
+    out_path = Path(output) if output else data_dir / "baseline.db"
+    save_baseline(db_path, out_path)
+    console.print(f"[green]✓[/green] saved baseline to {out_path}")
+
+
+@baseline_app.command("status")
+def baseline_status() -> None:
+    """Show whether a local baseline exists."""
+    repo_root = Path.cwd()
+    data_dir = _get_data_dir(repo_root)
+    baseline_path = data_dir / "baseline.db"
+    if baseline_path.exists():
+        size = baseline_path.stat().st_size
+        console.print(
+            f"[green]✓[/green] baseline present: {baseline_path} ({size} bytes)"
+        )
+    else:
+        console.print(
+            f"[yellow]No baseline at {baseline_path}.[/yellow] "
+            f"Run [bold]codegraph baseline save[/bold]."
+        )
+        raise typer.Exit(1)
+
+
 @baseline_app.command("push")
-def baseline_push(target: str = typer.Option("main")) -> None:
-    """Register the current graph as the baseline for `target` (CI use)."""
-    _stub("baseline push")
+def baseline_push(
+    target: str = typer.Option("main", help="Target branch label."),
+) -> None:
+    """Register the current graph as the baseline for ``target`` (CI use)."""
+    from codegraph.review.baseline import save_baseline
+
+    repo_root = Path.cwd()
+    data_dir = _get_data_dir(repo_root)
+    db_path = data_dir / "graph.db"
+    if not db_path.exists():
+        console.print(
+            "[yellow]No graph found. Run [bold]codegraph build[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(1)
+    out_path = data_dir / "baseline.db"
+    save_baseline(db_path, out_path)
+    console.print(
+        f"[green]✓[/green] pushed baseline for [bold]{target}[/bold] -> {out_path}"
+    )
 
 
 @hook_app.command("install")
-def hook_install() -> None:
-    """Install the git pre-push hook."""
-    _stub("hook install")
+def hook_install(
+    target: str = typer.Option(
+        "main", "--target", help="Target branch the hook reviews against."
+    ),
+    hook: str = typer.Option(
+        "pre-push", "--hook", help="Git hook name to install (pre-push|pre-commit)."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite an existing non-codegraph hook."
+    ),
+) -> None:
+    """Install a git hook that runs ``codegraph review``."""
+    from codegraph.review.hook import install_hook
+
+    repo_root = Path.cwd()
+    try:
+        path = install_hook(repo_root, hook=hook, target=target, force=force)
+    except FileNotFoundError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except FileExistsError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]✓[/green] installed git hook at {path}")
 
 
 @hook_app.command("uninstall")
-def hook_uninstall() -> None:
-    """Remove the git pre-push hook."""
-    _stub("hook uninstall")
+def hook_uninstall(
+    hook: str = typer.Option(
+        "pre-push", "--hook", help="Git hook name to remove."
+    ),
+) -> None:
+    """Remove the codegraph-managed git hook."""
+    from codegraph.review.hook import uninstall_hook
+
+    repo_root = Path.cwd()
+    if uninstall_hook(repo_root, hook=hook):
+        console.print(f"[green]✓[/green] removed {hook} hook")
+    else:
+        console.print(
+            f"[yellow]No codegraph-managed {hook} hook to remove.[/yellow]"
+        )
 
 
 @mcp_app.command("serve")
