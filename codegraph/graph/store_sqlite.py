@@ -177,6 +177,19 @@ class SQLiteGraphStore:
                 metadata=json.loads(row[5]),
             )
 
+    def delete_edge(self, src: str, dst: str, kind: EdgeKind) -> None:
+        with self._con:
+            self._con.execute(
+                "DELETE FROM edges WHERE src=? AND dst=? AND kind=?",
+                (src, dst, kind.value),
+            )
+
+    def count_unresolved_edges(self) -> int:
+        row = self._con.execute(
+            "SELECT COUNT(*) FROM edges WHERE dst LIKE 'unresolved::%'"
+        ).fetchone()
+        return int(row[0])
+
     def delete_file(self, path: str) -> None:
         cur = self._con.execute("SELECT id FROM nodes WHERE file=?", (path,))
         node_ids = [r[0] for r in cur.fetchall()]

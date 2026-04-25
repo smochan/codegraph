@@ -139,6 +139,18 @@ class GraphBuilder:
         if git_sha:
             self._store.set_meta("last_git_sha", git_sha)
 
+        # Best-effort cross-file resolution of unresolved CALLS/IMPORTS edges.
+        try:
+            from codegraph.resolve import resolve_unresolved_edges
+            rstats = resolve_unresolved_edges(self._store)
+            self._store.set_meta(
+                "last_resolve",
+                f"{rstats.resolved}/{rstats.inspected} resolved",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("resolver failed: %s", exc)
+            stats.errors.append(f"resolver: {exc}")
+
         return stats
 
     def _walk_repo(self, spec: Any) -> list[Path]:
