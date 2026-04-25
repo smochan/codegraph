@@ -527,7 +527,8 @@ def render_explore(
         pages.append(page_path)
 
     # 5. Index (built last so it can reference everything).
-    index_path = _render_index(cleaned, out_dir, nav, file_pages)
+    from codegraph.viz.dashboard import render_dashboard
+    index_path = render_dashboard(cleaned, out_dir / "index.html")
     pages.insert(0, index_path)
 
     return ExploreResult(out_dir=out_dir, pages=pages)
