@@ -309,12 +309,24 @@ def status() -> None:
 def viz(
     out: str = typer.Option("mermaid", "--out", help="mermaid|html|svg"),
     scope: str = typer.Option("", "--scope", help="Path or symbol to focus on."),
-    limit: int = typer.Option(80, "--limit", help="Max nodes to render."),
+    limit: int = typer.Option(
+        300, "--limit", help="Max nodes to render (top-N by degree)."
+    ),
     output: str | None = typer.Option(
         None, "--output", help="Write to file (required for html/svg)."
     ),
     no_cluster: bool = typer.Option(
         False, "--no-cluster", help="Disable file-based clustering (mermaid)."
+    ),
+    include_unresolved: bool = typer.Option(
+        False,
+        "--include-unresolved",
+        help="Include unresolved::* phantom nodes (debug only).",
+    ),
+    include_files: bool = typer.Option(
+        False,
+        "--include-files",
+        help="Include FILE nodes (rendered as bare paths; off by default).",
     ),
 ) -> None:
     """Render a graph visualization (mermaid stdout, html / svg to file)."""
@@ -334,6 +346,19 @@ def viz(
     store = SQLiteGraphStore(db_path)
     g = to_digraph(store)
     store.close()
+
+    drop: list[str] = []
+    for nid, attrs in g.nodes(data=True):
+        if not include_unresolved and isinstance(nid, str) and nid.startswith(
+            "unresolved::"
+        ):
+            drop.append(nid)
+            continue
+        if not include_files and str(attrs.get("kind") or "") == "FILE":
+            drop.append(nid)
+    if drop:
+        g = cast("nx.MultiDiGraph", g.copy())
+        g.remove_nodes_from(drop)
 
     if scope:
         target_id: str | None = None
