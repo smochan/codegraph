@@ -48,16 +48,18 @@ function toast(msg, kind) {
 
 // ---- Mermaid ----
 mermaid.initialize({
-  startOnLoad: false, theme: 'dark',
+  startOnLoad: false, theme: 'base',
   themeVariables: {
     fontFamily: 'Inter, system-ui, sans-serif', fontSize: '14px',
-    primaryColor: '#1a2540', primaryTextColor: '#e2e8f0',
-    primaryBorderColor: '#243049', lineColor: '#475569',
-    secondaryColor: '#131c2e', tertiaryColor: '#0f172a',
-    clusterBkg: '#0f172a', clusterBorder: '#243049',
-    nodeBorder: '#243049', mainBkg: '#1a2540',
+    background: 'transparent',
+    primaryColor: '#1d2942', primaryTextColor: '#e6ecf5',
+    primaryBorderColor: '#3b4a6a', lineColor: '#5b6b8c',
+    secondaryColor: '#161f33', tertiaryColor: '#0f1626',
+    clusterBkg: 'rgba(15,22,38,0.6)', clusterBorder: '#3b4a6a',
+    nodeBorder: '#3b4a6a', mainBkg: '#1d2942',
+    edgeLabelBackground: '#0a0f1c', titleColor: '#c4cfe2',
   },
-  flowchart: { padding: 16, nodeSpacing: 36, rankSpacing: 50,
+  flowchart: { padding: 18, nodeSpacing: 38, rankSpacing: 54,
                curve: 'basis', htmlLabels: true, useMaxWidth: true },
 });
 
@@ -138,8 +140,8 @@ function renderOverview(host) {
     `<tr><td>${esc(k)}</td><td class="num">${v}</td></tr>`).join('');
   const hot = state.data.hotspots.map(h => `
     <tr>
-      <td><code>${esc(h.qualname)}</code></td>
-      <td class="text-ink-200">${esc(h.file)}</td>
+      <td><span class="qn-mono text-[12.5px]">${formatQn(h.qualname, {maxParts: 4})}</span></td>
+      <td class="text-ink-200"><code>${esc(h.file)}</code></td>
       <td class="num">${h.fan_in}</td>
       <td class="num">${h.fan_out}</td>
       <td class="num">${h.loc}</td>
@@ -191,11 +193,11 @@ function renderHld(host) {
     <div class="stat-lbl">${l}</div></div>`;
   const layerRow = L => {
     const c = (hld.components[L.id] || []).length;
-    return `<div class="flex items-center gap-3 p-2 rounded-md hover:bg-ink-700">
+    return `<div class="flex items-center gap-3 p-2 rounded-md hover:bg-ink-700/60 transition">
       <div class="swatch" style="background:${L.color}"></div>
       <div class="flex-1 min-w-0">
-        <div class="text-[13px] font-medium text-ink-50">${esc(L.title)}</div>
-        <div class="text-[11px] text-ink-200 truncate">${c} module${c===1?'':'s'} - ${esc(L.subtitle)}</div>
+        <div class="text-[13px] font-medium text-ink-50 truncate">${esc(L.title)}</div>
+        <div class="text-[11px] text-ink-200 truncate">${c} module${c===1?'':'s'} · ${esc(L.subtitle)}</div>
       </div>
       <span class="pill">${c}</span>
     </div>`;
@@ -274,7 +276,7 @@ function renderFlows(host) {
         <div class="panel p-3 max-h-[78vh] overflow-y-auto">
           <div class="search-wrap mb-3">
             <i data-lucide="search"></i>
-            <input class="search" id="flow-search" placeholder="Filter entry points...">
+            <input class="search" id="flow-search" placeholder="Filter entry points…">
           </div>
           <div id="flow-list" class="space-y-1"></div>
         </div>
@@ -289,9 +291,9 @@ function renderFlows(host) {
   flows.forEach((f, i) => {
     const el = document.createElement('div');
     el.className = 'flow-item';
-    el.innerHTML = `<div class="qn">${esc(shortQn(f.qualname))}</div>
+    el.innerHTML = `<div class="qn">${formatQn(f.qualname, {maxParts: 3})}</div>
       <div class="meta"><i data-lucide="zap" style="width:11px;height:11px"></i>
-      ${esc(f.reason)} <span class="text-ink-300">- ${esc(f.file)}</span></div>`;
+      ${esc(f.reason)} <span class="text-ink-300">· ${esc(f.file)}</span></div>`;
     el.onclick = () => selectFlow(i);
     list.appendChild(el);
   });
@@ -304,8 +306,25 @@ function renderFlows(host) {
   selectFlow(state.flowSel);
 }
 function shortQn(qn) {
-  const parts = qn.split('.');
-  return parts.length > 3 ? '...' + parts.slice(-3).join('.') : qn;
+  const parts = String(qn).split('.');
+  return parts.length > 3 ? '…' + parts.slice(-3).join('.') : qn;
+}
+
+/* HTML version of shortQn that dims the parent path and highlights the leaf.
+   Returns sanitized markup. */
+function formatQn(qn, opts) {
+  const max = (opts && opts.maxParts) || 3;
+  const parts = String(qn ?? '').split('.');
+  if (!parts.length) return '';
+  const leaf = parts[parts.length - 1];
+  const headParts = parts.slice(0, -1);
+  const truncated = headParts.length > max - 1;
+  const visibleHead = truncated ? headParts.slice(-(max - 1)) : headParts;
+  const prefix = truncated ? '…' : '';
+  const head = visibleHead.length
+    ? `<span class="qn-dim">${prefix}${esc(visibleHead.join('.'))}.</span>`
+    : (truncated ? `<span class="qn-dim">${prefix}</span>` : '');
+  return `${head}<span class="qn-key">${esc(leaf)}</span>`;
 }
 function selectFlow(i) {
   state.flowSel = i;
@@ -313,7 +332,8 @@ function selectFlow(i) {
   if (!flow) return;
   document.querySelectorAll('.flow-item').forEach((el, j) =>
     el.classList.toggle('active', j === i));
-  document.getElementById('flow-title').textContent = shortQn(flow.qualname);
+  document.getElementById('flow-title').innerHTML = formatQn(flow.qualname, {maxParts: 4});
+  document.getElementById('flow-title').classList.add('qn-mono');
   document.getElementById('flow-meta').textContent = flow.reason;
   const canvas = document.getElementById('flow-canvas');
   canvas.innerHTML = `<pre class="mermaid">${esc(flow.mermaid)}</pre>`;
@@ -331,10 +351,20 @@ function renderMatrix(host) {
   const colour = v => {
     if (!v) return 'transparent';
     const t = v / max;
-    const r = Math.round(36 + t * (251 - 36));
-    const g = Math.round(48 + t * (113 - 48));
-    const b = Math.round(80 + t * (133 - 80));
-    return `rgb(${r},${g},${b})`;
+    // Cool indigo -> violet -> warm rose for heat.
+    const stops = [
+      [42,  57,  87],   // ink-500
+      [99,  102, 241],  // brand-600
+      [167, 139, 250],  // accent-violet
+      [248, 113, 113],  // accent-rose
+    ];
+    const seg = Math.min(stops.length - 2, Math.floor(t * (stops.length - 1)));
+    const lt  = (t * (stops.length - 1)) - seg;
+    const a = stops[seg], b = stops[seg + 1];
+    const r = Math.round(a[0] + lt * (b[0] - a[0]));
+    const g = Math.round(a[1] + lt * (b[1] - a[1]));
+    const bl= Math.round(a[2] + lt * (b[2] - a[2]));
+    return `rgb(${r},${g},${bl})`;
   };
   let html = `<div class="p-8 max-w-7xl mx-auto">
     <div class="help-card mb-6">
@@ -359,8 +389,8 @@ function renderMatrix(host) {
   html += `</tbody></table></div>
     <div class="flex items-center gap-3 mt-4 text-[11px] text-ink-200">
       <span>0</span>
-      <div class="h-2.5 w-48 rounded-full" style="background:linear-gradient(90deg,#243049,#6366f1,#fb7185)"></div>
-      <span>${max}</span>
+      <div class="h-2.5 w-48 rounded-full" style="background:linear-gradient(90deg,#2a3957,#6366f1,#a78bfa,#f87171)"></div>
+      <span class="font-mono">${max}</span>
     </div></div></div>`;
   host.innerHTML = html;
   host.querySelectorAll('td.cell').forEach(c => {
@@ -396,7 +426,7 @@ function renderSankey(host) {
     links: data.links.map(d => ({...d})),
   });
   const colour = d3.scaleOrdinal()
-    .range(['#818cf8','#22d3ee','#34d399','#fcd34d','#fb7185','#a78bfa','#fb923c']);
+    .range(['#818cf8','#22d3ee','#34d399','#fbbf24','#f87171','#a78bfa','#fb923c']);
   svg.append('g').selectAll('rect').data(g.nodes).join('rect')
     .attr('x', d => d.x0).attr('y', d => d.y0)
     .attr('height', d => d.y1 - d.y0).attr('width', d => d.x1 - d.x0)
@@ -457,7 +487,7 @@ function renderTreemap(host) {
     .style('cursor', 'pointer')
     .on('mousemove', (e, d) => showTip(
        `<b>${esc(d.data.name)}</b><br>${esc(d.data.file)}<br>` +
-       `LOC: ${d.data.value} - symbols: ${d.data.symbols} - score: ${d.data.score}`,
+       `LOC: ${d.data.value} · symbols: ${d.data.symbols} · score: ${d.data.score}`,
        e.clientX, e.clientY))
     .on('mouseleave', hideTip);
   leaf.append('text').attr('x', 6).attr('y', 14).attr('fill', '#fff')
@@ -531,7 +561,8 @@ async function load() {
   const r = await fetch('/api/data.json');
   state.data = await r.json();
   document.getElementById('repo-name').textContent = state.data.repo || 'graph';
-  document.getElementById('last-built').textContent = 'built ' + (state.data.built_at || '');
+  document.getElementById('last-built').textContent = state.data.built_at
+    ? 'built ' + state.data.built_at : '';
   setHeaderStats();
   buildNav();
   const hash = (location.hash || '#overview').slice(1);
@@ -541,7 +572,7 @@ async function load() {
 document.getElementById('rebuild-btn').addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   btn.disabled = true;
-  btn.innerHTML = '<div class="spinner"></div><span>Rebuilding...</span>';
+  btn.innerHTML = '<div class="spinner"></div><span>Rebuilding…</span>';
   try {
     const r = await fetch('/api/rebuild', { method: 'POST' });
     if (!r.ok) throw new Error('rebuild failed');

@@ -6,23 +6,29 @@
 <title>codegraph</title>
 <link rel="preconnect" href="https://rsms.me/">
 <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap">
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
   theme: {
     extend: {
-      fontFamily: { sans: ['Inter var', 'Inter', 'system-ui', 'sans-serif'] },
+      fontFamily: {
+        sans: ['Inter var', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+      },
       colors: {
-        ink: { 950:'#070b16', 900:'#0b1220', 800:'#0f172a', 700:'#131c2e',
-               600:'#1a2540', 500:'#243049', 400:'#334155', 300:'#475569',
-               200:'#94a3b8', 100:'#cbd5e1', 50:'#e2e8f0' },
-        brand: { 500:'#818cf8', 400:'#a5b4fc', 600:'#6366f1' },
-        accent: { cyan:'#22d3ee', emerald:'#34d399', amber:'#fcd34d',
-                  rose:'#fb7185', violet:'#a78bfa' },
+        ink: { 950:'#05070d', 900:'#0a0f1c', 800:'#0f1626', 700:'#161f33',
+               600:'#1d2942', 500:'#2a3957', 400:'#3b4a6a', 300:'#5b6b8c',
+               200:'#8b9ab8', 100:'#c4cfe2', 50:'#e6ecf5' },
+        brand: { 700:'#4f46e5', 600:'#6366f1', 500:'#818cf8', 400:'#a5b4fc', 300:'#c7d2fe' },
+        accent: { cyan:'#22d3ee', emerald:'#34d399', amber:'#fbbf24',
+                  rose:'#f87171', violet:'#a78bfa', orange:'#fb923c' },
       },
       boxShadow: {
-        'card': '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 8px 24px -12px rgba(0,0,0,0.6)',
-        'glow': '0 0 0 1px rgba(129,140,248,0.4), 0 0 30px -10px rgba(129,140,248,0.5)',
+        'card': '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 12px 32px -16px rgba(0,0,0,0.65)',
+        'glow': '0 0 0 1px rgba(129,140,248,0.4), 0 0 32px -8px rgba(129,140,248,0.45)',
       },
     }
   }
@@ -34,43 +40,44 @@ tailwind.config = {
 <script src="https://unpkg.com/lucide@0.414.0"></script>
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body class="bg-ink-950 text-ink-50 font-sans antialiased min-h-screen">
-<div class="flex min-h-screen">
+<body class="text-ink-50 font-sans antialiased min-h-screen">
+<div class="app-bg"></div>
+<div class="flex min-h-screen relative">
   <!-- Sidebar -->
-  <aside class="w-60 shrink-0 border-r border-ink-500 bg-ink-900 flex flex-col sticky top-0 h-screen">
-    <div class="px-5 py-5 border-b border-ink-500 flex items-center gap-2.5">
-      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-accent-cyan flex items-center justify-center text-ink-950 font-bold text-sm">cg</div>
-      <div>
-        <div class="font-semibold text-sm">codegraph</div>
-        <div class="text-[11px] text-ink-200" id="repo-name">loading...</div>
+  <aside class="w-60 shrink-0 border-r border-ink-600/60 bg-ink-900/70 backdrop-blur flex flex-col sticky top-0 h-screen">
+    <div class="px-5 py-5 border-b border-ink-600/60 flex items-center gap-2.5">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 via-brand-600 to-accent-cyan flex items-center justify-center text-ink-950 font-bold text-sm shadow-glow">cg</div>
+      <div class="min-w-0">
+        <div class="font-semibold text-sm tracking-tight">codegraph</div>
+        <div class="text-[11px] text-ink-200 truncate" id="repo-name">loading…</div>
       </div>
     </div>
     <nav class="flex-1 p-3 space-y-0.5 overflow-y-auto" id="nav"></nav>
-    <div class="p-3 border-t border-ink-500 space-y-2">
-      <button id="rebuild-btn" class="w-full flex items-center justify-center gap-2 rounded-md bg-ink-700 hover:bg-ink-600 text-sm py-2 transition border border-ink-500 hover:border-brand-500">
+    <div class="p-3 border-t border-ink-600/60 space-y-2">
+      <button id="rebuild-btn" class="w-full flex items-center justify-center gap-2 rounded-md bg-ink-700/80 hover:bg-ink-600 text-sm py-2 transition border border-ink-500/60 hover:border-brand-500">
         <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>Rebuild</span>
       </button>
-      <div class="text-[10px] text-ink-200 text-center" id="last-built"></div>
+      <div class="text-[10px] text-ink-300 text-center font-mono" id="last-built"></div>
     </div>
   </aside>
 
   <!-- Main -->
   <main class="flex-1 min-w-0 flex flex-col">
-    <header class="sticky top-0 z-10 border-b border-ink-500 bg-ink-900/80 backdrop-blur px-8 py-4 flex items-center justify-between">
+    <header class="sticky top-0 z-10 border-b border-ink-600/60 bg-ink-900/70 backdrop-blur px-8 py-4 flex items-center justify-between">
       <div>
-        <div class="text-[11px] uppercase tracking-wider text-ink-200" id="crumb">Dashboard</div>
-        <h1 class="text-lg font-semibold mt-0.5" id="page-title">Overview</h1>
+        <div class="text-[11px] uppercase tracking-[0.14em] text-ink-300 font-medium" id="crumb">Dashboard</div>
+        <h1 class="text-lg font-semibold mt-0.5 tracking-tight" id="page-title">Overview</h1>
       </div>
-      <div class="flex items-center gap-3 text-xs text-ink-200" id="header-stats"></div>
+      <div class="flex items-center gap-2 text-xs text-ink-200" id="header-stats"></div>
     </header>
     <div class="flex-1 overflow-y-auto" id="view-host">
       <div class="flex items-center justify-center h-full">
-        <div class="text-ink-200 text-sm">Loading data...</div>
+        <div class="text-ink-200 text-sm flex items-center gap-2"><div class="spinner"></div><span>Loading data…</span></div>
       </div>
     </div>
   </main>
 </div>
-<div id="tooltip" class="pointer-events-none fixed opacity-0 transition-opacity z-50 bg-ink-700 border border-ink-500 rounded-md px-3 py-2 text-xs shadow-card max-w-sm"></div>
+<div id="tooltip" class="pointer-events-none fixed opacity-0 transition-opacity z-50 bg-ink-700/95 backdrop-blur border border-ink-500/80 rounded-md px-3 py-2 text-xs shadow-card max-w-sm"></div>
 <div id="toast-host" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
 <script src="/static/app.js"></script>
 </body>
