@@ -310,14 +310,14 @@ def viz(
     out: str = typer.Option("mermaid", "--out", help="mermaid|html|svg"),
     scope: str = typer.Option("", "--scope", help="Path or symbol to focus on."),
     limit: int = typer.Option(80, "--limit", help="Max nodes to render."),
+    output: str | None = typer.Option(
+        None, "--output", help="Write to file (required for html/svg)."
+    ),
+    no_cluster: bool = typer.Option(
+        False, "--no-cluster", help="Disable file-based clustering (mermaid)."
+    ),
 ) -> None:
-    """Render a graph visualization."""
-    if out in ("html", "svg"):
-        console.print(
-            f"[yellow]TODO[/yellow] {out} rendering deferred to Phase 6."
-        )
-        raise typer.Exit()
-
+    """Render a graph visualization (mermaid stdout, html / svg to file)."""
     from codegraph.graph.store_networkx import subgraph_around, to_digraph
     from codegraph.graph.store_sqlite import SQLiteGraphStore
 
@@ -360,33 +360,40 @@ def viz(
         top_ids = {n for n, _ in degree_sorted[:limit]}
         g = cast("nx.MultiDiGraph", g.subgraph(top_ids).copy())
 
-    lines = ["flowchart LR"]
-    node_label: dict[str, str] = {}
-    for nid, attrs in g.nodes(data=True):
-        label = str(attrs.get("name") or str(nid)[:20])
-        label = label.replace('"', "'")
-        safe_id = (
-            str(nid)
-            .replace(":", "_")
-            .replace(".", "_")
-            .replace("/", "_")
-            .replace("-", "_")
-        )
-        kind = attrs.get("kind", "")
-        node_label[nid] = safe_id
-        lines.append(f'    {safe_id}["{kind}: {label}"]')
-    seen_edges: set[tuple[str, str, str]] = set()
-    for src, dst, data in g.edges(data=True):
-        if src not in node_label or dst not in node_label:
-            continue
-        ek = str(data.get("kind", ""))
-        key = (src, dst, ek)
-        if key in seen_edges:
-            continue
-        seen_edges.add(key)
-        lines.append(f"    {node_label[src]} -->|{ek}| {node_label[dst]}")
+    if out == "mermaid":
+        from codegraph.viz import render_mermaid
+        text = render_mermaid(g, cluster_by_file=not no_cluster)
+        if output:
+            Path(output).write_text(text)
+            console.print(f"[green]✓[/green] wrote mermaid to {output}")
+        else:
+            print(text)
+        return
 
-    print("\n".join(lines))
+    if out == "html":
+        from codegraph.viz import render_html
+        out_path = Path(output) if output else data_dir / "graph.html"
+        result_path = render_html(g, out_path)
+        console.print(
+            f"[green]✓[/green] wrote interactive graph to {result_path} "
+            f"({g.number_of_nodes()} nodes, {g.number_of_edges()} edges)"
+        )
+        console.print(f"[dim]Open with:[/dim] open {result_path}")
+        return
+
+    if out == "svg":
+        from codegraph.viz import GraphvizUnavailableError, render_svg
+        out_path = Path(output) if output else data_dir / "graph.svg"
+        try:
+            result_path = render_svg(g, out_path)
+        except GraphvizUnavailableError as exc:
+            console.print(f"[yellow]SVG unavailable:[/yellow] {exc}")
+            raise typer.Exit(1) from exc
+        console.print(f"[green]✓[/green] wrote SVG to {result_path}")
+        return
+
+    console.print(f"[red]Unknown --out value:[/red] {out}")
+    raise typer.Exit(2)
 
 
 # ---- analyze + query ----
