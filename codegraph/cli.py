@@ -389,14 +389,55 @@ def viz(
     print("\n".join(lines))
 
 
-# ---- stub subcommands ----
+# ---- analyze + query ----
+
+
+def _open_graph(repo_root: Path) -> nx.MultiDiGraph | None:
+    from codegraph.graph.store_networkx import to_digraph
+    from codegraph.graph.store_sqlite import SQLiteGraphStore
+
+    data_dir = _get_data_dir(repo_root)
+    db_path = data_dir / "graph.db"
+    if not db_path.exists():
+        console.print(
+            "[yellow]No graph found. Run [bold]codegraph build[/bold] first.[/yellow]"
+        )
+        return None
+    store = SQLiteGraphStore(db_path)
+    try:
+        return to_digraph(store)
+    finally:
+        store.close()
+
 
 @app.command()
 def analyze(
     fmt: str = typer.Option("markdown", "--format", help="markdown|json"),
+    output: str | None = typer.Option(
+        None, "--output", help="Write report to file instead of stdout."
+    ),
+    hotspot_limit: int = typer.Option(20, "--hotspots", help="Top-N hotspots."),
 ) -> None:
-    """Whole-project audit: dead code, cycles, untested, hotspots."""
-    _stub("analyze")
+    """Whole-project audit: dead code, cycles, untested, hotspots, metrics."""
+    from codegraph.analysis.report import (
+        report_to_json,
+        report_to_markdown,
+        run_full_analyze,
+    )
+
+    graph = _open_graph(Path.cwd())
+    if graph is None:
+        raise typer.Exit(1)
+
+    report = run_full_analyze(graph, hotspot_limit=hotspot_limit)
+    text = (
+        report_to_json(report) if fmt == "json" else report_to_markdown(report)
+    )
+    if output:
+        Path(output).write_text(text)
+        console.print(f"[green]✓[/green] wrote report to {output}")
+    else:
+        print(text)
 
 
 @app.command()
@@ -408,34 +449,151 @@ def review(
     _stub("review")
 
 
+def _print_node_table(
+    graph: nx.MultiDiGraph, node_ids: list[str], title: str
+) -> None:
+    table = Table(title=title)
+    table.add_column("kind", style="cyan")
+    table.add_column("qualname")
+    table.add_column("file")
+    table.add_column("line", justify="right")
+    for nid in node_ids:
+        attrs = graph.nodes.get(nid) or {}
+        table.add_row(
+            str(attrs.get("kind") or ""),
+            str(attrs.get("qualname") or nid),
+            str(attrs.get("file") or ""),
+            str(attrs.get("line_start") or ""),
+        )
+    console.print(table)
+
+
 @query_app.command("callers")
-def query_callers(symbol: str, depth: int = 1) -> None:
-    """Show reverse CALLS subgraph for a symbol."""
-    _stub("query callers")
+def query_callers(
+    symbol: str,
+    depth: int = typer.Option(1, "--depth"),
+) -> None:
+    """Show transitive callers of SYMBOL up to ``depth`` hops."""
+    from codegraph.analysis.blast_radius import blast_radius
+    from codegraph.analysis.report import find_symbol
+
+    graph = _open_graph(Path.cwd())
+    if graph is None:
+        raise typer.Exit(1)
+    target = find_symbol(graph, symbol)
+    if target is None:
+        console.print(f"[yellow]Symbol '{symbol}' not found.[/yellow]")
+        raise typer.Exit(1)
+    result = blast_radius(graph, target, depth=depth)
+    console.print(
+        f"[bold]Callers of[/bold] {symbol} "
+        f"(depth={depth}): {result.size} nodes across {len(result.files)} files"
+    )
+    _print_node_table(graph, result.nodes[:50], "Callers")
+    if result.size > 50:
+        console.print(f"[dim]… {result.size - 50} more[/dim]")
 
 
 @query_app.command("subgraph")
-def query_subgraph(symbol: str, depth: int = 2) -> None:
-    """Return a small subgraph anchored at a symbol."""
-    _stub("query subgraph")
+def query_subgraph(
+    symbol: str,
+    depth: int = typer.Option(2, "--depth"),
+) -> None:
+    """Print the symbol's depth-N neighborhood as Mermaid."""
+    from codegraph.analysis.report import find_symbol
+    from codegraph.graph.store_networkx import subgraph_around
+
+    graph = _open_graph(Path.cwd())
+    if graph is None:
+        raise typer.Exit(1)
+    target = find_symbol(graph, symbol)
+    if target is None:
+        console.print(f"[yellow]Symbol '{symbol}' not found.[/yellow]")
+        raise typer.Exit(1)
+    sub = subgraph_around(graph, target, depth=depth)
+    lines = ["flowchart LR"]
+    safe: dict[str, str] = {}
+    for nid, attrs in sub.nodes(data=True):
+        sid = "n_" + str(nid)[:16]
+        safe[nid] = sid
+        label = str(attrs.get("name") or nid).replace('"', "'")
+        kind = attrs.get("kind", "")
+        lines.append(f'    {sid}["{kind}: {label}"]')
+    seen: set[tuple[str, str, str]] = set()
+    for src, dst, data in sub.edges(data=True):
+        if src not in safe or dst not in safe:
+            continue
+        ek = str(data.get("kind", ""))
+        key = (src, dst, ek)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"    {safe[src]} -->|{ek}| {safe[dst]}")
+    print("\n".join(lines))
 
 
 @query_app.command("untested")
-def query_untested() -> None:
-    """List functions with no TESTED_BY edge."""
-    _stub("query untested")
+def query_untested(limit: int = typer.Option(50, "--limit")) -> None:
+    """List functions/methods with no test-side caller."""
+    from codegraph.analysis import find_untested
+
+    graph = _open_graph(Path.cwd())
+    if graph is None:
+        raise typer.Exit(1)
+    rows = find_untested(graph)
+    console.print(f"[bold]{len(rows)} untested[/bold]")
+    table = Table()
+    table.add_column("qualname")
+    table.add_column("file")
+    table.add_column("line", justify="right")
+    table.add_column("callers", justify="right")
+    for u in rows[:limit]:
+        table.add_row(u.qualname, u.file, str(u.line_start), str(u.incoming_calls))
+    console.print(table)
 
 
 @query_app.command("deadcode")
-def query_deadcode() -> None:
-    """List nodes with zero incoming references (excl. entrypoints)."""
-    _stub("query deadcode")
+def query_deadcode(limit: int = typer.Option(50, "--limit")) -> None:
+    """List definitions with no incoming reference edges."""
+    from codegraph.analysis import find_dead_code
+
+    graph = _open_graph(Path.cwd())
+    if graph is None:
+        raise typer.Exit(1)
+    rows = find_dead_code(graph)
+    console.print(f"[bold]{len(rows)} dead-code candidates[/bold]")
+    table = Table()
+    table.add_column("kind")
+    table.add_column("qualname")
+    table.add_column("file")
+    table.add_column("line", justify="right")
+    for d in rows[:limit]:
+        table.add_row(d.kind, d.qualname, d.file, str(d.line_start))
+    console.print(table)
 
 
 @query_app.command("cycles")
 def query_cycles() -> None:
-    """List strongly-connected components in the import / call graph."""
-    _stub("query cycles")
+    """List import + call cycles."""
+    from codegraph.analysis import find_cycles
+
+    graph = _open_graph(Path.cwd())
+    if graph is None:
+        raise typer.Exit(1)
+    rep = find_cycles(graph)
+    console.print(
+        f"[bold]Cycles[/bold]: {len(rep.import_cycles)} import, "
+        f"{len(rep.call_cycles)} call"
+    )
+    for label, cycles in (
+        ("Import cycles", rep.import_cycles),
+        ("Call cycles", rep.call_cycles),
+    ):
+        if not cycles:
+            continue
+        console.print(f"\n[cyan]{label}:[/cyan]")
+        for cyc in cycles[:25]:
+            console.print("  - " + " → ".join(cyc))
 
 
 @baseline_app.command("push")
