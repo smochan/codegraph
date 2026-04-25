@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codegraph-py"
-version = "0.0.1"
+version = "0.1.0"
 description = "Language-agnostic code graph builder, analyzer, PR risk reviewer, and MCP server for Claude Code."
 readme = "README.md"
 license = { text = "MIT" }
@@ -17,7 +17,7 @@ keywords = [
     "pr-review", "mcp", "claude-code", "blast-radius", "dead-code",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -62,12 +62,26 @@ dev = [
 codegraph = "codegraph.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/smochan07/codegraph"
-Repository = "https://github.com/smochan07/codegraph"
-Issues = "https://github.com/smochan07/codegraph/issues"
+Homepage = "https://github.com/smochan/codegraph"
+Repository = "https://github.com/smochan/codegraph"
+Issues = "https://github.com/smochan/codegraph/issues"
+Changelog = "https://github.com/smochan/codegraph/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["codegraph"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/codegraph",
+    "/tests",
+    "/docs",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.ruff]
 line-length = 100

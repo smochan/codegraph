@@ -1,42 +1,138 @@
 # codegraph
 
+[![CI](https://github.com/smochan/codegraph/actions/workflows/ci.yml/badge.svg)](https://github.com/smochan/codegraph/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/codegraph-py.svg)](https://pypi.org/project/codegraph-py/)
+
 > Language-agnostic code graph builder, analyzer, PR risk reviewer, and MCP server for Claude Code.
 
-`codegraph` parses your repo with tree-sitter, builds a queryable graph of
-files / classes / functions / variables / imports / calls / inheritance /
-tests, and uses it to:
+`codegraph` parses your repository with tree-sitter, stores a queryable graph of files / classes /
+functions / imports / calls / inheritance / tests in a single SQLite file, and exposes it through a
+polished CLI, a web dashboard, and a 10-tool MCP server — so you and your AI assistant always have
+an accurate, lightweight map of your codebase, no daemon required.
 
-- 🔎 **Analyze** the whole project (dead code, cycles, untested hot paths, fan-in/out).
-- 🚦 **Review PRs** by diffing your branch's graph against a baseline and scoring blast radius.
-- 🖼️ **Visualize** the graph (Mermaid / interactive HTML / SVG).
-- 🤖 **Power AI assistants** via an MCP server that returns *small, focused subgraphs* — perfect for Claude Code.
+<!-- Screenshots will be added once the dashboard is recorded. -->
+![dashboard](docs/images/dashboard.png)
 
-> ⚠️ Status: **pre-alpha**. APIs and CLI flags will change. See [plan](./docs/plan.md).
+---
 
-## Install (coming soon)
+## Quickstart
 
 ```bash
-pip install codegraph-py            # PyPI distribution name
-codegraph init                      # interactive setup
-codegraph build
-codegraph analyze
+pip install codegraph-py           # install from PyPI (not yet published — see Install below)
+codegraph init                     # interactive setup (languages, ignore globs, MCP config)
+codegraph build                    # parse repo → SQLite graph
+codegraph analyze                  # dead code · cycles · hotspots · untested · metrics
+codegraph serve                    # open web dashboard at http://localhost:8000
+codegraph review                   # graph-diff PR review with risk score
 ```
 
-## Why another code graph tool?
+---
 
-| | codegraph | grep + IDE | Sourcegraph | code-review-graph |
-|---|---|---|---|---|
-| Multi-language via tree-sitter | ✅ | — | ✅ | partial |
-| Self-hostable, single binary | ✅ | n/a | ❌ heavy | ✅ |
-| MCP server for Claude Code | ✅ | ❌ | ❌ | ❌ |
-| PR risk scoring + git hook | ✅ | ❌ | partial | ✅ |
-| YAML rule packs (no code edits) | ✅ | n/a | ❌ | ❌ |
-| MIT, fully open | ✅ | n/a | mixed | ❌ private |
+## Features
 
-## Supported languages (target v0.1)
+1. **Multi-language graph** — Python, TypeScript, and JavaScript today; pluggable tree-sitter
+   extractors make adding any language a one-file change.
+2. **Rich analysis** — dead code, import cycles, call hotspots, untested functions, blast-radius
+   queries, and aggregate metrics — all in one command.
+3. **PR review** — graph diff against a saved baseline, risk scoring, YAML rule packs, output in
+   Markdown / JSON / SARIF, and an optional pre-push git hook.
+4. **Web dashboard** — HLD navigator, animated focus graph, collapsible sidebar, light/dark themes;
+   served locally with a single `codegraph serve`.
+5. **MCP server** — 10 curated tools (`find_symbol`, `callers`, `callees`, `blast_radius`,
+   `subgraph`, `dead_code`, `cycles`, `untested`, `hotspots`, `metrics`) for Claude Code or any
+   MCP client.
+6. **Single SQLite store** — no daemon, no database server, no network required. The entire graph
+   lives in `.codegraph/graph.db`.
+7. **Standalone CLI** — works fully offline, MIT licensed, zero telemetry.
 
-Python, TypeScript, JavaScript, Go, Java, Rust, C#, Ruby, PHP. Adding more is a one-file extractor.
+---
+
+## Install
+
+```bash
+pip install codegraph-py
+```
+
+> **Note:** `codegraph-py` is the PyPI distribution name. The CLI command is `codegraph`.
+> The package is not yet published to PyPI — to try it today, install from source:
+>
+> ```bash
+> git clone https://github.com/smochan/codegraph.git
+> cd codegraph
+> pip install -e .
+> ```
+
+---
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `codegraph init` | Interactive setup: detect languages, configure ignore globs, optionally register MCP. |
+| `codegraph build` | Walk the repo, parse with tree-sitter, write / update `graph.db`. |
+| `codegraph analyze` | Run all analysis passes and print a report (Markdown or JSON). |
+| `codegraph query callers <sym>` | Reverse-BFS: who calls a symbol? |
+| `codegraph query subgraph <sym>` | Induced subgraph around a symbol. |
+| `codegraph query deadcode` | List unreferenced functions/classes. |
+| `codegraph query untested` | List functions with no incoming calls from a test module. |
+| `codegraph query cycles` | Show import/call strongly-connected components. |
+| `codegraph viz` | Render the graph as Mermaid, interactive HTML (pyvis), or SVG (graphviz). |
+| `codegraph explore` | Interactive subgraph explorer (terminal UI). |
+| `codegraph serve` | Launch the web dashboard (default port 8000). |
+| `codegraph review` | Graph-diff current branch vs baseline; output risk report. |
+| `codegraph baseline save` | Snapshot the current graph as a named baseline. |
+| `codegraph baseline status` | Compare current graph to the saved baseline. |
+| `codegraph baseline push` | Push baseline to remote store (S3 optional). |
+| `codegraph hook install` | Install a pre-push git hook that runs `codegraph review`. |
+| `codegraph hook uninstall` | Remove the pre-push git hook. |
+| `codegraph mcp serve` | Start the MCP server (stdio transport) for Claude Code. |
+
+---
+
+## Use with Claude Code
+
+Add to `~/.claude.json` (or register with `claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "codegraph",
+      "args": ["mcp", "serve", "--db", ".codegraph/graph.db"]
+    }
+  }
+}
+```
+
+Then, inside a Claude Code conversation, you can ask:
+
+> *"Which functions have the highest blast radius in the auth module?"*
+> *"Show me everything that calls `UserService.login`."*
+> *"Are there any import cycles in this PR?"*
+
+---
+
+## Development
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+
+ruff check .                        # lint
+mypy --strict codegraph             # type-check
+pytest -q                           # tests (~130 passing)
+```
+
+---
+
+## Roadmap
+
+See [`docs/plan.md`](docs/plan.md) for the full phased roadmap.
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE) © mochan
