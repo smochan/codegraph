@@ -28,6 +28,7 @@
   var currentHost = null;
 
   var focus = null;             // { rootQn, depth, direction }
+  var focusState = null;        // mutable graph state from makeFocusState
   var history = [];
 
   var DEFAULT_DEPTH = 2;
@@ -169,17 +170,64 @@
   function renderPickerResults(host, hld, query) {
     var box = host.querySelector('#g3d-picker-results');
     if (!box) return;
-    var hits = getTransform().searchSymbols(hld, query, 20);
-    if (!hits.length) {
+    var T = getTransform();
+    var groups = T.filterGrouped(T.groupSymbols(hld), query);
+    if (!groups.length) {
       box.innerHTML = '<div class="g3d-picker-noresults">No matches.</div>';
       return;
     }
-    box.innerHTML = hits.map(pickerResultRowHtml).join('');
+    box.innerHTML = groups.map(pickerGroupHtml).join('');
     box.querySelectorAll('.g3d-pick-row').forEach(function (btn) {
       btn.addEventListener('click', function () {
         setFocus(host, hld, btn.dataset.qn);
       });
     });
+  }
+
+  function pickerGroupHtml(g) {
+    var classBlocks = g.classes.map(pickerClassHtml).join('');
+    var fnBlocks = g.functions.map(function (f) {
+      return pickerLeafHtml(f, false);
+    }).join('');
+    return [
+      '<div class="g3d-grp">',
+      '<div class="g3d-grp-hdr">',
+      '<span class="g3d-grp-tag">MOD</span>',
+      '<span class="g3d-grp-name qn-mono">', ESC(g.qualname), '</span>',
+      (g.file ? '<span class="g3d-grp-file">' + ESC(g.file) + '</span>' : ''),
+      '</div>',
+      '<div class="g3d-grp-body">',
+      classBlocks,
+      fnBlocks,
+      '</div>',
+      '</div>',
+    ].join('');
+  }
+  function pickerClassHtml(c) {
+    var methods = c.methods.map(function (m) { return pickerLeafHtml(m, true); }).join('');
+    return [
+      '<div class="g3d-grp-class">',
+      '<div class="g3d-grp-class-hdr">',
+      '<span class="g3d-kind-badge g3d-kind-class">C</span>',
+      '<span class="g3d-grp-class-name">', ESC(c.name), '</span>',
+      '</div>',
+      methods,
+      '</div>',
+    ].join('');
+  }
+  function pickerLeafHtml(s, indent) {
+    var k = String(s.kind || '').toUpperCase();
+    var badge = k === 'METHOD' ? 'M' : (k === 'FUNCTION' ? 'FN' : (k.slice(0, 3) || '?'));
+    return [
+      '<button class="g3d-pick-row', (indent ? ' g3d-pick-indent' : ''),
+      '" data-qn="', ESC(s.qualname), '">',
+      '<span class="g3d-kind-badge g3d-kind-', ESC(k.toLowerCase()), '">',
+      ESC(badge), '</span>',
+      '<span class="g3d-pick-name">', ESC(s.name || s.qualname), '</span>',
+      '<span class="g3d-pick-meta">in ', Number(s.fan_in) || 0,
+      ' · out ', Number(s.fan_out) || 0, '</span>',
+      '</button>',
+    ].join('');
   }
 
   // ---- Controls bar ------------------------------------------------------
@@ -211,8 +259,8 @@
       '<div class="g3d-controls-sep"></div>',
       '<div class="g3d-controls-group">',
       '<button class="g3d-filter-btn" id="g3d-demo-btn" title="Autoplay tour">Demo</button>',
-      '<button class="g3d-filter-btn" id="g3d-reset-btn" title="Clear focus">Reset</button>',
-      '<span class="g3d-controls-lbl ml-auto">',
+      '<button class="g3d-filter-btn" id="g3d-reset-btn" title="Reset to picker">Reset to picker</button>',
+      '<span class="g3d-controls-lbl ml-auto g3d-node-count">',
       Number(nodeCount) || 0, ' nodes</span>',
       '</div>',
       '</div>',
@@ -249,35 +297,92 @@
       depth: focus ? focus.depth : DEFAULT_DEPTH,
       direction: focus ? focus.direction : DEFAULT_DIRECTION,
     };
+    focusState = getTransform().makeFocusState(hld, qn, focus.depth, focus.direction);
     pushHistory(qn);
     renderFocusedView(host, hld);
   }
   function clearFocus(host, hld) {
     focus = null;
+    focusState = null;
     history = [];
     renderPickerView(host, hld);
   }
+  function toggleExpand(host, hld, qn) {
+    if (!focusState || !qn) return;
+    if (qn === focus.rootQn) return;
+    var T = getTransform();
+    if (T.isExpanded(focusState, qn)) {
+      T.collapseNode(focusState, qn);
+    } else {
+      T.expandNode(focusState, hld, qn);
+    }
+    refreshGraphData(host);
+  }
 
+  // Per-node detail panel.
+  //
+  // Intentionally does NOT show fan_in / fan_out (Item 5): those are
+  // graph-theory metrics that fit the Hotspots view, not the data-flow
+  // story this 3D view tells. Detail shows: name, qualname, kind, file,
+  // role, layer (if present), plus action buttons (Expand / Set as root)
+  // for non-external internal nodes.
   function detailHtml(node) {
     var roleLabel = ({
-      root: 'root', ancestor: 'caller', descendant: 'callee',
+      root: 'root', ancestor: 'caller', descendant: 'callee', external: 'external',
     })[node.role] || node.role || '';
+    var expanded = focusState && getTransform().isExpanded(focusState, node.id);
+    var actions = '';
+    if (!node.external && node.role !== 'root') {
+      actions = [
+        '<div class="g3d-detail-actions mt-3">',
+        '<button class="g3d-filter-btn" data-action="toggle-expand" data-qn="', ESC(node.id), '">',
+        expanded ? 'Collapse neighbors' : 'Expand neighbors',
+        '</button>',
+        '<button class="g3d-filter-btn" data-action="set-root" data-qn="', ESC(node.id), '">',
+        'Set as root',
+        '</button>',
+        '</div>',
+      ].join('');
+    }
     return [
       '<div class="g3d-detail panel p-5">',
       '<div class="text-[11px] uppercase tracking-[0.14em] text-app-3 mb-1">',
-      ESC(node.kind), ' · ', ESC(roleLabel), ' · depth ', Number(node.depth) || 0,
-      ' · ', ESC(node.file || ''), '</div>',
-      '<div class="text-base font-semibold qn-mono mb-3">', ESC(node.id), '</div>',
-      '<div class="flex gap-4 text-xs text-app-2">',
-      '<span>fan-in: <b>', Number(node.fan_in) || 0, '</b></span>',
-      '<span>fan-out: <b>', Number(node.fan_out) || 0, '</b></span>',
-      node.layer ? ('<span>layer: <b>' + ESC(node.layer) + '</b></span>') : '',
+      ESC(node.kind), ' · ', ESC(roleLabel),
+      (node.file ? (' · ' + ESC(node.file)) : ''),
+      (node.layer ? (' · layer ' + ESC(node.layer)) : ''),
       '</div>',
-      (node.role !== 'root'
-        ? '<div class="g3d-detail-hint mt-3">Click in the canvas to recenter on this symbol.</div>'
+      '<div class="text-base font-semibold qn-mono mb-1"><span class="g3d-detail-name">',
+      ESC(node.name || node.id), '</span></div>',
+      '<div class="text-xs text-app-3 qn-mono mb-2">', ESC(node.id), '</div>',
+      (node.external
+        ? '<div class="g3d-detail-hint mt-1">External symbol — terminal leaf.</div>'
         : ''),
+      actions,
       '</div>',
     ].join('');
+  }
+
+  function renderDetail(el, node) {
+    if (!el || !node) return;
+    el.innerHTML = detailHtml(node);
+    el.querySelectorAll('[data-action]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var action = btn.dataset.action;
+        var qn = btn.dataset.qn;
+        if (action === 'toggle-expand') {
+          toggleExpand(currentHost, currentHldRef(), qn);
+          // Re-render detail to flip Expand/Collapse label.
+          var fresh = focusState && focusState.nodes && focusState.nodes.get(qn);
+          if (fresh) renderDetail(el, fresh);
+        } else if (action === 'set-root') {
+          setFocus(currentHost, currentHldRef(), qn);
+        }
+      });
+    });
+  }
+
+  function currentHldRef() {
+    return (window.state && window.state.data && window.state.data.hld) || { modules: {} };
   }
 
   function renderShell(host) {
@@ -323,21 +428,107 @@
     if (demoBtn) demoBtn.addEventListener('click', function () { startDemoTour(host, hld); });
   }
 
+  // ---- Color & kind legend (Item 3) -------------------------------------
+  var LEGEND_KEY = 'cg-3d-legend-collapsed';
+  function legendCollapsed() {
+    try { return window.localStorage && window.localStorage.getItem(LEGEND_KEY) === '1'; }
+    catch (e) { return false; }
+  }
+  function setLegendCollapsed(v) {
+    try { window.localStorage && window.localStorage.setItem(LEGEND_KEY, v ? '1' : '0'); }
+    catch (e) { /* ignore quota / SecurityError */ }
+  }
+  function legendHtml() {
+    var collapsed = legendCollapsed();
+    return [
+      '<div class="g3d-legend', (collapsed ? ' is-collapsed' : ''), '" id="g3d-legend">',
+      '<button class="g3d-legend-toggle" id="g3d-legend-toggle" ',
+      'title="', (collapsed ? 'Show legend' : 'Hide legend'), '" ',
+      'aria-label="Toggle legend">',
+      (collapsed ? '?' : '×'),
+      '</button>',
+      '<div class="g3d-legend-body">',
+      '<div class="g3d-legend-section">',
+      '<div class="g3d-legend-title">Roles</div>',
+      legendDot('#fbbf24', 'Ancestor (caller)'),
+      legendDot('#22d3ee', 'Descendant (callee)'),
+      legendDot('#a78bfa', 'Current focus'),
+      legendDotOutline('External / third-party'),
+      '</div>',
+      '<div class="g3d-legend-section">',
+      '<div class="g3d-legend-title">Kinds</div>',
+      '<div class="g3d-legend-kinds">',
+      '<span class="g3d-kind-badge g3d-kind-function">FN</span>',
+      '<span class="g3d-kind-badge g3d-kind-method">M</span>',
+      '<span class="g3d-kind-badge g3d-kind-class">C</span>',
+      '<span class="g3d-kind-badge g3d-kind-module">MOD</span>',
+      '</div>',
+      '</div>',
+      '</div>',
+      '</div>',
+    ].join('');
+  }
+  function legendDot(color, label) {
+    return [
+      '<div class="g3d-legend-row">',
+      '<span class="g3d-legend-dot" style="background:', ESC(color), ';"></span>',
+      '<span class="g3d-legend-lbl">', ESC(label), '</span>',
+      '</div>',
+    ].join('');
+  }
+  function legendDotOutline(label) {
+    return [
+      '<div class="g3d-legend-row">',
+      '<span class="g3d-legend-dot g3d-legend-dot-outline"></span>',
+      '<span class="g3d-legend-lbl">', ESC(label), '</span>',
+      '</div>',
+    ].join('');
+  }
+  function wireLegend(host) {
+    var btn = host.querySelector('#g3d-legend-toggle');
+    var legend = host.querySelector('#g3d-legend');
+    if (!btn || !legend) return;
+    btn.addEventListener('click', function () {
+      var nowCollapsed = !legend.classList.contains('is-collapsed');
+      legend.classList.toggle('is-collapsed', nowCollapsed);
+      btn.textContent = nowCollapsed ? '?' : '×';
+      btn.title = nowCollapsed ? 'Show legend' : 'Hide legend';
+      setLegendCollapsed(nowCollapsed);
+    });
+  }
+
+  function refreshGraphData(host) {
+    if (!instance || !focusState) return;
+    var snap = getTransform().snapshotState(focusState);
+    instance.graphData(snap);
+    var bar = host && host.querySelector && host.querySelector('#g3d-bar');
+    if (bar) {
+      var countEl = bar.querySelector('.g3d-node-count');
+      if (countEl) countEl.textContent = snap.nodes.length + ' nodes';
+    }
+  }
+
   function renderFocusedView(host, hld) {
     destroyScene();
     renderShell(host);
 
     var T = getTransform();
-    var data = T.buildFocusGraph(hld, focus.rootQn, focus.depth, focus.direction);
+    if (!focusState) {
+      focusState = T.makeFocusState(hld, focus.rootQn, focus.depth, focus.direction);
+    }
+    var data = T.snapshotState(focusState);
 
     host.querySelector('#g3d-bar').innerHTML = controlsBarHtml(focus, data.nodes.length);
     host.querySelector('#g3d-breadcrumb').innerHTML = breadcrumbHtml();
 
     var stage = host.querySelector('#g3d-stage');
     stage.innerHTML = [
-      '<div class="g3d-canvas-wrap" id="g3d-canvas"></div>',
+      '<div class="g3d-canvas-wrap" id="g3d-canvas">',
+      legendHtml(),
+      '</div>',
       '<div id="g3d-detail" class="mt-4"></div>',
     ].join('');
+    wireLegend(host);
 
     if (window.lucide) window.lucide.createIcons();
     wireFocusedInputs(host, hld);
@@ -385,12 +576,15 @@
         var v = Number(depthInput.value) || DEFAULT_DEPTH;
         host.querySelector('#g3d-depth-val').textContent = String(v);
         focus.depth = v;
+        // Depth controls initial fold-out only — rebuild state from scratch.
+        focusState = getTransform().makeFocusState(hld, focus.rootQn, focus.depth, focus.direction);
         renderFocusedView(host, hld);
       });
     }
     host.querySelectorAll('.g3d-filter-btn[data-dir]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         focus.direction = btn.dataset.dir;
+        focusState = getTransform().makeFocusState(hld, focus.rootQn, focus.depth, focus.direction);
         renderFocusedView(host, hld);
       });
     });
@@ -444,10 +638,14 @@
         .nodeColor(function (n) { return n.color; })
         .nodeVal(function (n) { return n.val; })
         .nodeLabel(function (n) {
+          if (n.external) {
+            return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
+              + escapeBasic(n.qualname) + '<br><i>(external)</i></div>';
+          }
+          // Tooltip kept lightweight — fan-in/fan-out belong to the
+          // Hotspots view, not the data-flow story (Item 5).
           return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
-            + escapeBasic(n.kind) + ' · ' + escapeBasic(n.role)
-            + ' · in ' + (Number(n.fan_in) || 0)
-            + ' · out ' + (Number(n.fan_out) || 0) + '</div>';
+            + escapeBasic(n.kind) + ' · ' + escapeBasic(n.role) + '</div>';
         })
         .linkColor(function (l) { return l.color; })
         .linkOpacity(0.6)
@@ -459,10 +657,14 @@
         .onNodeHover(function (node) {
           container.style.cursor = node ? 'pointer' : 'grab';
         })
-        .onNodeClick(function (node) {
+        .onNodeClick(function (node, evt) {
           if (!node) return;
-          if (detailEl) detailEl.innerHTML = detailHtml(node);
+          renderDetail(detailEl, node);
+          // External (stdlib / third-party) leaves are terminal — show
+          // detail but never recenter / expand on them.
+          if (node.external) return;
           if (node.role === 'root') {
+            // Camera nudge only.
             var dist = 100;
             var len = Math.hypot(node.x || 1, node.y || 1, node.z || 1) || 1;
             instance.cameraPosition(
@@ -473,7 +675,14 @@
             );
             return;
           }
-          setFocus(host, hld, node.id);
+          // Shift-click pivots: drop current state, set this node as root.
+          if (evt && (evt.shiftKey || evt.metaKey)) {
+            setFocus(host, hld, node.id);
+            return;
+          }
+          // Default: expand 1-hop neighbors inline (or collapse if already
+          // expanded). Root and externals are excluded above.
+          toggleExpand(host, hld, node.id);
         })
         .graphData(data);
 

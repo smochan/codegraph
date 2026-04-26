@@ -9,9 +9,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { buildFocusGraph, searchSymbols } = require(
+const T = require(
   path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d_transform.js')
 );
+const {
+  buildFocusGraph, searchSymbols, isExternalQn, indexSymbols,
+  makeFocusState, expandNode, collapseNode, isExpanded, snapshotState,
+  groupSymbols, filterGrouped,
+} = T;
 
 // ---- Fixture builders ------------------------------------------------------
 
@@ -222,4 +227,231 @@ test('searchSymbols with empty query returns top symbols by fan_in desc', () => 
   ]);
   const hits = searchSymbols(hld, '', 10);
   assert.equal(hits[0].qualname, 'm.hot');
+});
+
+// ---- Item 1: external-call filtering --------------------------------------
+
+test('isExternalQn flags unresolved:: prefix and unknown qualnames', () => {
+  const hld = hldFrom([['m.a', [], []]]);
+  const idx = indexSymbols(hld);
+  assert.equal(isExternalQn('unresolved::os.path.join', idx), true);
+  assert.equal(isExternalQn('requests.get', idx), true);
+  assert.equal(isExternalQn('m.a', idx), false);
+  assert.equal(isExternalQn('', idx), true);
+});
+
+test('BFS does not traverse past external callees', () => {
+  // m.a calls os.path.join (external) which "calls" m.deep — we should NOT
+  // see m.deep because BFS stops at the external boundary.
+  const hld = hldFrom([
+    ['m.a', [], ['os.path.join']],
+  ]);
+  const out = buildFocusGraph(hld, 'm.a', 4, 'descendants');
+  const ids = out.nodes.map(n => n.id).sort();
+  assert.deepEqual(ids, ['m.a', 'os.path.join']);
+  // External node has external: true and gray color.
+  const ext = out.nodes.find(n => n.id === 'os.path.join');
+  assert.equal(ext.external, true);
+  assert.equal(ext.role, 'external');
+  assert.equal(ext.color, '#8b9ab8');
+  // Internal root is not flagged external.
+  const root = out.nodes.find(n => n.id === 'm.a');
+  assert.equal(root.external, false);
+});
+
+test('unresolved:: callees render as terminal external leaves', () => {
+  const hld = hldFrom([
+    ['m.a', [], ['unresolved::requests.get']],
+  ]);
+  const out = buildFocusGraph(hld, 'm.a', 2, 'descendants');
+  const ext = out.nodes.find(n => n.qualname === 'unresolved::requests.get');
+  assert.ok(ext, 'external leaf should be rendered');
+  assert.equal(ext.external, true);
+  assert.equal(ext.role, 'external');
+  // Edge to external also flagged.
+  const link = out.links.find(l => l.target === 'unresolved::requests.get');
+  assert.ok(link);
+  assert.equal(link.external, true);
+});
+
+// ---- Item 2: inline expand / collapse -------------------------------------
+
+test('expandNode adds 1-hop neighbors of the clicked node', () => {
+  const hld = hldFrom([
+    ['m.root',  [],            ['m.child']],
+    ['m.child', ['m.root'],    ['m.grand']],
+    ['m.grand', ['m.child'],   []],
+  ]);
+  // Initial focus depth 1: only root + child shown.
+  const state = makeFocusState(hld, 'm.root', 1, 'both');
+  let snap = snapshotState(state);
+  let ids = snap.nodes.map(n => n.id).sort();
+  assert.deepEqual(ids, ['m.child', 'm.root']);
+  // Expand child -> brings in m.grand (descendant of child).
+  expandNode(state, hld, 'm.child');
+  snap = snapshotState(state);
+  ids = snap.nodes.map(n => n.id).sort();
+  assert.deepEqual(ids, ['m.child', 'm.grand', 'm.root']);
+  assert.equal(isExpanded(state, 'm.child'), true);
+});
+
+test('collapseNode removes only IDs added by that expansion (refcount)', () => {
+  // shared neighbor: m.grand is a callee of both m.b1 and m.b2.
+  // Expanding both adds m.grand twice (refcount=2). Collapsing m.b1
+  // should NOT remove m.grand because m.b2 still references it.
+  const hld = hldFrom([
+    ['m.root', [],          ['m.b1', 'm.b2']],
+    ['m.b1',   ['m.root'],  ['m.grand']],
+    ['m.b2',   ['m.root'],  ['m.grand']],
+    ['m.grand',['m.b1','m.b2'], []],
+  ]);
+  const state = makeFocusState(hld, 'm.root', 1, 'both');
+  expandNode(state, hld, 'm.b1');
+  expandNode(state, hld, 'm.b2');
+  let ids = snapshotState(state).nodes.map(n => n.id).sort();
+  assert.ok(ids.includes('m.grand'));
+  assert.equal(state.refcount.get('m.grand'), 2);
+  // Collapse b1: grand should still be present (refcount drops to 1).
+  collapseNode(state, 'm.b1');
+  ids = snapshotState(state).nodes.map(n => n.id).sort();
+  assert.ok(ids.includes('m.grand'),
+    'm.grand stays because m.b2 still expanded');
+  assert.equal(state.refcount.get('m.grand'), 1);
+  assert.equal(isExpanded(state, 'm.b1'), false);
+  assert.equal(isExpanded(state, 'm.b2'), true);
+  // Now collapse b2: grand is removed.
+  collapseNode(state, 'm.b2');
+  ids = snapshotState(state).nodes.map(n => n.id).sort();
+  assert.ok(!ids.includes('m.grand'));
+});
+
+test('expand+collapse on a node with a cycle does not double-add or loop', () => {
+  // m.a <-> m.b cycle. Expanding m.a should add m.b once even though
+  // m.b is reachable both as callee and caller.
+  const hld = hldFrom([
+    ['m.root', [],         ['m.a']],
+    ['m.a',    ['m.root'], ['m.b']],
+    ['m.b',    ['m.a'],    ['m.a']],  // back-edge
+  ]);
+  const state = makeFocusState(hld, 'm.root', 1, 'both');
+  // Expand m.a (which is in the initial graph).
+  expandNode(state, hld, 'm.a');
+  let snap = snapshotState(state);
+  // No infinite loop, no duplicate node.
+  const counts = {};
+  snap.nodes.forEach(n => { counts[n.id] = (counts[n.id] || 0) + 1; });
+  Object.keys(counts).forEach(id => {
+    assert.equal(counts[id], 1, 'node ' + id + ' duplicated');
+  });
+  assert.ok(snap.nodes.some(n => n.id === 'm.b'));
+  // Now collapse — m.b drops out, root and m.a stay.
+  collapseNode(state, 'm.a');
+  snap = snapshotState(state);
+  const ids = snap.nodes.map(n => n.id).sort();
+  assert.deepEqual(ids, ['m.a', 'm.root']);
+});
+
+test('expandNode is a no-op for the root and externals', () => {
+  const hld = hldFrom([
+    ['m.root', [], ['os.path']],
+  ]);
+  const state = makeFocusState(hld, 'm.root', 1, 'descendants');
+  const before = snapshotState(state).nodes.length;
+  expandNode(state, hld, 'm.root');
+  expandNode(state, hld, 'os.path'); // external — has no entry in index
+  const after = snapshotState(state).nodes.length;
+  assert.equal(before, after);
+});
+
+test('external nodes do not bring their own callees into the graph', () => {
+  // even if the external qn happened to also be in another module's callees
+  // list, BFS should not expand from it.
+  const hld = hldFrom([
+    ['m.a',         [],         ['third.party.func']],
+    ['m.deep_leaf', [],         []],
+  ]);
+  // mutate to give the (now external because not in index? it IS in index by qn —
+  // actually third.party.func is NOT in the index, so external.) Confirm it
+  // doesn't pull in m.deep_leaf even if somehow listed.
+  const out = buildFocusGraph(hld, 'm.a', 5, 'descendants');
+  const ids = out.nodes.map(n => n.id).sort();
+  assert.ok(ids.includes('m.a'));
+  assert.ok(ids.includes('third.party.func'));
+  assert.ok(!ids.includes('m.deep_leaf'));
+});
+
+// ---- Item 4: grouped picker -----------------------------------------------
+
+function multiModuleHld() {
+  return {
+    modules: {
+      'pkg.a': {
+        qualname: 'pkg.a',
+        file: 'pkg/a.py',
+        language: 'python',
+        symbols: [
+          { qualname: 'pkg.a.Foo',          name: 'Foo',     kind: 'CLASS',
+            fan_in: 0, fan_out: 0, callers: [], callees: [] },
+          { qualname: 'pkg.a.Foo.method1',  name: 'method1', kind: 'METHOD',
+            fan_in: 1, fan_out: 0, callers: [], callees: [] },
+          { qualname: 'pkg.a.Foo.method2',  name: 'method2', kind: 'METHOD',
+            fan_in: 0, fan_out: 0, callers: [], callees: [] },
+          { qualname: 'pkg.a.helper',       name: 'helper',  kind: 'FUNCTION',
+            fan_in: 2, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+      'pkg.b': {
+        qualname: 'pkg.b',
+        file: 'pkg/b.py',
+        language: 'python',
+        symbols: [
+          { qualname: 'pkg.b.run', name: 'run', kind: 'FUNCTION',
+            fan_in: 5, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+    },
+  };
+}
+
+test('groupSymbols returns module > class > methods, plus top-level functions', () => {
+  const groups = groupSymbols(multiModuleHld());
+  assert.equal(groups.length, 2);
+  // First module pkg.a (alpha-sorted).
+  const a = groups[0];
+  assert.equal(a.qualname, 'pkg.a');
+  assert.equal(a.classes.length, 1);
+  assert.equal(a.classes[0].qualname, 'pkg.a.Foo');
+  assert.deepEqual(
+    a.classes[0].methods.map(m => m.name).sort(),
+    ['method1', 'method2'],
+  );
+  assert.equal(a.functions.length, 1);
+  assert.equal(a.functions[0].name, 'helper');
+  // Second module pkg.b: just one function, no classes.
+  const b = groups[1];
+  assert.equal(b.qualname, 'pkg.b');
+  assert.equal(b.classes.length, 0);
+  assert.equal(b.functions.length, 1);
+  assert.equal(b.functions[0].name, 'run');
+});
+
+test('filterGrouped keeps parent groups when nested method matches', () => {
+  const groups = groupSymbols(multiModuleHld());
+  const out = filterGrouped(groups, 'method1');
+  // Should keep pkg.a (matching nested method) but drop pkg.b.
+  assert.equal(out.length, 1);
+  assert.equal(out[0].qualname, 'pkg.a');
+  // The Foo class must remain because its nested method matched.
+  assert.equal(out[0].classes.length, 1);
+  assert.equal(out[0].classes[0].methods.length, 1);
+  assert.equal(out[0].classes[0].methods[0].name, 'method1');
+  // Top-level helper not matching is dropped.
+  assert.equal(out[0].functions.length, 0);
+});
+
+test('filterGrouped with module-name match keeps all children', () => {
+  const out = filterGrouped(groupSymbols(multiModuleHld()), 'pkg.b');
+  assert.equal(out.length, 1);
+  assert.equal(out[0].qualname, 'pkg.b');
+  assert.equal(out[0].functions.length, 1);
 });
