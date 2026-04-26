@@ -465,6 +465,127 @@ function isExpanded(state, qn) {
   return !!(state && state.expansions && state.expansions.has(qn));
 }
 
+// ---- Grouped picker (Item 4) ----------------------------------------------
+//
+// groupSymbols(hld) returns a list of modules. Each module contains:
+//   { qualname, file, language, classes: [...], functions: [...] }
+// Each class:
+//   { qualname, name, methods: [{qualname, name, kind, fan_in, fan_out}] }
+// Each function (top-level):
+//   { qualname, name, kind, fan_in, fan_out }
+//
+// The shape is intentionally flat-but-grouped so the picker can render it
+// as a tree: module -> class -> method, plus module-level functions.
+
+function groupSymbols(hld) {
+  var modules = (hld && hld.modules) || {};
+  var out = [];
+  Object.keys(modules).sort().forEach(function (modQn) {
+    var mod = modules[modQn] || {};
+    var symbols = mod.symbols || [];
+    var classes = {}; // qn -> class entry
+    var functions = [];
+    var methodOwners = {}; // method qn -> class qn
+
+    // First pass: seed classes (CLASS kind).
+    symbols.forEach(function (s) {
+      if (!s || !s.qualname) return;
+      if (s.kind === 'CLASS') {
+        classes[s.qualname] = {
+          qualname: s.qualname,
+          name: s.name || s.qualname,
+          methods: [],
+        };
+      }
+    });
+
+    // Second pass: assign methods to their class by qualname prefix.
+    symbols.forEach(function (s) {
+      if (!s || !s.qualname || s.kind === 'CLASS') return;
+      var meta = {
+        qualname: s.qualname,
+        name: s.name || s.qualname,
+        kind: s.kind,
+        fan_in: Number(s.fan_in) || 0,
+        fan_out: Number(s.fan_out) || 0,
+      };
+      // Find owning class: longest prefix s.qualname.startsWith(classQn + '.')
+      var owner = null;
+      Object.keys(classes).forEach(function (cqn) {
+        if (s.qualname.indexOf(cqn + '.') === 0) {
+          if (!owner || cqn.length > owner.length) owner = cqn;
+        }
+      });
+      if (owner) {
+        classes[owner].methods.push(meta);
+        methodOwners[s.qualname] = owner;
+      } else {
+        functions.push(meta);
+      }
+    });
+
+    // Sort: classes alpha by name, methods alpha, functions alpha.
+    var classList = Object.keys(classes).sort().map(function (k) {
+      var c = classes[k];
+      c.methods.sort(function (a, b) { return a.name.localeCompare(b.name); });
+      return c;
+    });
+    functions.sort(function (a, b) { return a.name.localeCompare(b.name); });
+
+    out.push({
+      qualname: modQn,
+      file: mod.file || '',
+      language: mod.language || '',
+      classes: classList,
+      functions: functions,
+    });
+  });
+  return out;
+}
+
+// Filter a grouped tree by query — keeps modules/classes that contain a
+// match, plus the matching leaves themselves.
+function filterGrouped(groups, query) {
+  var q = String(query || '').trim().toLowerCase();
+  if (!q) return groups;
+
+  function matches(text) {
+    return String(text || '').toLowerCase().indexOf(q) !== -1;
+  }
+
+  var out = [];
+  groups.forEach(function (g) {
+    var keptClasses = [];
+    g.classes.forEach(function (c) {
+      var keptMethods = c.methods.filter(function (m) {
+        return matches(m.name) || matches(m.qualname);
+      });
+      var classMatches = matches(c.name) || matches(c.qualname);
+      if (keptMethods.length || classMatches) {
+        keptClasses.push({
+          qualname: c.qualname,
+          name: c.name,
+          methods: classMatches ? c.methods : keptMethods,
+        });
+      }
+    });
+    var keptFns = g.functions.filter(function (f) {
+      return matches(f.name) || matches(f.qualname);
+    });
+    var moduleMatches = matches(g.qualname);
+    if (keptClasses.length || keptFns.length || moduleMatches) {
+      out.push({
+        qualname: g.qualname,
+        file: g.file,
+        language: g.language,
+        classes: moduleMatches ? g.classes : keptClasses,
+        functions: moduleMatches ? g.functions : keptFns,
+      });
+    }
+  });
+  return out;
+}
+
 // ---- Symbol search (top-N matches) ----------------------------------------
 
 function searchSymbols(hld, query, limit) {
@@ -532,6 +653,8 @@ if (typeof window !== 'undefined') {
     isExpanded: isExpanded,
     snapshotState: snapshotState,
     searchSymbols: searchSymbols,
+    groupSymbols: groupSymbols,
+    filterGrouped: filterGrouped,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
     kindColor: kindColor,
@@ -550,6 +673,8 @@ if (typeof module !== 'undefined' && module.exports) {
     isExpanded: isExpanded,
     snapshotState: snapshotState,
     searchSymbols: searchSymbols,
+    groupSymbols: groupSymbols,
+    filterGrouped: filterGrouped,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
     kindColor: kindColor,

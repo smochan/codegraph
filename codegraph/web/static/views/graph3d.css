@@ -258,6 +258,65 @@
   text-align: center;
 }
 
+/* ---- Grouped picker (Item 4) ---- */
+.g3d-grp { border-bottom: 1px solid var(--line); }
+.g3d-grp:last-child { border-bottom: 0; }
+.g3d-grp-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 6px;
+  background: linear-gradient(180deg, rgba(129,140,248,0.04), transparent);
+}
+.g3d-grp-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(129,140,248,0.12);
+  color: var(--brand);
+  border: 1px solid rgba(129,140,248,0.3);
+}
+.g3d-grp-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--txt-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g3d-grp-file {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--txt-3);
+}
+.g3d-grp-body {
+  display: flex;
+  flex-direction: column;
+}
+.g3d-grp-class {
+  border-top: 1px dashed var(--line);
+}
+.g3d-grp-class-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 4px;
+  font-size: 11px;
+  color: var(--txt-2);
+}
+.g3d-grp-class-name {
+  font-weight: 600;
+  color: var(--txt-1);
+}
+.g3d-pick-indent {
+  padding-left: 32px;
+}
+
 .g3d-kind-badge {
   display: inline-flex;
   align-items: center;

@@ -15,6 +15,7 @@ const T = require(
 const {
   buildFocusGraph, searchSymbols, isExternalQn, indexSymbols,
   makeFocusState, expandNode, collapseNode, isExpanded, snapshotState,
+  groupSymbols, filterGrouped,
 } = T;
 
 // ---- Fixture builders ------------------------------------------------------
@@ -377,4 +378,80 @@ test('external nodes do not bring their own callees into the graph', () => {
   assert.ok(ids.includes('m.a'));
   assert.ok(ids.includes('third.party.func'));
   assert.ok(!ids.includes('m.deep_leaf'));
+});
+
+// ---- Item 4: grouped picker -----------------------------------------------
+
+function multiModuleHld() {
+  return {
+    modules: {
+      'pkg.a': {
+        qualname: 'pkg.a',
+        file: 'pkg/a.py',
+        language: 'python',
+        symbols: [
+          { qualname: 'pkg.a.Foo',          name: 'Foo',     kind: 'CLASS',
+            fan_in: 0, fan_out: 0, callers: [], callees: [] },
+          { qualname: 'pkg.a.Foo.method1',  name: 'method1', kind: 'METHOD',
+            fan_in: 1, fan_out: 0, callers: [], callees: [] },
+          { qualname: 'pkg.a.Foo.method2',  name: 'method2', kind: 'METHOD',
+            fan_in: 0, fan_out: 0, callers: [], callees: [] },
+          { qualname: 'pkg.a.helper',       name: 'helper',  kind: 'FUNCTION',
+            fan_in: 2, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+      'pkg.b': {
+        qualname: 'pkg.b',
+        file: 'pkg/b.py',
+        language: 'python',
+        symbols: [
+          { qualname: 'pkg.b.run', name: 'run', kind: 'FUNCTION',
+            fan_in: 5, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+    },
+  };
+}
+
+test('groupSymbols returns module > class > methods, plus top-level functions', () => {
+  const groups = groupSymbols(multiModuleHld());
+  assert.equal(groups.length, 2);
+  // First module pkg.a (alpha-sorted).
+  const a = groups[0];
+  assert.equal(a.qualname, 'pkg.a');
+  assert.equal(a.classes.length, 1);
+  assert.equal(a.classes[0].qualname, 'pkg.a.Foo');
+  assert.deepEqual(
+    a.classes[0].methods.map(m => m.name).sort(),
+    ['method1', 'method2'],
+  );
+  assert.equal(a.functions.length, 1);
+  assert.equal(a.functions[0].name, 'helper');
+  // Second module pkg.b: just one function, no classes.
+  const b = groups[1];
+  assert.equal(b.qualname, 'pkg.b');
+  assert.equal(b.classes.length, 0);
+  assert.equal(b.functions.length, 1);
+  assert.equal(b.functions[0].name, 'run');
+});
+
+test('filterGrouped keeps parent groups when nested method matches', () => {
+  const groups = groupSymbols(multiModuleHld());
+  const out = filterGrouped(groups, 'method1');
+  // Should keep pkg.a (matching nested method) but drop pkg.b.
+  assert.equal(out.length, 1);
+  assert.equal(out[0].qualname, 'pkg.a');
+  // The Foo class must remain because its nested method matched.
+  assert.equal(out[0].classes.length, 1);
+  assert.equal(out[0].classes[0].methods.length, 1);
+  assert.equal(out[0].classes[0].methods[0].name, 'method1');
+  // Top-level helper not matching is dropped.
+  assert.equal(out[0].functions.length, 0);
+});
+
+test('filterGrouped with module-name match keeps all children', () => {
+  const out = filterGrouped(groupSymbols(multiModuleHld()), 'pkg.b');
+  assert.equal(out.length, 1);
+  assert.equal(out[0].qualname, 'pkg.b');
+  assert.equal(out[0].functions.length, 1);
 });

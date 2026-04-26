@@ -170,17 +170,64 @@
   function renderPickerResults(host, hld, query) {
     var box = host.querySelector('#g3d-picker-results');
     if (!box) return;
-    var hits = getTransform().searchSymbols(hld, query, 20);
-    if (!hits.length) {
+    var T = getTransform();
+    var groups = T.filterGrouped(T.groupSymbols(hld), query);
+    if (!groups.length) {
       box.innerHTML = '<div class="g3d-picker-noresults">No matches.</div>';
       return;
     }
-    box.innerHTML = hits.map(pickerResultRowHtml).join('');
+    box.innerHTML = groups.map(pickerGroupHtml).join('');
     box.querySelectorAll('.g3d-pick-row').forEach(function (btn) {
       btn.addEventListener('click', function () {
         setFocus(host, hld, btn.dataset.qn);
       });
     });
+  }
+
+  function pickerGroupHtml(g) {
+    var classBlocks = g.classes.map(pickerClassHtml).join('');
+    var fnBlocks = g.functions.map(function (f) {
+      return pickerLeafHtml(f, false);
+    }).join('');
+    return [
+      '<div class="g3d-grp">',
+      '<div class="g3d-grp-hdr">',
+      '<span class="g3d-grp-tag">MOD</span>',
+      '<span class="g3d-grp-name qn-mono">', ESC(g.qualname), '</span>',
+      (g.file ? '<span class="g3d-grp-file">' + ESC(g.file) + '</span>' : ''),
+      '</div>',
+      '<div class="g3d-grp-body">',
+      classBlocks,
+      fnBlocks,
+      '</div>',
+      '</div>',
+    ].join('');
+  }
+  function pickerClassHtml(c) {
+    var methods = c.methods.map(function (m) { return pickerLeafHtml(m, true); }).join('');
+    return [
+      '<div class="g3d-grp-class">',
+      '<div class="g3d-grp-class-hdr">',
+      '<span class="g3d-kind-badge g3d-kind-class">C</span>',
+      '<span class="g3d-grp-class-name">', ESC(c.name), '</span>',
+      '</div>',
+      methods,
+      '</div>',
+    ].join('');
+  }
+  function pickerLeafHtml(s, indent) {
+    var k = String(s.kind || '').toUpperCase();
+    var badge = k === 'METHOD' ? 'M' : (k === 'FUNCTION' ? 'FN' : (k.slice(0, 3) || '?'));
+    return [
+      '<button class="g3d-pick-row', (indent ? ' g3d-pick-indent' : ''),
+      '" data-qn="', ESC(s.qualname), '">',
+      '<span class="g3d-kind-badge g3d-kind-', ESC(k.toLowerCase()), '">',
+      ESC(badge), '</span>',
+      '<span class="g3d-pick-name">', ESC(s.name || s.qualname), '</span>',
+      '<span class="g3d-pick-meta">in ', Number(s.fan_in) || 0,
+      ' · out ', Number(s.fan_out) || 0, '</span>',
+      '</button>',
+    ].join('');
   }
 
   // ---- Controls bar ------------------------------------------------------
