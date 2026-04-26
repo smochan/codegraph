@@ -195,6 +195,12 @@ class PythonExtractor(ExtractorBase):
         self._visit_block(
             root, rel, qualname, module_id, None, src, nodes, edges
         )
+        # Module-level call expressions (e.g. `Widget("a")` at top level)
+        # also produce CALLS edges attributed to the module so the resolver
+        # can link them to in-repo classes/functions defined in the same
+        # file. We deliberately stop traversal at any function/class def so
+        # we don't double-count their inner calls.
+        self._collect_calls(root, rel, module_id, src, edges)
         return nodes, edges
 
     def _visit_block(
