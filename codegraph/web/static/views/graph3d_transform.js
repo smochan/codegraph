@@ -318,6 +318,153 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
   };
 }
 
+// ---- Inline expand / collapse ---------------------------------------------
+//
+// expandNode(state, hld, qn) and collapseNode(state, qn) mutate a graph
+// state object in place:
+//
+//   state = {
+//     nodes: Map<qn, node>,
+//     links: Array<{source, target, kind, color, external}>,
+//     linkKeys: Set<string>,    // dedup key
+//     refcount: Map<qn, number>,  // node refcount (>= 1 while present)
+//     expansions: Map<qn, {addedNodes: Set<qn>, addedLinkKeys: Set<string>}>,
+//   }
+//
+// The graph state lives in the controller (graph3d.js); these helpers are
+// pure transforms over it so we can unit-test the expand/collapse logic
+// without touching the DOM.
+
+function makeFocusState(hld, rootQn, depth, direction) {
+  var graph = buildFocusGraph(hld, rootQn, depth, direction);
+  var nodes = new Map();
+  var refcount = new Map();
+  graph.nodes.forEach(function (n) {
+    nodes.set(n.id, n);
+    refcount.set(n.id, 1);
+  });
+  var linkKeys = new Set();
+  var links = [];
+  graph.links.forEach(function (l) {
+    var key = linkKey(l.source, l.target);
+    if (linkKeys.has(key)) return;
+    linkKeys.add(key);
+    links.push(l);
+  });
+  return {
+    rootQn: rootQn,
+    nodes: nodes,
+    links: links,
+    linkKeys: linkKeys,
+    refcount: refcount,
+    expansions: new Map(),
+  };
+}
+
+function linkKey(source, target) {
+  var s = (source && source.id) || source;
+  var t = (target && target.id) || target;
+  return String(s) + '->' + String(t);
+}
+
+function snapshotState(state) {
+  return { nodes: Array.from(state.nodes.values()), links: state.links.slice() };
+}
+
+// Expand: bring 1-hop neighbors of qn into the graph.
+// External neighbors render as terminal leaves; internals get a role
+// matching the relationship to qn (callers => ancestor, callees => descendant).
+function expandNode(state, hld, qn) {
+  if (!state || !qn) return state;
+  if (state.expansions.has(qn)) return state; // already expanded
+  if (qn === state.rootQn) return state;
+
+  var index = indexSymbols(hld);
+  if (!index.has(qn)) return state;
+
+  var entry = index.get(qn);
+  var sym = entry.sym;
+  var addedNodes = new Set();
+  var addedLinkKeys = new Set();
+
+  function addLeaf(neighborQn, role, edgePair) {
+    if (!neighborQn) return;
+    var external = isExternalQn(neighborQn, index);
+    var key = linkKey(edgePair[0], edgePair[1]);
+    if (!state.linkKeys.has(key)) {
+      state.linkKeys.add(key);
+      addedLinkKeys.add(key);
+      var edgeRole = external ? 'external' : role;
+      state.links.push({
+        source: edgePair[0],
+        target: edgePair[1],
+        kind: 'CALLS',
+        color: ROLE_EDGE_COLORS[edgeRole] || EDGE_FALLBACK,
+        external: external,
+      });
+    }
+    if (state.nodes.has(neighborQn)) {
+      // Bump refcount; another expansion already brought it in.
+      state.refcount.set(neighborQn, (state.refcount.get(neighborQn) || 0) + 1);
+      addedNodes.add(neighborQn);
+      return;
+    }
+    var node;
+    if (external) {
+      node = makeExternalNode(neighborQn, 1);
+    } else {
+      node = makeNode(index.get(neighborQn), role, 1);
+    }
+    state.nodes.set(neighborQn, node);
+    state.refcount.set(neighborQn, 1);
+    addedNodes.add(neighborQn);
+  }
+
+  (sym.callers || []).forEach(function (c) {
+    addLeaf(c, 'ancestor', [c, qn]);
+  });
+  (sym.callees || []).forEach(function (c) {
+    addLeaf(c, 'descendant', [qn, c]);
+  });
+
+  state.expansions.set(qn, { addedNodes: addedNodes, addedLinkKeys: addedLinkKeys });
+  return state;
+}
+
+// Collapse: undo a previous expand. Decrement refcounts of nodes added
+// by this expansion; nodes whose refcount drops to 0 are removed. Edges
+// added by this expansion are always removed.
+function collapseNode(state, qn) {
+  if (!state || !qn) return state;
+  var rec = state.expansions.get(qn);
+  if (!rec) return state;
+  // Drop edges this expansion added.
+  state.links = state.links.filter(function (l) {
+    var key = linkKey(l.source, l.target);
+    if (rec.addedLinkKeys.has(key)) {
+      state.linkKeys.delete(key);
+      return false;
+    }
+    return true;
+  });
+  // Decrement refcounts; remove orphaned nodes.
+  rec.addedNodes.forEach(function (id) {
+    var rc = (state.refcount.get(id) || 0) - 1;
+    if (rc <= 0) {
+      state.refcount.delete(id);
+      state.nodes.delete(id);
+    } else {
+      state.refcount.set(id, rc);
+    }
+  });
+  state.expansions.delete(qn);
+  return state;
+}
+
+function isExpanded(state, qn) {
+  return !!(state && state.expansions && state.expansions.has(qn));
+}
+
 // ---- Symbol search (top-N matches) ----------------------------------------
 
 function searchSymbols(hld, query, limit) {
@@ -379,6 +526,11 @@ if (typeof window !== 'undefined') {
   window.CG_Graph3DTransform = {
     buildGraph3dData: buildGraph3dData,
     buildFocusGraph: buildFocusGraph,
+    makeFocusState: makeFocusState,
+    expandNode: expandNode,
+    collapseNode: collapseNode,
+    isExpanded: isExpanded,
+    snapshotState: snapshotState,
     searchSymbols: searchSymbols,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
@@ -392,6 +544,11 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     buildGraph3dData: buildGraph3dData,
     buildFocusGraph: buildFocusGraph,
+    makeFocusState: makeFocusState,
+    expandNode: expandNode,
+    collapseNode: collapseNode,
+    isExpanded: isExpanded,
+    snapshotState: snapshotState,
     searchSymbols: searchSymbols,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,

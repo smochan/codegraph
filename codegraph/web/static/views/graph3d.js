@@ -28,6 +28,7 @@
   var currentHost = null;
 
   var focus = null;             // { rootQn, depth, direction }
+  var focusState = null;        // mutable graph state from makeFocusState
   var history = [];
 
   var DEFAULT_DEPTH = 2;
@@ -211,8 +212,8 @@
       '<div class="g3d-controls-sep"></div>',
       '<div class="g3d-controls-group">',
       '<button class="g3d-filter-btn" id="g3d-demo-btn" title="Autoplay tour">Demo</button>',
-      '<button class="g3d-filter-btn" id="g3d-reset-btn" title="Clear focus">Reset</button>',
-      '<span class="g3d-controls-lbl ml-auto">',
+      '<button class="g3d-filter-btn" id="g3d-reset-btn" title="Reset to picker">Reset to picker</button>',
+      '<span class="g3d-controls-lbl ml-auto g3d-node-count">',
       Number(nodeCount) || 0, ' nodes</span>',
       '</div>',
       '</div>',
@@ -249,33 +250,60 @@
       depth: focus ? focus.depth : DEFAULT_DEPTH,
       direction: focus ? focus.direction : DEFAULT_DIRECTION,
     };
+    focusState = getTransform().makeFocusState(hld, qn, focus.depth, focus.direction);
     pushHistory(qn);
     renderFocusedView(host, hld);
   }
   function clearFocus(host, hld) {
     focus = null;
+    focusState = null;
     history = [];
     renderPickerView(host, hld);
+  }
+  function toggleExpand(host, hld, qn) {
+    if (!focusState || !qn) return;
+    if (qn === focus.rootQn) return;
+    var T = getTransform();
+    if (T.isExpanded(focusState, qn)) {
+      T.collapseNode(focusState, qn);
+    } else {
+      T.expandNode(focusState, hld, qn);
+    }
+    refreshGraphData(host);
   }
 
   function detailHtml(node) {
     var roleLabel = ({
-      root: 'root', ancestor: 'caller', descendant: 'callee',
+      root: 'root', ancestor: 'caller', descendant: 'callee', external: 'external',
     })[node.role] || node.role || '';
+    var expanded = focusState && getTransform().isExpanded(focusState, node.id);
+    var actions = '';
+    if (!node.external && node.role !== 'root') {
+      actions = [
+        '<div class="g3d-detail-actions mt-3">',
+        '<button class="g3d-filter-btn" data-action="toggle-expand" data-qn="', ESC(node.id), '">',
+        expanded ? 'Collapse neighbors' : 'Expand neighbors',
+        '</button>',
+        '<button class="g3d-filter-btn" data-action="set-root" data-qn="', ESC(node.id), '">',
+        'Set as root',
+        '</button>',
+        '</div>',
+      ].join('');
+    }
     return [
       '<div class="g3d-detail panel p-5">',
       '<div class="text-[11px] uppercase tracking-[0.14em] text-app-3 mb-1">',
-      ESC(node.kind), ' · ', ESC(roleLabel), ' · depth ', Number(node.depth) || 0,
-      ' · ', ESC(node.file || ''), '</div>',
-      '<div class="text-base font-semibold qn-mono mb-3">', ESC(node.id), '</div>',
-      '<div class="flex gap-4 text-xs text-app-2">',
-      '<span>fan-in: <b>', Number(node.fan_in) || 0, '</b></span>',
-      '<span>fan-out: <b>', Number(node.fan_out) || 0, '</b></span>',
-      node.layer ? ('<span>layer: <b>' + ESC(node.layer) + '</b></span>') : '',
+      ESC(node.kind), ' · ', ESC(roleLabel),
+      (node.file ? (' · ' + ESC(node.file)) : ''),
+      (node.layer ? (' · layer ' + ESC(node.layer)) : ''),
       '</div>',
-      (node.role !== 'root'
-        ? '<div class="g3d-detail-hint mt-3">Click in the canvas to recenter on this symbol.</div>'
+      '<div class="text-base font-semibold qn-mono mb-1"><span class="g3d-detail-name">',
+      ESC(node.name || node.id), '</span></div>',
+      '<div class="text-xs text-app-3 qn-mono mb-2">', ESC(node.id), '</div>',
+      (node.external
+        ? '<div class="g3d-detail-hint mt-1">External symbol — terminal leaf.</div>'
         : ''),
+      actions,
       '</div>',
     ].join('');
   }
@@ -283,6 +311,24 @@
   function renderDetail(el, node) {
     if (!el || !node) return;
     el.innerHTML = detailHtml(node);
+    el.querySelectorAll('[data-action]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var action = btn.dataset.action;
+        var qn = btn.dataset.qn;
+        if (action === 'toggle-expand') {
+          toggleExpand(currentHost, currentHldRef(), qn);
+          // Re-render detail to flip Expand/Collapse label.
+          var fresh = focusState && focusState.nodes && focusState.nodes.get(qn);
+          if (fresh) renderDetail(el, fresh);
+        } else if (action === 'set-root') {
+          setFocus(currentHost, currentHldRef(), qn);
+        }
+      });
+    });
+  }
+
+  function currentHldRef() {
+    return (window.state && window.state.data && window.state.data.hld) || { modules: {} };
   }
 
   function renderShell(host) {
@@ -328,12 +374,26 @@
     if (demoBtn) demoBtn.addEventListener('click', function () { startDemoTour(host, hld); });
   }
 
+  function refreshGraphData(host) {
+    if (!instance || !focusState) return;
+    var snap = getTransform().snapshotState(focusState);
+    instance.graphData(snap);
+    var bar = host && host.querySelector && host.querySelector('#g3d-bar');
+    if (bar) {
+      var countEl = bar.querySelector('.g3d-node-count');
+      if (countEl) countEl.textContent = snap.nodes.length + ' nodes';
+    }
+  }
+
   function renderFocusedView(host, hld) {
     destroyScene();
     renderShell(host);
 
     var T = getTransform();
-    var data = T.buildFocusGraph(hld, focus.rootQn, focus.depth, focus.direction);
+    if (!focusState) {
+      focusState = T.makeFocusState(hld, focus.rootQn, focus.depth, focus.direction);
+    }
+    var data = T.snapshotState(focusState);
 
     host.querySelector('#g3d-bar').innerHTML = controlsBarHtml(focus, data.nodes.length);
     host.querySelector('#g3d-breadcrumb').innerHTML = breadcrumbHtml();
@@ -390,12 +450,15 @@
         var v = Number(depthInput.value) || DEFAULT_DEPTH;
         host.querySelector('#g3d-depth-val').textContent = String(v);
         focus.depth = v;
+        // Depth controls initial fold-out only — rebuild state from scratch.
+        focusState = getTransform().makeFocusState(hld, focus.rootQn, focus.depth, focus.direction);
         renderFocusedView(host, hld);
       });
     }
     host.querySelectorAll('.g3d-filter-btn[data-dir]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         focus.direction = btn.dataset.dir;
+        focusState = getTransform().makeFocusState(hld, focus.rootQn, focus.depth, focus.direction);
         renderFocusedView(host, hld);
       });
     });
@@ -468,13 +531,14 @@
         .onNodeHover(function (node) {
           container.style.cursor = node ? 'pointer' : 'grab';
         })
-        .onNodeClick(function (node) {
+        .onNodeClick(function (node, evt) {
           if (!node) return;
           renderDetail(detailEl, node);
           // External (stdlib / third-party) leaves are terminal — show
           // detail but never recenter / expand on them.
           if (node.external) return;
           if (node.role === 'root') {
+            // Camera nudge only.
             var dist = 100;
             var len = Math.hypot(node.x || 1, node.y || 1, node.z || 1) || 1;
             instance.cameraPosition(
@@ -485,7 +549,14 @@
             );
             return;
           }
-          setFocus(host, hld, node.id);
+          // Shift-click pivots: drop current state, set this node as root.
+          if (evt && (evt.shiftKey || evt.metaKey)) {
+            setFocus(host, hld, node.id);
+            return;
+          }
+          // Default: expand 1-hop neighbors inline (or collapse if already
+          // expanded). Root and externals are excluded above.
+          toggleExpand(host, hld, node.id);
         })
         .graphData(data);
 

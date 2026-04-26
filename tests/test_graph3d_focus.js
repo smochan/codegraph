@@ -12,7 +12,10 @@ const path = require('node:path');
 const T = require(
   path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d_transform.js')
 );
-const { buildFocusGraph, searchSymbols, isExternalQn, indexSymbols } = T;
+const {
+  buildFocusGraph, searchSymbols, isExternalQn, indexSymbols,
+  makeFocusState, expandNode, collapseNode, isExpanded, snapshotState,
+} = T;
 
 // ---- Fixture builders ------------------------------------------------------
 
@@ -268,6 +271,95 @@ test('unresolved:: callees render as terminal external leaves', () => {
   const link = out.links.find(l => l.target === 'unresolved::requests.get');
   assert.ok(link);
   assert.equal(link.external, true);
+});
+
+// ---- Item 2: inline expand / collapse -------------------------------------
+
+test('expandNode adds 1-hop neighbors of the clicked node', () => {
+  const hld = hldFrom([
+    ['m.root',  [],            ['m.child']],
+    ['m.child', ['m.root'],    ['m.grand']],
+    ['m.grand', ['m.child'],   []],
+  ]);
+  // Initial focus depth 1: only root + child shown.
+  const state = makeFocusState(hld, 'm.root', 1, 'both');
+  let snap = snapshotState(state);
+  let ids = snap.nodes.map(n => n.id).sort();
+  assert.deepEqual(ids, ['m.child', 'm.root']);
+  // Expand child -> brings in m.grand (descendant of child).
+  expandNode(state, hld, 'm.child');
+  snap = snapshotState(state);
+  ids = snap.nodes.map(n => n.id).sort();
+  assert.deepEqual(ids, ['m.child', 'm.grand', 'm.root']);
+  assert.equal(isExpanded(state, 'm.child'), true);
+});
+
+test('collapseNode removes only IDs added by that expansion (refcount)', () => {
+  // shared neighbor: m.grand is a callee of both m.b1 and m.b2.
+  // Expanding both adds m.grand twice (refcount=2). Collapsing m.b1
+  // should NOT remove m.grand because m.b2 still references it.
+  const hld = hldFrom([
+    ['m.root', [],          ['m.b1', 'm.b2']],
+    ['m.b1',   ['m.root'],  ['m.grand']],
+    ['m.b2',   ['m.root'],  ['m.grand']],
+    ['m.grand',['m.b1','m.b2'], []],
+  ]);
+  const state = makeFocusState(hld, 'm.root', 1, 'both');
+  expandNode(state, hld, 'm.b1');
+  expandNode(state, hld, 'm.b2');
+  let ids = snapshotState(state).nodes.map(n => n.id).sort();
+  assert.ok(ids.includes('m.grand'));
+  assert.equal(state.refcount.get('m.grand'), 2);
+  // Collapse b1: grand should still be present (refcount drops to 1).
+  collapseNode(state, 'm.b1');
+  ids = snapshotState(state).nodes.map(n => n.id).sort();
+  assert.ok(ids.includes('m.grand'),
+    'm.grand stays because m.b2 still expanded');
+  assert.equal(state.refcount.get('m.grand'), 1);
+  assert.equal(isExpanded(state, 'm.b1'), false);
+  assert.equal(isExpanded(state, 'm.b2'), true);
+  // Now collapse b2: grand is removed.
+  collapseNode(state, 'm.b2');
+  ids = snapshotState(state).nodes.map(n => n.id).sort();
+  assert.ok(!ids.includes('m.grand'));
+});
+
+test('expand+collapse on a node with a cycle does not double-add or loop', () => {
+  // m.a <-> m.b cycle. Expanding m.a should add m.b once even though
+  // m.b is reachable both as callee and caller.
+  const hld = hldFrom([
+    ['m.root', [],         ['m.a']],
+    ['m.a',    ['m.root'], ['m.b']],
+    ['m.b',    ['m.a'],    ['m.a']],  // back-edge
+  ]);
+  const state = makeFocusState(hld, 'm.root', 1, 'both');
+  // Expand m.a (which is in the initial graph).
+  expandNode(state, hld, 'm.a');
+  let snap = snapshotState(state);
+  // No infinite loop, no duplicate node.
+  const counts = {};
+  snap.nodes.forEach(n => { counts[n.id] = (counts[n.id] || 0) + 1; });
+  Object.keys(counts).forEach(id => {
+    assert.equal(counts[id], 1, 'node ' + id + ' duplicated');
+  });
+  assert.ok(snap.nodes.some(n => n.id === 'm.b'));
+  // Now collapse — m.b drops out, root and m.a stay.
+  collapseNode(state, 'm.a');
+  snap = snapshotState(state);
+  const ids = snap.nodes.map(n => n.id).sort();
+  assert.deepEqual(ids, ['m.a', 'm.root']);
+});
+
+test('expandNode is a no-op for the root and externals', () => {
+  const hld = hldFrom([
+    ['m.root', [], ['os.path']],
+  ]);
+  const state = makeFocusState(hld, 'm.root', 1, 'descendants');
+  const before = snapshotState(state).nodes.length;
+  expandNode(state, hld, 'm.root');
+  expandNode(state, hld, 'os.path'); // external — has no entry in index
+  const after = snapshotState(state).nodes.length;
+  assert.equal(before, after);
 });
 
 test('external nodes do not bring their own callees into the graph', () => {
