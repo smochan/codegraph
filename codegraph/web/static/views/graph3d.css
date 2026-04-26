@@ -1,0 +1,120 @@
+/* graph3d.css — styles for the 3D Graph view (per PLAN_3D_VIEW.md §4).
+ * Loaded after app.css, so it can rely on the dashboard's CSS custom
+ * properties (--bg-*, --txt-*, --brand, --line). All theme parity comes
+ * from those variables — no hex literals duplicated here. */
+
+.g3d-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.03) inset;
+}
+
+.g3d-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.g3d-controls-lbl {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--txt-2);
+  margin-right: 4px;
+}
+
+.g3d-controls-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line);
+  margin: 0 4px;
+}
+
+.g3d-filter-btn {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-3);
+  color: var(--txt-1);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.g3d-filter-btn:hover {
+  border-color: var(--brand);
+  color: var(--txt-0);
+}
+
+.g3d-filter-btn.active {
+  background: linear-gradient(180deg, rgba(129, 140, 248, 0.18), rgba(129, 140, 248, 0.06));
+  border-color: var(--brand);
+  color: var(--txt-0);
+}
+
+.g3d-filter-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.g3d-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: min(72vh, 760px);
+  min-height: 480px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-1);
+  box-shadow: 0 12px 32px -16px rgba(0, 0, 0, 0.55);
+  cursor: grab;
+}
+
+.g3d-canvas-wrap:active { cursor: grabbing; }
+
+.g3d-canvas-wrap canvas { display: block; }
+
+.g3d-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--txt-2);
+  font-size: 13px;
+}
+
+.g3d-detail {
+  /* Reuse panel styles from app.css — only minor overrides needed. */
+}
+
+.g3d-fallback {
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+
+/* 3d-force-graph injects a tooltip <div class="scene-tooltip"> on the body. */
+.scene-tooltip,
+.g3d-tip {
+  font-family: 'Inter var', Inter, system-ui, sans-serif !important;
+  font-size: 12px !important;
+  line-height: 1.4;
+  background: var(--bg-3) !important;
+  color: var(--txt-0) !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 6px !important;
+  padding: 8px 10px !important;
+  box-shadow: 0 12px 32px -16px rgba(0, 0, 0, 0.65) !important;
+}
+
+.g3d-tip b { color: var(--brand); }
