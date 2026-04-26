@@ -16,6 +16,9 @@ const state = {
   view: 'overview',
   flowSel: 0,
 };
+// Expose to other view scripts (graph3d.js etc.) that load in separate
+// <script> tags. Top-level `const` is not implicitly a window property.
+window.state = state;
 
 const VIEWS = [
   { section: 'Insights' },
