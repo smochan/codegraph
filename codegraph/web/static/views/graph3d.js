@@ -319,6 +319,13 @@
     refreshGraphData(host);
   }
 
+  // Per-node detail panel.
+  //
+  // Intentionally does NOT show fan_in / fan_out (Item 5): those are
+  // graph-theory metrics that fit the Hotspots view, not the data-flow
+  // story this 3D view tells. Detail shows: name, qualname, kind, file,
+  // role, layer (if present), plus action buttons (Expand / Set as root)
+  // for non-external internal nodes.
   function detailHtml(node) {
     var roleLabel = ({
       root: 'root', ancestor: 'caller', descendant: 'callee', external: 'external',
@@ -635,10 +642,10 @@
             return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
               + escapeBasic(n.qualname) + '<br><i>(external)</i></div>';
           }
+          // Tooltip kept lightweight — fan-in/fan-out belong to the
+          // Hotspots view, not the data-flow story (Item 5).
           return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
-            + escapeBasic(n.kind) + ' · ' + escapeBasic(n.role)
-            + ' · in ' + (Number(n.fan_in) || 0)
-            + ' · out ' + (Number(n.fan_out) || 0) + '</div>';
+            + escapeBasic(n.kind) + ' · ' + escapeBasic(n.role) + '</div>';
         })
         .linkColor(function (l) { return l.color; })
         .linkOpacity(0.6)
