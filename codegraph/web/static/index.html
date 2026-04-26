@@ -39,6 +39,7 @@ tailwind.config = {
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
 <script src="https://unpkg.com/lucide@0.414.0"></script>
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/views/graph3d.css">
 </head>
 <body class="text-ink-50 font-sans antialiased min-h-screen" id="app-body">
 <div class="app-bg"></div>
@@ -90,6 +91,8 @@ tailwind.config = {
 </div>
 <div id="tooltip" class="pointer-events-none fixed opacity-0 transition-opacity z-50 bg-ink-700/95 backdrop-blur border border-ink-500/80 rounded-md px-3 py-2 text-xs shadow-card max-w-sm"></div>
 <div id="toast-host" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+<script src="/static/views/graph3d_transform.js"></script>
+<script src="/static/views/graph3d.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

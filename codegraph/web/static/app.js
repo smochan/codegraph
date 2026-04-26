@@ -26,6 +26,7 @@ const VIEWS = [
   { id: 'matrix',       label: 'Matrix',       icon: 'grid-3x3' },
   { id: 'sankey',       label: 'Sankey',       icon: 'waves' },
   { id: 'treemap',      label: 'Treemap',      icon: 'square-stack' },
+  { id: 'graph3d',      label: '3D Graph',     icon: 'atom' },
   { section: 'Browse' },
   { id: 'architecture', label: 'Explorers',    icon: 'compass' },
   { id: 'files',        label: 'Files',        icon: 'folder-tree' },
@@ -148,6 +149,7 @@ const VIEW_RENDERERS = {
   matrix: renderMatrix,
   sankey: renderSankey,
   treemap: renderTreemap,
+  graph3d: renderGraph3dShim,
   architecture: renderArchitecture,
   files: renderFiles,
 };
@@ -834,6 +836,17 @@ function renderFiles(host) {
       <table class="data"><thead><tr><th>Path</th><th>Language</th><th class="num">Symbols</th></tr></thead>
       <tbody>${rows}</tbody></table>
     </div></div>`;
+}
+
+// ---------- Graph3D shim ----------
+// Delegates to window.renderGraph3d (defined in views/graph3d.js). Kept as a
+// named function so VIEW_RENDERERS can reference it without a hoist trap.
+function renderGraph3dShim(host) {
+  if (typeof window.renderGraph3d === 'function') return window.renderGraph3d(host);
+  const msg = document.createElement('div');
+  msg.className = 'p-8 text-ink-200';
+  msg.textContent = '3D view module failed to load.';
+  host.appendChild(msg);
 }
 
 // ---------- esc ----------
