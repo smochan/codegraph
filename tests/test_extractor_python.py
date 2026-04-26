@@ -64,6 +64,40 @@ def test_parse_utils_calls(extractor: PythonExtractor) -> None:
     assert len(calls) >= 1
 
 
+def test_parse_named_imports_emit_per_name_edges(
+    extractor: PythonExtractor,
+) -> None:
+    """`from models import Cat, Dog` should emit one IMPORTS edge per name."""
+    _, edges = extractor.parse_file(
+        FIXTURE_DIR / "test_models.py", FIXTURE_DIR
+    )
+    imports = [e for e in edges if e.kind == EdgeKind.IMPORTS]
+    named = [
+        e for e in imports if e.metadata.get("imported_name") in {"Cat", "Dog"}
+    ]
+    assert len(named) >= 2, (
+        f"expected per-name IMPORTS edges for Cat and Dog, got {imports}"
+    )
+    by_name = {e.metadata.get("imported_name"): e for e in named}
+    assert by_name["Cat"].metadata.get("target_name") == "models.Cat"
+    assert by_name["Dog"].metadata.get("target_name") == "models.Dog"
+
+
+def test_parse_relative_import_resolves_to_absolute(
+    extractor: PythonExtractor,
+) -> None:
+    """`from .models import Foo` from pkg/service.py should produce target
+    name 'pkg.models.Foo' and bind 'Foo'."""
+    rel_root = Path(__file__).parent / "fixtures" / "py_relative_import"
+    _, edges = extractor.parse_file(rel_root / "pkg" / "service.py", rel_root)
+    imports = [e for e in edges if e.kind == EdgeKind.IMPORTS]
+    foo_edges = [
+        e for e in imports if e.metadata.get("imported_name") == "Foo"
+    ]
+    assert foo_edges, f"expected per-name edge for Foo, got {imports}"
+    assert foo_edges[0].metadata.get("target_name") == "pkg.models.Foo"
+
+
 def test_parse_test_file_marks_test(extractor: PythonExtractor) -> None:
     nodes, _ = extractor.parse_file(
         FIXTURE_DIR / "test_models.py", FIXTURE_DIR
