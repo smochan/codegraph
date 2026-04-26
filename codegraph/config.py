@@ -8,6 +8,26 @@ import yaml
 from pydantic import BaseModel, Field
 
 
+class DeadCodeConfig(BaseModel):
+    """User-supplied dead-code analysis tweaks.
+
+    Extends the built-in entry-point catalog. All fields are optional;
+    user patterns are merged with the built-ins at parse time.
+    """
+
+    entry_point_decorators: list[str] = Field(default_factory=list)
+    """Extra decorator strings (e.g. ``"@my.handler"``) treated as entry
+    points. Matched as substring of the raw decorator text."""
+
+    entry_point_names: list[str] = Field(default_factory=list)
+    """Extra function/method/class name globs treated as entry points
+    (fnmatch syntax). Reserved for future use."""
+
+    entry_point_files: list[str] = Field(default_factory=list)
+    """File-path globs whose definitions are all treated as entry points.
+    Reserved for future use."""
+
+
 class CodegraphConfig(BaseModel):
     version: int = 1
     languages: list[str] = Field(
@@ -22,6 +42,7 @@ class CodegraphConfig(BaseModel):
     mcp: dict[str, Any] = Field(default_factory=lambda: {"enabled": False})
     install_hook: bool = False
     register_mcp: bool = False
+    dead_code: DeadCodeConfig = Field(default_factory=DeadCodeConfig)
 
 
 def load_config(repo_root: Path) -> CodegraphConfig:
