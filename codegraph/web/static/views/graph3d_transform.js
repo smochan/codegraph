@@ -43,14 +43,18 @@ var EDGE_FALLBACK = 'rgba(139,154,184,0.35)';
 // Focus-mode role colors. The root pops violet, ancestors flow in amber
 // and descendants flow out cyan. Edge color follows the descendant role
 // so caller→root edges read amber and root→callee edges read cyan.
+// External (stdlib / third-party) nodes render as gray-outline terminal
+// leaves — visible at the boundary but never traversed.
 var ROLE_COLORS = {
   root:        '#a78bfa', // violet
   ancestor:    '#fbbf24', // amber
   descendant:  '#22d3ee', // cyan
+  external:    '#8b9ab8', // gray (terminal leaf)
 };
 var ROLE_EDGE_COLORS = {
   ancestor:    'rgba(251,191,36,0.55)',
   descendant:  'rgba(34,211,238,0.55)',
+  external:    'rgba(139,154,184,0.35)',
 };
 
 function kindColor(kind) {
@@ -182,7 +186,41 @@ function makeNode(entry, role, depth) {
     depth: depth,
     val: baseVal,
     color: roleColor(role),
+    external: false,
   };
+}
+
+// Build a synthetic node for an external (stdlib / third-party) symbol
+// that the BFS doesn't expand. Pretty-print short name from the qualname.
+function makeExternalNode(qn, depth) {
+  var raw = String(qn || '');
+  var clean = raw.indexOf('unresolved::') === 0 ? raw.slice('unresolved::'.length) : raw;
+  var parts = clean.split('.');
+  var short = parts[parts.length - 1] || clean;
+  return {
+    id: raw,
+    name: short,
+    qualname: raw,
+    kind: 'EXTERNAL',
+    file: '',
+    language: '',
+    layer: '',
+    fan_in: 0,
+    fan_out: 0,
+    role: 'external',
+    depth: depth,
+    val: 3,
+    color: ROLE_COLORS.external,
+    external: true,
+  };
+}
+
+// A qualname is "external" if it starts with `unresolved::` or it is not
+// present in the symbol index built from hld.modules.
+function isExternalQn(qn, index) {
+  if (!qn) return true;
+  if (String(qn).indexOf('unresolved::') === 0) return true;
+  return !index.has(qn);
 }
 
 function buildFocusGraph(hld, rootQn, depth, direction) {
@@ -201,15 +239,17 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
   var links = [];
   var linkKeys = new Set();
 
-  function addLink(source, target, role) {
+  function addLink(source, target, role, external) {
     var key = source + '' + target + '' + role;
     if (linkKeys.has(key)) return;
     linkKeys.add(key);
+    var edgeRole = external ? 'external' : role;
     links.push({
       source: source,
       target: target,
       kind: 'CALLS',
-      color: ROLE_EDGE_COLORS[role] || EDGE_FALLBACK,
+      color: ROLE_EDGE_COLORS[edgeRole] || EDGE_FALLBACK,
+      external: !!external,
     });
   }
 
@@ -228,11 +268,21 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
         var neighbors = step(here);
         for (var j = 0; j < neighbors.length; j++) {
           var nb = neighbors[j];
-          if (!nb || !index.has(nb)) continue;
+          if (!nb) continue;
+          var external = isExternalQn(nb, index);
+          if (external) {
+            // Terminal leaf: render once, never traverse.
+            var fromToExt = edgeFromTo(here, nb);
+            addLink(fromToExt[0], fromToExt[1], role, true);
+            if (!nodes.has(nb)) {
+              nodes.set(nb, makeExternalNode(nb, d));
+            }
+            continue;
+          }
           // Emit the edge (even if neighbor was already visited via
           // another path — but dedup via linkKeys).
           var fromTo = edgeFromTo(here, nb);
-          addLink(fromTo[0], fromTo[1], role);
+          addLink(fromTo[0], fromTo[1], role, false);
           if (visited.has(nb)) continue;
           visited.add(nb);
           // Don't downgrade root if it shows up in a cycle.
@@ -330,6 +380,8 @@ if (typeof window !== 'undefined') {
     buildGraph3dData: buildGraph3dData,
     buildFocusGraph: buildFocusGraph,
     searchSymbols: searchSymbols,
+    isExternalQn: isExternalQn,
+    indexSymbols: indexSymbols,
     kindColor: kindColor,
     edgeColor: edgeColor,
     roleColor: roleColor,
@@ -341,6 +393,8 @@ if (typeof module !== 'undefined' && module.exports) {
     buildGraph3dData: buildGraph3dData,
     buildFocusGraph: buildFocusGraph,
     searchSymbols: searchSymbols,
+    isExternalQn: isExternalQn,
+    indexSymbols: indexSymbols,
     kindColor: kindColor,
     edgeColor: edgeColor,
     roleColor: roleColor,

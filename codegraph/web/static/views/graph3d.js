@@ -280,6 +280,11 @@
     ].join('');
   }
 
+  function renderDetail(el, node) {
+    if (!el || !node) return;
+    el.innerHTML = detailHtml(node);
+  }
+
   function renderShell(host) {
     host.innerHTML = pickerShellHtml();
     if (window.lucide) window.lucide.createIcons();
@@ -444,6 +449,10 @@
         .nodeColor(function (n) { return n.color; })
         .nodeVal(function (n) { return n.val; })
         .nodeLabel(function (n) {
+          if (n.external) {
+            return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
+              + escapeBasic(n.qualname) + '<br><i>(external)</i></div>';
+          }
           return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
             + escapeBasic(n.kind) + ' · ' + escapeBasic(n.role)
             + ' · in ' + (Number(n.fan_in) || 0)
@@ -461,7 +470,10 @@
         })
         .onNodeClick(function (node) {
           if (!node) return;
-          if (detailEl) detailEl.innerHTML = detailHtml(node);
+          renderDetail(detailEl, node);
+          // External (stdlib / third-party) leaves are terminal — show
+          // detail but never recenter / expand on them.
+          if (node.external) return;
           if (node.role === 'root') {
             var dist = 100;
             var len = Math.hypot(node.x || 1, node.y || 1, node.z || 1) || 1;

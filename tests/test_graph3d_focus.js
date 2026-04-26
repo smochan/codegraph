@@ -9,9 +9,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { buildFocusGraph, searchSymbols } = require(
+const T = require(
   path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d_transform.js')
 );
+const { buildFocusGraph, searchSymbols, isExternalQn, indexSymbols } = T;
 
 // ---- Fixture builders ------------------------------------------------------
 
@@ -222,4 +223,66 @@ test('searchSymbols with empty query returns top symbols by fan_in desc', () => 
   ]);
   const hits = searchSymbols(hld, '', 10);
   assert.equal(hits[0].qualname, 'm.hot');
+});
+
+// ---- Item 1: external-call filtering --------------------------------------
+
+test('isExternalQn flags unresolved:: prefix and unknown qualnames', () => {
+  const hld = hldFrom([['m.a', [], []]]);
+  const idx = indexSymbols(hld);
+  assert.equal(isExternalQn('unresolved::os.path.join', idx), true);
+  assert.equal(isExternalQn('requests.get', idx), true);
+  assert.equal(isExternalQn('m.a', idx), false);
+  assert.equal(isExternalQn('', idx), true);
+});
+
+test('BFS does not traverse past external callees', () => {
+  // m.a calls os.path.join (external) which "calls" m.deep — we should NOT
+  // see m.deep because BFS stops at the external boundary.
+  const hld = hldFrom([
+    ['m.a', [], ['os.path.join']],
+  ]);
+  const out = buildFocusGraph(hld, 'm.a', 4, 'descendants');
+  const ids = out.nodes.map(n => n.id).sort();
+  assert.deepEqual(ids, ['m.a', 'os.path.join']);
+  // External node has external: true and gray color.
+  const ext = out.nodes.find(n => n.id === 'os.path.join');
+  assert.equal(ext.external, true);
+  assert.equal(ext.role, 'external');
+  assert.equal(ext.color, '#8b9ab8');
+  // Internal root is not flagged external.
+  const root = out.nodes.find(n => n.id === 'm.a');
+  assert.equal(root.external, false);
+});
+
+test('unresolved:: callees render as terminal external leaves', () => {
+  const hld = hldFrom([
+    ['m.a', [], ['unresolved::requests.get']],
+  ]);
+  const out = buildFocusGraph(hld, 'm.a', 2, 'descendants');
+  const ext = out.nodes.find(n => n.qualname === 'unresolved::requests.get');
+  assert.ok(ext, 'external leaf should be rendered');
+  assert.equal(ext.external, true);
+  assert.equal(ext.role, 'external');
+  // Edge to external also flagged.
+  const link = out.links.find(l => l.target === 'unresolved::requests.get');
+  assert.ok(link);
+  assert.equal(link.external, true);
+});
+
+test('external nodes do not bring their own callees into the graph', () => {
+  // even if the external qn happened to also be in another module's callees
+  // list, BFS should not expand from it.
+  const hld = hldFrom([
+    ['m.a',         [],         ['third.party.func']],
+    ['m.deep_leaf', [],         []],
+  ]);
+  // mutate to give the (now external because not in index? it IS in index by qn —
+  // actually third.party.func is NOT in the index, so external.) Confirm it
+  // doesn't pull in m.deep_leaf even if somehow listed.
+  const out = buildFocusGraph(hld, 'm.a', 5, 'descendants');
+  const ids = out.nodes.map(n => n.id).sort();
+  assert.ok(ids.includes('m.a'));
+  assert.ok(ids.includes('third.party.func'));
+  assert.ok(!ids.includes('m.deep_leaf'));
 });
