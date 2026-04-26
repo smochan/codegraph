@@ -90,5 +90,15 @@ def test_r2_class_annotation_self_chain(tmp_path: Path) -> None:
     )
 
 
+def test_r2_instance_chain_method_call(tmp_path: Path) -> None:
+    """``Builder().make()`` should emit a CALLS edge to Builder.make."""
+    store = _build(tmp_path, "instance_chain.py")
+    make = _find_one(store, kind=NodeKind.METHOD, suffix=".Builder.make")
+    incoming = _calls_to(store, make.id)
+    assert incoming, (
+        "expected CALLS edge into Builder.make from Builder().make() chain"
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

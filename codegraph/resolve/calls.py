@@ -43,16 +43,38 @@ def _strip_unresolved(dst: str) -> str:
 
 
 def _normalize_target(name: str) -> str:
-    """Strip call-syntax noise so "foo.bar()" / "foo()" become "foo.bar"."""
+    """Strip call-syntax noise so "foo.bar()" / "foo()" become "foo.bar".
+
+    Also collapses fresh-instance chains like ``Builder().make`` /
+    ``Builder(...).run.bar`` into ``Builder.make`` / ``Builder.run.bar``,
+    so the resolver can find the method on the constructed class instead
+    of the class itself.
+    """
     cleaned = name.strip()
-    paren = cleaned.find("(")
-    if paren != -1:
-        cleaned = cleaned[:paren]
     if cleaned.startswith("await "):
         cleaned = cleaned[len("await "):]
     if cleaned.startswith("new "):
         cleaned = cleaned[len("new "):]
-    return cleaned.strip()
+    # Collapse balanced ``(...)`` segments. We track depth so nested
+    # parens (``Builder(Inner()).make``) collapse correctly to
+    # ``Builder.make``.
+    out: list[str] = []
+    depth = 0
+    for ch in cleaned:
+        if ch == "(":
+            depth += 1
+            continue
+        if ch == ")":
+            if depth > 0:
+                depth -= 1
+            continue
+        if depth == 0:
+            out.append(ch)
+    cleaned = "".join(out).strip()
+    # Drop any trailing dots left over from ``Foo().``.
+    while cleaned.endswith("."):
+        cleaned = cleaned[:-1]
+    return cleaned
 
 
 class _Index:
@@ -139,7 +161,7 @@ def _resolve_target(
                                 # 3) Tail-match: any class whose qualname
                                 # ends with the type name and which owns
                                 # ``tail``.
-                                for qn, nodes in index.by_qualname.items():
+                                for qn, _nodes in index.by_qualname.items():
                                     if qn == type_name or qn.endswith(
                                         "." + type_name
                                     ):
