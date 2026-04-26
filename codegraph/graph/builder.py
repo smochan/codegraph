@@ -14,9 +14,11 @@ import pathspec
 # Ensure extractors register themselves.
 import codegraph.parsers.python
 import codegraph.parsers.typescript  # noqa: F401
+from codegraph.config import CodegraphConfig
 from codegraph.graph.schema import Node, NodeKind, make_node_id
 from codegraph.graph.store_sqlite import SQLiteGraphStore
 from codegraph.parsers.base import get_extractor_for
+from codegraph.parsers.python import PythonExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +76,21 @@ class GraphBuilder:
         repo_root: Path,
         store: SQLiteGraphStore,
         ignore: list[str] | None = None,
+        config: CodegraphConfig | None = None,
     ) -> None:
         self._repo_root = repo_root
         self._store = store
         self._ignore = ignore or []
+        self._config = config or CodegraphConfig()
+        self._apply_config_to_extractors()
+
+    def _apply_config_to_extractors(self) -> None:
+        """Forward user dead-code patterns onto the singleton extractors."""
+        extra = tuple(self._config.dead_code.entry_point_decorators)
+        # PythonExtractor is registered as a singleton in the registry; we
+        # mutate its class attribute so subsequent parse_file calls pick up
+        # the user patterns.
+        PythonExtractor.extra_entry_point_decorators = extra
 
     def build(self, incremental: bool = True) -> BuildStats:
         stats = BuildStats()
