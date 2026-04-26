@@ -261,8 +261,14 @@ def tool_cycles(graph: nx.MultiDiGraph) -> dict[str, Any]:
 
     report = find_cycles(graph)
     return {
-        "import_cycles": report.import_cycles,
-        "call_cycles": report.call_cycles,
+        "import_cycles": [
+            {"node_ids": c.node_ids, "qualnames": c.qualnames}
+            for c in report.import_cycles
+        ],
+        "call_cycles": [
+            {"node_ids": c.node_ids, "qualnames": c.qualnames}
+            for c in report.call_cycles
+        ],
         "total": report.total,
     }
 

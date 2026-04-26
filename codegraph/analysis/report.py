@@ -37,8 +37,14 @@ class AnalyzeReport:
         return {
             "metrics": _metrics_to_dict(self.metrics),
             "cycles": {
-                "import_cycles": self.cycles.import_cycles,
-                "call_cycles": self.cycles.call_cycles,
+                "import_cycles": [
+                    {"node_ids": c.node_ids, "qualnames": c.qualnames}
+                    for c in self.cycles.import_cycles
+                ],
+                "call_cycles": [
+                    {"node_ids": c.node_ids, "qualnames": c.qualnames}
+                    for c in self.cycles.call_cycles
+                ],
                 "total": self.cycles.total,
             },
             "dead_code": [asdict(d) for d in self.dead_code],
@@ -112,11 +118,11 @@ def report_to_markdown(report: AnalyzeReport) -> str:
         if report.cycles.import_cycles:
             lines.append(f"### Import cycles ({len(report.cycles.import_cycles)})")
             for cyc in report.cycles.import_cycles[:10]:
-                lines.append("- " + " → ".join(cyc))
+                lines.append("- " + " → ".join(cyc.qualnames))
         if report.cycles.call_cycles:
             lines.append(f"### Call cycles ({len(report.cycles.call_cycles)})")
             for cyc in report.cycles.call_cycles[:10]:
-                lines.append("- " + " → ".join(cyc))
+                lines.append("- " + " → ".join(cyc.qualnames))
 
     lines.append("")
     lines.append(f"## Dead code ({len(report.dead_code)})")
