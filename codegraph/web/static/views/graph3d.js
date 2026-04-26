@@ -374,6 +374,75 @@
     if (demoBtn) demoBtn.addEventListener('click', function () { startDemoTour(host, hld); });
   }
 
+  // ---- Color & kind legend (Item 3) -------------------------------------
+  var LEGEND_KEY = 'cg-3d-legend-collapsed';
+  function legendCollapsed() {
+    try { return window.localStorage && window.localStorage.getItem(LEGEND_KEY) === '1'; }
+    catch (e) { return false; }
+  }
+  function setLegendCollapsed(v) {
+    try { window.localStorage && window.localStorage.setItem(LEGEND_KEY, v ? '1' : '0'); }
+    catch (e) { /* ignore quota / SecurityError */ }
+  }
+  function legendHtml() {
+    var collapsed = legendCollapsed();
+    return [
+      '<div class="g3d-legend', (collapsed ? ' is-collapsed' : ''), '" id="g3d-legend">',
+      '<button class="g3d-legend-toggle" id="g3d-legend-toggle" ',
+      'title="', (collapsed ? 'Show legend' : 'Hide legend'), '" ',
+      'aria-label="Toggle legend">',
+      (collapsed ? '?' : '×'),
+      '</button>',
+      '<div class="g3d-legend-body">',
+      '<div class="g3d-legend-section">',
+      '<div class="g3d-legend-title">Roles</div>',
+      legendDot('#fbbf24', 'Ancestor (caller)'),
+      legendDot('#22d3ee', 'Descendant (callee)'),
+      legendDot('#a78bfa', 'Current focus'),
+      legendDotOutline('External / third-party'),
+      '</div>',
+      '<div class="g3d-legend-section">',
+      '<div class="g3d-legend-title">Kinds</div>',
+      '<div class="g3d-legend-kinds">',
+      '<span class="g3d-kind-badge g3d-kind-function">FN</span>',
+      '<span class="g3d-kind-badge g3d-kind-method">M</span>',
+      '<span class="g3d-kind-badge g3d-kind-class">C</span>',
+      '<span class="g3d-kind-badge g3d-kind-module">MOD</span>',
+      '</div>',
+      '</div>',
+      '</div>',
+      '</div>',
+    ].join('');
+  }
+  function legendDot(color, label) {
+    return [
+      '<div class="g3d-legend-row">',
+      '<span class="g3d-legend-dot" style="background:', ESC(color), ';"></span>',
+      '<span class="g3d-legend-lbl">', ESC(label), '</span>',
+      '</div>',
+    ].join('');
+  }
+  function legendDotOutline(label) {
+    return [
+      '<div class="g3d-legend-row">',
+      '<span class="g3d-legend-dot g3d-legend-dot-outline"></span>',
+      '<span class="g3d-legend-lbl">', ESC(label), '</span>',
+      '</div>',
+    ].join('');
+  }
+  function wireLegend(host) {
+    var btn = host.querySelector('#g3d-legend-toggle');
+    var legend = host.querySelector('#g3d-legend');
+    if (!btn || !legend) return;
+    btn.addEventListener('click', function () {
+      var nowCollapsed = !legend.classList.contains('is-collapsed');
+      legend.classList.toggle('is-collapsed', nowCollapsed);
+      btn.textContent = nowCollapsed ? '?' : '×';
+      btn.title = nowCollapsed ? 'Show legend' : 'Hide legend';
+      setLegendCollapsed(nowCollapsed);
+    });
+  }
+
   function refreshGraphData(host) {
     if (!instance || !focusState) return;
     var snap = getTransform().snapshotState(focusState);
@@ -400,9 +469,12 @@
 
     var stage = host.querySelector('#g3d-stage');
     stage.innerHTML = [
-      '<div class="g3d-canvas-wrap" id="g3d-canvas"></div>',
+      '<div class="g3d-canvas-wrap" id="g3d-canvas">',
+      legendHtml(),
+      '</div>',
       '<div id="g3d-detail" class="mt-4"></div>',
     ].join('');
+    wireLegend(host);
 
     if (window.lucide) window.lucide.createIcons();
     wireFocusedInputs(host, hld);
