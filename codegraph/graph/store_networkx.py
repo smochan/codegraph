@@ -13,9 +13,9 @@ from codegraph.graph.store_sqlite import SQLiteGraphStore
 def to_digraph(store: SQLiteGraphStore) -> nx.MultiDiGraph:
     g: nx.MultiDiGraph = nx.MultiDiGraph()
     for node in store.iter_nodes():
-        g.add_node(node.id, **node.model_dump())
+        g.add_node(node.id, **node.model_dump(mode="json"))
     for edge in store.iter_edges():
-        g.add_edge(edge.src, edge.dst, key=edge.kind.value, **edge.model_dump())
+        g.add_edge(edge.src, edge.dst, key=edge.kind.value, **edge.model_dump(mode="json"))
     return g
 
 

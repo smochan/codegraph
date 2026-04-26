@@ -48,7 +48,7 @@ nodes but not function-level granularity for those languages.
 ## Quickstart
 
 ```bash
-pip install codegraph-py           # install from PyPI (not yet published — see Install below)
+pip install codegraph-py
 codegraph init                     # interactive setup (languages, ignore globs, MCP config)
 codegraph build                    # parse repo → SQLite graph
 codegraph analyze                  # dead code · cycles · hotspots · untested · metrics
@@ -84,13 +84,6 @@ pip install codegraph-py
 ```
 
 > **Note:** `codegraph-py` is the PyPI distribution name. The CLI command is `codegraph`.
-> The package is not yet published to PyPI — to try it today, install from source:
->
-> ```bash
-> git clone https://github.com/smochan/codegraph.git
-> cd codegraph
-> pip install -e .
-> ```
 
 ---
 
