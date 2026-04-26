@@ -56,5 +56,18 @@ def test_r2_same_file_constructor(tmp_path: Path) -> None:
     )
 
 
+def test_r2_nested_function_call(tmp_path: Path) -> None:
+    """Calls inside nested ``def inner`` should attribute to ``inner``."""
+    store = _build(tmp_path, "nested_call.py")
+    helper = _find_one(store, kind=NodeKind.FUNCTION, suffix=".helper")
+    inner = _find_one(store, kind=NodeKind.FUNCTION, suffix=".outer.inner")
+    incoming = _calls_to(store, helper.id)
+    srcs = {e.src for e in incoming}
+    assert inner.id in srcs, (
+        f"expected CALLS edge from nested 'inner' to 'helper'; got srcs="
+        f"{srcs}"
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

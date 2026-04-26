@@ -419,6 +419,71 @@ class PythonExtractor(ExtractorBase):
 
         if body is not None:
             self._collect_calls(body, rel, func_id, src, edges)
+            # Visit nested defs so their bodies and calls are not lost.
+            # The innermost named function owns its calls — that mirrors
+            # the runtime attribution and matches what users expect when
+            # they ask "who calls X?".
+            self._visit_nested_defs(
+                body, rel, qualname, func_id, kind == NodeKind.METHOD,
+                src, nodes, edges,
+            )
+
+    def _visit_nested_defs(
+        self,
+        block: tree_sitter.Node,
+        rel: str,
+        parent_qualname: str,
+        parent_id: str,
+        in_method: bool,
+        src: bytes,
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> None:
+        """Recursively register nested function/class definitions.
+
+        Walks the subtree but stops descending into a function or class
+        once we have handed it to ``_handle_function`` / ``_handle_class``
+        (those handlers will recurse on their own bodies). This mirrors
+        ``_visit_block`` but skips top-level statement noise.
+        """
+        stack: list[tree_sitter.Node] = list(block.children)
+        while stack:
+            node = stack.pop()
+            if node.type == "function_definition":
+                # Nested functions are FUNCTION nodes (not METHOD); a method's
+                # nested helpers are still locally-scoped functions.
+                self._handle_function(
+                    node, rel, parent_qualname, parent_id,
+                    NodeKind.FUNCTION, src, nodes, edges,
+                )
+                continue
+            if node.type == "class_definition":
+                self._handle_class(
+                    node, rel, parent_qualname, parent_id,
+                    src, nodes, edges,
+                )
+                continue
+            if node.type == "decorated_definition":
+                inner = next(
+                    (
+                        c for c in node.children
+                        if c.type in ("function_definition", "class_definition")
+                    ),
+                    None,
+                )
+                if inner is not None and inner.type == "function_definition":
+                    self._handle_function(
+                        inner, rel, parent_qualname, parent_id,
+                        NodeKind.FUNCTION, src, nodes, edges,
+                    )
+                    continue
+                if inner is not None:
+                    self._handle_class(
+                        inner, rel, parent_qualname, parent_id,
+                        src, nodes, edges,
+                    )
+                    continue
+            stack.extend(node.children)
 
     def _collect_calls(
         self,
