@@ -43,16 +43,38 @@ def _strip_unresolved(dst: str) -> str:
 
 
 def _normalize_target(name: str) -> str:
-    """Strip call-syntax noise so "foo.bar()" / "foo()" become "foo.bar"."""
+    """Strip call-syntax noise so "foo.bar()" / "foo()" become "foo.bar".
+
+    Also collapses fresh-instance chains like ``Builder().make`` /
+    ``Builder(...).run.bar`` into ``Builder.make`` / ``Builder.run.bar``,
+    so the resolver can find the method on the constructed class instead
+    of the class itself.
+    """
     cleaned = name.strip()
-    paren = cleaned.find("(")
-    if paren != -1:
-        cleaned = cleaned[:paren]
     if cleaned.startswith("await "):
         cleaned = cleaned[len("await "):]
     if cleaned.startswith("new "):
         cleaned = cleaned[len("new "):]
-    return cleaned.strip()
+    # Collapse balanced ``(...)`` segments. We track depth so nested
+    # parens (``Builder(Inner()).make``) collapse correctly to
+    # ``Builder.make``.
+    out: list[str] = []
+    depth = 0
+    for ch in cleaned:
+        if ch == "(":
+            depth += 1
+            continue
+        if ch == ")":
+            if depth > 0:
+                depth -= 1
+            continue
+        if depth == 0:
+            out.append(ch)
+    cleaned = "".join(out).strip()
+    # Drop any trailing dots left over from ``Foo().``.
+    while cleaned.endswith("."):
+        cleaned = cleaned[:-1]
+    return cleaned
 
 
 class _Index:
@@ -98,6 +120,7 @@ def _resolve_target(
     if target.startswith("self."):
         rest = target[len("self."):]
         head = rest.split(".", 1)[0]
+        tail = rest[len(head) + 1:] if len(rest) > len(head) else ""
         if src_node is not None and src_node.kind == NodeKind.METHOD:
             parts = src_node.qualname.split(".")
             if len(parts) >= 2:
@@ -106,6 +129,47 @@ def _resolve_target(
                 cands = index.by_qualname.get(f"{class_qual}.{rest}", [])
                 if cands:
                     return cands[0]
+                # Dotted tail: try resolving via class-level type annotation
+                # (\`name: TypeName\` in the class body). If the enclosing
+                # class declares ``head: TypeName``, look up
+                # ``TypeName.<tail>`` against in-repo types.
+                if tail:
+                    class_node = index.by_qualname.get(class_qual, [])
+                    if class_node:
+                        attr_types = class_node[0].metadata.get("attr_types")
+                        if isinstance(attr_types, dict):
+                            type_name = attr_types.get(head)
+                            if isinstance(type_name, str) and type_name:
+                                # 1) Try the type as a fully-qualified name.
+                                full = f"{type_name}.{tail}"
+                                hit = index.by_qualname.get(full, [])
+                                if hit:
+                                    return hit[0]
+                                # 2) Try resolving the type via an import
+                                # binding from the same module.
+                                if src_module is not None:
+                                    bind = imports_for_module.get(
+                                        src_module.id, {}
+                                    )
+                                    bound = bind.get(type_name)
+                                    if bound:
+                                        hit = index.by_qualname.get(
+                                            f"{bound}.{tail}", []
+                                        )
+                                        if hit:
+                                            return hit[0]
+                                # 3) Tail-match: any class whose qualname
+                                # ends with the type name and which owns
+                                # ``tail``.
+                                for qn, _nodes in index.by_qualname.items():
+                                    if qn == type_name or qn.endswith(
+                                        "." + type_name
+                                    ):
+                                        hit = index.by_qualname.get(
+                                            f"{qn}.{tail}", []
+                                        )
+                                        if hit:
+                                            return hit[0]
                 # Dotted tail: try resolving just the first segment as a
                 # method/attribute on the enclosing class.
                 if head != rest:
@@ -117,6 +181,19 @@ def _resolve_target(
         # Fall through with just the head; never let "foo.bar" leak as a
         # phantom qualname into later heuristics.
         target = head
+
+    # 1b. Scope-relative: when the caller is itself a function/method and
+    # the target names a function defined directly inside the caller (a
+    # nested helper), prefer that closure-local definition over any
+    # module-level same-name function.
+    if (
+        src_node is not None
+        and src_node.kind in (NodeKind.FUNCTION, NodeKind.METHOD)
+    ):
+        nested_q = f"{src_node.qualname}.{target}"
+        cands = index.by_qualname.get(nested_q, [])
+        if cands:
+            return cands[0]
 
     # 2. Exact qualname.
     if target in index.by_qualname:

@@ -46,6 +46,48 @@ def _get_docstring(block_node: tree_sitter.Node, src: bytes) -> str | None:
     return None
 
 
+def _collect_class_attr_types(
+    body: tree_sitter.Node, src: bytes
+) -> dict[str, str]:
+    """Return ``{attr_name: type_qualname}`` for class-level annotations.
+
+    Tree-sitter wraps each ``name: Type`` line as
+    ``expression_statement -> assignment -> identifier ":" type -> ...``.
+    We extract simple identifier and dotted-attribute types only; complex
+    generics (``list[Foo]``) and string forward refs are ignored — those
+    require type-system reasoning beyond the current resolver budget.
+    """
+    out: dict[str, str] = {}
+    for stmt in body.children:
+        if stmt.type != "expression_statement":
+            continue
+        for assignment in stmt.children:
+            if assignment.type != "assignment":
+                continue
+            name_node: tree_sitter.Node | None = None
+            type_node: tree_sitter.Node | None = None
+            for c in assignment.children:
+                if c.type == "identifier" and name_node is None:
+                    name_node = c
+                elif c.type == "type":
+                    type_node = c
+            if name_node is None or type_node is None:
+                continue
+            # Inner of `type` is usually a single identifier or attribute.
+            inner: tree_sitter.Node | None = None
+            for c in type_node.children:
+                if c.type in ("identifier", "attribute"):
+                    inner = c
+                    break
+            if inner is None:
+                continue
+            attr_name = node_text(name_node, src)
+            type_text = node_text(inner, src)
+            if attr_name and type_text:
+                out[attr_name] = type_text
+    return out
+
+
 def _get_function_decorators(func_node: tree_sitter.Node, src: bytes) -> list[str]:
     """Collect decorator strings for a function/class definition.
 
@@ -88,6 +130,9 @@ _ENTRYPOINT_DECORATOR_SUFFIXES: tuple[str, ...] = (
     ".task",
     # SQLAlchemy.
     ".listens_for",
+    # MCP protocol server (anthropic mcp-python-sdk and similar).
+    ".list_tools", ".call_tool", ".list_resources", ".read_resource",
+    ".list_prompts", ".get_prompt",
 )
 
 # Decorator names matched anywhere in the raw decorator text (covers bare
@@ -195,6 +240,12 @@ class PythonExtractor(ExtractorBase):
         self._visit_block(
             root, rel, qualname, module_id, None, src, nodes, edges
         )
+        # Module-level call expressions (e.g. `Widget("a")` at top level)
+        # also produce CALLS edges attributed to the module so the resolver
+        # can link them to in-repo classes/functions defined in the same
+        # file. We deliberately stop traversal at any function/class def so
+        # we don't double-count their inner calls.
+        self._collect_calls(root, rel, module_id, src, edges)
         return nodes, edges
 
     def _visit_block(
@@ -288,6 +339,14 @@ class PythonExtractor(ExtractorBase):
         ):
             cls_metadata["entry_point"] = True
 
+        body_for_attrs = node.child_by_field_name("body")
+        attr_types = (
+            _collect_class_attr_types(body_for_attrs, src)
+            if body_for_attrs is not None else {}
+        )
+        if attr_types:
+            cls_metadata["attr_types"] = attr_types
+
         class_node = Node(
             id=class_id,
             kind=NodeKind.CLASS,
@@ -307,6 +366,8 @@ class PythonExtractor(ExtractorBase):
             src=class_id, dst=parent_id, kind=EdgeKind.DEFINED_IN,
             file=rel, line=node.start_point[0] + 1,
         ))
+
+        self._emit_decorator_calls(node, rel, class_id, src, edges)
 
         arg_list = node.child_by_field_name("superclasses")
         if arg_list is None:
@@ -411,8 +472,75 @@ class PythonExtractor(ExtractorBase):
             file=rel, line=node.start_point[0] + 1,
         ))
 
+        self._emit_decorator_calls(node, rel, func_id, src, edges)
+
         if body is not None:
             self._collect_calls(body, rel, func_id, src, edges)
+            # Visit nested defs so their bodies and calls are not lost.
+            # The innermost named function owns its calls — that mirrors
+            # the runtime attribution and matches what users expect when
+            # they ask "who calls X?".
+            self._visit_nested_defs(
+                body, rel, qualname, func_id, kind == NodeKind.METHOD,
+                src, nodes, edges,
+            )
+
+    def _visit_nested_defs(
+        self,
+        block: tree_sitter.Node,
+        rel: str,
+        parent_qualname: str,
+        parent_id: str,
+        in_method: bool,
+        src: bytes,
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> None:
+        """Recursively register nested function/class definitions.
+
+        Walks the subtree but stops descending into a function or class
+        once we have handed it to ``_handle_function`` / ``_handle_class``
+        (those handlers will recurse on their own bodies). This mirrors
+        ``_visit_block`` but skips top-level statement noise.
+        """
+        stack: list[tree_sitter.Node] = list(block.children)
+        while stack:
+            node = stack.pop()
+            if node.type == "function_definition":
+                # Nested functions are FUNCTION nodes (not METHOD); a method's
+                # nested helpers are still locally-scoped functions.
+                self._handle_function(
+                    node, rel, parent_qualname, parent_id,
+                    NodeKind.FUNCTION, src, nodes, edges,
+                )
+                continue
+            if node.type == "class_definition":
+                self._handle_class(
+                    node, rel, parent_qualname, parent_id,
+                    src, nodes, edges,
+                )
+                continue
+            if node.type == "decorated_definition":
+                inner = next(
+                    (
+                        c for c in node.children
+                        if c.type in ("function_definition", "class_definition")
+                    ),
+                    None,
+                )
+                if inner is not None and inner.type == "function_definition":
+                    self._handle_function(
+                        inner, rel, parent_qualname, parent_id,
+                        NodeKind.FUNCTION, src, nodes, edges,
+                    )
+                    continue
+                if inner is not None:
+                    self._handle_class(
+                        inner, rel, parent_qualname, parent_id,
+                        src, nodes, edges,
+                    )
+                    continue
+            stack.extend(node.children)
 
     def _collect_calls(
         self,
@@ -440,8 +568,56 @@ class PythonExtractor(ExtractorBase):
                         line=child.start_point[0] + 1,
                         metadata={"target_name": name},
                     ))
-            if child.type not in ("class_definition", "function_definition"):
+            # ``decorator`` subtrees are handled by ``_emit_decorator_calls``
+            # so we attribute decorator factories to the decorated symbol
+            # rather than the surrounding scope. Skipping them here avoids
+            # double-counting at module level.
+            if child.type not in (
+                "class_definition", "function_definition", "decorator",
+            ):
                 stack.extend(child.children)
+
+    def _emit_decorator_calls(
+        self,
+        def_node: tree_sitter.Node,
+        rel: str,
+        scope_id: str,
+        src: bytes,
+        edges: list[Edge],
+    ) -> None:
+        """Emit a CALLS edge for each decorator on a function or class.
+
+        ``@_register("name")`` and ``@my_decorator(arg)`` are calls — they
+        invoke the decorator factory at definition time. Without these edges
+        decorator-only functions look unreferenced.
+        """
+        container = def_node
+        if (
+            def_node.parent is not None
+            and def_node.parent.type == "decorated_definition"
+        ):
+            container = def_node.parent
+        for child in container.children:
+            if child.type != "decorator":
+                continue
+            for sub in child.children:
+                # The decorator body is either a bare reference (\`@foo\`)
+                # which is not a call we should emit, or a \`call\`
+                # (\`@foo("x")\`) — only the latter is a real invocation.
+                if sub.type == "call":
+                    func_child = sub.child_by_field_name("function")
+                    if func_child is None and sub.children:
+                        func_child = sub.children[0]
+                    if func_child is not None:
+                        name = node_text(func_child, src)
+                        edges.append(Edge(
+                            src=scope_id,
+                            dst=f"unresolved::{name}",
+                            kind=EdgeKind.CALLS,
+                            file=rel,
+                            line=sub.start_point[0] + 1,
+                            metadata={"target_name": name},
+                        ))
 
     def _handle_import(
         self,
