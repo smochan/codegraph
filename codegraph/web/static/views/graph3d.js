@@ -152,7 +152,7 @@
       '<div class="g3d-controls-sep"></div>',
       '<div class="g3d-controls-group">',
       '<button class="g3d-filter-btn" id="g3d-demo-btn" title="Auto-rotate demo">Demo</button>',
-      '<button class="g3d-filter-btn" id="g3d-reset-btn" title="Reset camera">Reset</button>',
+      '<button class="g3d-filter-btn" id="g3d-reset-btn" title="Reset filters and camera">Reset</button>',
       '<span class="g3d-controls-lbl ml-auto">', Number(nodeCount) || 0, ' nodes</span>',
       '</div>',
       '</div>',
@@ -229,8 +229,8 @@
     });
     var resetBtn = host.querySelector('#g3d-reset-btn');
     if (resetBtn) resetBtn.addEventListener('click', function () {
-      if (instance) instance.cameraPosition({ x: 0, y: 0, z: 600 }, { x: 0, y: 0, z: 0 }, 800);
-      if (detailEl) detailEl.textContent = '';
+      lastFilters = defaultFilters();
+      renderGraph3d(host);
     });
     var demoBtn = host.querySelector('#g3d-demo-btn');
     if (demoBtn) demoBtn.addEventListener('click', function () {
@@ -251,6 +251,11 @@
 
     var hld = (window.state && window.state.data && window.state.data.hld) || { modules: {} };
     var filters = lastFilters || defaultFilters();
+    // Recover from a stuck "all filters off" state when the user returns
+    // to the view after toggling everything off in a previous visit.
+    if (filters.kinds.size === 0 && filters.edgeKinds.size === 0) {
+      filters = defaultFilters();
+    }
     lastFilters = filters;
 
     if (!hasWebGL()) {
