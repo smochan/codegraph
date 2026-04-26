@@ -47,17 +47,105 @@ def _get_docstring(block_node: tree_sitter.Node, src: bytes) -> str | None:
 
 
 def _get_function_decorators(func_node: tree_sitter.Node, src: bytes) -> list[str]:
+    """Collect decorator strings for a function/class definition.
+
+    Tree-sitter wraps decorated definitions in a ``decorated_definition``
+    parent whose siblings are the ``decorator`` nodes; the actual
+    ``function_definition``/``class_definition`` itself has no decorator
+    children. We therefore look at the parent when needed.
+    """
     decs: list[str] = []
-    for child in func_node.children:
+    container: tree_sitter.Node | None = func_node
+    if (
+        func_node.parent is not None
+        and func_node.parent.type == "decorated_definition"
+    ):
+        container = func_node.parent
+    if container is None:
+        return decs
+    for child in container.children:
         if child.type == "decorator":
             decs.append(node_text(child, src))
     return decs
+
+
+# --- Entry-point decorator catalog ---------------------------------------
+#
+# Decorator-prefix patterns (matched as substring of the raw "@..." text).
+# Order is irrelevant; first match wins. Patterns starting with ``@`` match
+# only at the start of the decorator string, while patterns without a
+# leading ``@`` are matched as a contained substring (so ``@<name>.command``
+# style patterns require explicit suffixes).
+_ENTRYPOINT_DECORATOR_SUFFIXES: tuple[str, ...] = (
+    # Typer / Click — bound to any local Typer/Click instance.
+    ".command", ".callback", ".group",
+    # FastAPI / Flask / aiohttp — HTTP and websocket route decorators.
+    ".get", ".post", ".put", ".delete", ".patch", ".head", ".options",
+    ".trace", ".websocket", ".route", ".on_event", ".middleware",
+    ".before_request", ".after_request", ".teardown_request",
+    ".errorhandler",
+    # Celery.
+    ".task",
+    # SQLAlchemy.
+    ".listens_for",
+)
+
+# Decorator names matched anywhere in the raw decorator text (covers bare
+# ``@shared_task`` as well as ``@app.shared_task`` and ``@pytest.fixture``).
+_ENTRYPOINT_DECORATOR_CONTAINS: tuple[str, ...] = (
+    "shared_task",
+    "pytest.fixture",
+    "pytest.mark",
+    "abstractmethod",
+    "abc.abstractmethod",
+    "admin.register",
+    "receiver",
+    "login_required",
+    "permission_required",
+    "event.listens_for",
+)
+
+
+def _is_entry_point(
+    decorators: list[str],
+    name: str,
+    *,
+    extra_decorator_patterns: tuple[str, ...] = (),
+) -> bool:
+    """Return True if any decorator matches a known entry-point pattern.
+
+    ``name`` is currently unused but kept for forward compatibility with
+    name-glob configuration in DeadCodeConfig.
+    """
+    if not decorators:
+        return False
+    for raw in decorators:
+        text = raw.strip()
+        # Drop the leading '@' for substring matching, but keep the raw
+        # form for prefix matching.
+        body = text[1:] if text.startswith("@") else text
+        for suffix in _ENTRYPOINT_DECORATOR_SUFFIXES:
+            if suffix in body:
+                return True
+        for needle in _ENTRYPOINT_DECORATOR_CONTAINS:
+            if needle in body:
+                return True
+        for pattern in extra_decorator_patterns:
+            stripped = pattern.lstrip("@").strip()
+            if stripped and stripped in body:
+                return True
+    return False
 
 
 @register_extractor
 class PythonExtractor(ExtractorBase):
     language = "python"
     extensions = (".py",)
+
+    # Optional user-supplied decorator patterns (set by GraphBuilder before
+    # parsing). Matched as substring of the raw decorator text via
+    # ``_is_entry_point``.
+    extra_entry_point_decorators: tuple[str, ...] = ()
 
     def parse_file(
         self, path: Path, repo_root: Path
@@ -187,6 +275,17 @@ class PythonExtractor(ExtractorBase):
         body = node.child_by_field_name("body")
         docstring = _get_docstring(body, src) if body else None
 
+        decorators = _get_function_decorators(node, src)
+        cls_metadata: dict[str, object] = {}
+        if decorators:
+            cls_metadata["decorators"] = decorators
+        if _is_entry_point(
+            decorators,
+            name,
+            extra_decorator_patterns=self.extra_entry_point_decorators,
+        ):
+            cls_metadata["entry_point"] = True
+
         class_node = Node(
             id=class_id,
             kind=NodeKind.CLASS,
@@ -198,7 +297,7 @@ class PythonExtractor(ExtractorBase):
             signature=sig,
             docstring=docstring,
             language="python",
-            metadata={},
+            metadata=cls_metadata,
         )
         nodes.append(class_node)
 
@@ -282,6 +381,13 @@ class PythonExtractor(ExtractorBase):
         docstring = _get_docstring(body, src) if body else None
 
         decorators = _get_function_decorators(node, src)
+        metadata: dict[str, object] = {"decorators": decorators}
+        if _is_entry_point(
+            decorators,
+            name,
+            extra_decorator_patterns=self.extra_entry_point_decorators,
+        ) or name == "__main__":
+            metadata["entry_point"] = True
 
         func_node = Node(
             id=func_id,
@@ -294,7 +400,7 @@ class PythonExtractor(ExtractorBase):
             signature=sig,
             docstring=docstring,
             language="python",
-            metadata={"decorators": decorators},
+            metadata=metadata,
         )
         nodes.append(func_node)
 
