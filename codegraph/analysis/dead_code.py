@@ -67,6 +67,13 @@ def find_dead_code(
             continue
         if not include_tests and in_test_module(graph, nid):
             continue
+        # Decorator/entry-point-aware skip: framework hooks (Typer commands,
+        # FastAPI routes, pytest fixtures, abstract methods, Celery tasks,
+        # etc.) are invoked dynamically and have no static incoming edge.
+        # The Python parser tags them with metadata["entry_point"] = True.
+        metadata = attrs.get("metadata") or {}
+        if metadata.get("entry_point"):
+            continue
 
         has_incoming_ref = False
         for _src, _dst, key in graph.in_edges(nid, keys=True):
