@@ -943,7 +943,7 @@ def query_cycles() -> None:
             continue
         console.print(f"\n[cyan]{label}:[/cyan]")
         for cyc in cycles[:25]:
-            console.print("  - " + " → ".join(cyc))
+            console.print("  - " + " → ".join(cyc.qualnames))
 
 
 @baseline_app.command("save")
