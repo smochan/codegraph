@@ -367,13 +367,48 @@ class PythonExtractor(ExtractorBase):
         src: bytes,
         edges: list[Edge],
     ) -> None:
-        module_name: str | None = None
+        # Locate the module portion (relative_import or dotted_name) and the
+        # imported names that follow the `import` keyword.
+        module_node: tree_sitter.Node | None = None
+        seen_import_kw = False
+        name_nodes: list[tree_sitter.Node] = []
         for child in node.children:
-            if (child.type == "dotted_name" and module_name is None) or child.type == "relative_import":
-                module_name = node_text(child, src)
-                break
+            if not seen_import_kw:
+                if (
+                    child.type in ("relative_import", "dotted_name")
+                    and module_node is None
+                ):
+                    module_node = child
+                elif child.type == "import":
+                    seen_import_kw = True
+            else:
+                if child.type in ("dotted_name", "identifier"):
+                    name_nodes.append(child)
+                elif child.type == "aliased_import":
+                    # `from m import X as Y` — bind original name X.
+                    inner = next(
+                        (
+                            c for c in child.children
+                            if c.type in ("dotted_name", "identifier")
+                        ),
+                        None,
+                    )
+                    if inner is not None:
+                        name_nodes.append(inner)
+                elif child.type == "wildcard_import":
+                    # `from m import *` — no per-name edges to emit.
+                    pass
 
-        if module_name:
+        # Resolve module name. Handle relative imports by computing the
+        # absolute package qualname from the importing file's location.
+        module_name = self._resolve_from_module(module_node, rel, src)
+
+        # If there are no imported names (e.g. parser fallback), keep the
+        # module-level edge so we don't lose the import entirely. When we
+        # do have per-name edges, the per-name edges carry the binding info
+        # the resolver needs and the module-level edge would be redundant
+        # noise.
+        if module_name and not name_nodes:
             edges.append(Edge(
                 src=parent_id,
                 dst=f"unresolved::{module_name}",
@@ -382,3 +417,64 @@ class PythonExtractor(ExtractorBase):
                 line=node.start_point[0] + 1,
                 metadata={"target_name": module_name},
             ))
+
+        # Emit one IMPORTS edge per imported name, with imported_name in the
+        # metadata so the resolver can bind alias -> full qualname.
+        for nn in name_nodes:
+            imported = node_text(nn, src)
+            if not imported:
+                continue
+            full = (
+                f"{module_name}.{imported}" if module_name else imported
+            )
+            edges.append(Edge(
+                src=parent_id,
+                dst=f"unresolved::{full}",
+                kind=EdgeKind.IMPORTS,
+                file=rel,
+                line=node.start_point[0] + 1,
+                metadata={
+                    "target_name": full,
+                    "imported_name": imported,
+                },
+            ))
+
+    def _resolve_from_module(
+        self,
+        module_node: tree_sitter.Node | None,
+        rel: str,
+        src: bytes,
+    ) -> str:
+        """Return the absolute module qualname for a `from X import ...`.
+
+        For relative imports (`from . import x`, `from ..pkg import x`),
+        count the leading dots and walk up the importing file's package
+        path that many levels, then append the relative module name.
+        """
+        if module_node is None:
+            return ""
+        if module_node.type != "relative_import":
+            return node_text(module_node, src)
+
+        # Count leading dots and find the trailing dotted_name (if any).
+        dots = 0
+        rel_module = ""
+        for child in module_node.children:
+            if child.type == "import_prefix":
+                dots = sum(1 for c in child.children if c.type == ".")
+            elif child.type == "dotted_name":
+                rel_module = node_text(child, src)
+
+        # Importing-file qualname (without the file's own basename).
+        file_qual = _file_to_qualname(rel)
+        pkg_parts = file_qual.split(".") if file_qual else []
+        # Drop the file's own module name to get the containing package.
+        if pkg_parts:
+            pkg_parts = pkg_parts[:-1]
+        # Walk up `dots - 1` further levels (one dot = current package).
+        if dots > 1:
+            cut = dots - 1
+            pkg_parts = pkg_parts[:-cut] if cut <= len(pkg_parts) else []
+
+        parts = pkg_parts + ([rel_module] if rel_module else [])
+        return ".".join(p for p in parts if p)
