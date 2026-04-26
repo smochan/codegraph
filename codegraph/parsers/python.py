@@ -46,6 +46,48 @@ def _get_docstring(block_node: tree_sitter.Node, src: bytes) -> str | None:
     return None
 
 
+def _collect_class_attr_types(
+    body: tree_sitter.Node, src: bytes
+) -> dict[str, str]:
+    """Return ``{attr_name: type_qualname}`` for class-level annotations.
+
+    Tree-sitter wraps each ``name: Type`` line as
+    ``expression_statement -> assignment -> identifier ":" type -> ...``.
+    We extract simple identifier and dotted-attribute types only; complex
+    generics (``list[Foo]``) and string forward refs are ignored — those
+    require type-system reasoning beyond the current resolver budget.
+    """
+    out: dict[str, str] = {}
+    for stmt in body.children:
+        if stmt.type != "expression_statement":
+            continue
+        for assignment in stmt.children:
+            if assignment.type != "assignment":
+                continue
+            name_node: tree_sitter.Node | None = None
+            type_node: tree_sitter.Node | None = None
+            for c in assignment.children:
+                if c.type == "identifier" and name_node is None:
+                    name_node = c
+                elif c.type == "type":
+                    type_node = c
+            if name_node is None or type_node is None:
+                continue
+            # Inner of `type` is usually a single identifier or attribute.
+            inner: tree_sitter.Node | None = None
+            for c in type_node.children:
+                if c.type in ("identifier", "attribute"):
+                    inner = c
+                    break
+            if inner is None:
+                continue
+            attr_name = node_text(name_node, src)
+            type_text = node_text(inner, src)
+            if attr_name and type_text:
+                out[attr_name] = type_text
+    return out
+
+
 def _get_function_decorators(func_node: tree_sitter.Node, src: bytes) -> list[str]:
     """Collect decorator strings for a function/class definition.
 
@@ -293,6 +335,14 @@ class PythonExtractor(ExtractorBase):
             extra_decorator_patterns=self.extra_entry_point_decorators,
         ):
             cls_metadata["entry_point"] = True
+
+        body_for_attrs = node.child_by_field_name("body")
+        attr_types = (
+            _collect_class_attr_types(body_for_attrs, src)
+            if body_for_attrs is not None else {}
+        )
+        if attr_types:
+            cls_metadata["attr_types"] = attr_types
 
         class_node = Node(
             id=class_id,

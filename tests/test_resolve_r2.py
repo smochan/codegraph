@@ -77,5 +77,18 @@ def test_r2_decorator_call(tmp_path: Path) -> None:
     assert incoming, "expected CALLS edge from decorator usage to my_decorator"
 
 
+def test_r2_class_annotation_self_chain(tmp_path: Path) -> None:
+    """``self.svc.run()`` resolves via class-level annotation ``svc: Service``.
+    """
+    store = _build(tmp_path, "class_annotation.py")
+    run = _find_one(store, kind=NodeKind.METHOD, suffix=".Service.run")
+    go = _find_one(store, kind=NodeKind.METHOD, suffix=".Handler.go")
+    incoming = _calls_to(store, run.id)
+    srcs = {e.src for e in incoming}
+    assert go.id in srcs, (
+        f"expected CALLS edge from Handler.go to Service.run; got srcs={srcs}"
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])
