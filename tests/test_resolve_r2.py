@@ -69,5 +69,13 @@ def test_r2_nested_function_call(tmp_path: Path) -> None:
     )
 
 
+def test_r2_decorator_call(tmp_path: Path) -> None:
+    """``@my_decorator(...)`` should emit a CALLS edge to my_decorator."""
+    store = _build(tmp_path, "decorator_call.py")
+    deco = _find_one(store, kind=NodeKind.FUNCTION, suffix=".my_decorator")
+    incoming = _calls_to(store, deco.id)
+    assert incoming, "expected CALLS edge from decorator usage to my_decorator"
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

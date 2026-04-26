@@ -314,6 +314,8 @@ class PythonExtractor(ExtractorBase):
             file=rel, line=node.start_point[0] + 1,
         ))
 
+        self._emit_decorator_calls(node, rel, class_id, src, edges)
+
         arg_list = node.child_by_field_name("superclasses")
         if arg_list is None:
             for c in node.children:
@@ -417,6 +419,8 @@ class PythonExtractor(ExtractorBase):
             file=rel, line=node.start_point[0] + 1,
         ))
 
+        self._emit_decorator_calls(node, rel, func_id, src, edges)
+
         if body is not None:
             self._collect_calls(body, rel, func_id, src, edges)
             # Visit nested defs so their bodies and calls are not lost.
@@ -511,8 +515,56 @@ class PythonExtractor(ExtractorBase):
                         line=child.start_point[0] + 1,
                         metadata={"target_name": name},
                     ))
-            if child.type not in ("class_definition", "function_definition"):
+            # ``decorator`` subtrees are handled by ``_emit_decorator_calls``
+            # so we attribute decorator factories to the decorated symbol
+            # rather than the surrounding scope. Skipping them here avoids
+            # double-counting at module level.
+            if child.type not in (
+                "class_definition", "function_definition", "decorator",
+            ):
                 stack.extend(child.children)
+
+    def _emit_decorator_calls(
+        self,
+        def_node: tree_sitter.Node,
+        rel: str,
+        scope_id: str,
+        src: bytes,
+        edges: list[Edge],
+    ) -> None:
+        """Emit a CALLS edge for each decorator on a function or class.
+
+        ``@_register("name")`` and ``@my_decorator(arg)`` are calls — they
+        invoke the decorator factory at definition time. Without these edges
+        decorator-only functions look unreferenced.
+        """
+        container = def_node
+        if (
+            def_node.parent is not None
+            and def_node.parent.type == "decorated_definition"
+        ):
+            container = def_node.parent
+        for child in container.children:
+            if child.type != "decorator":
+                continue
+            for sub in child.children:
+                # The decorator body is either a bare reference (\`@foo\`)
+                # which is not a call we should emit, or a \`call\`
+                # (\`@foo("x")\`) — only the latter is a real invocation.
+                if sub.type == "call":
+                    func_child = sub.child_by_field_name("function")
+                    if func_child is None and sub.children:
+                        func_child = sub.children[0]
+                    if func_child is not None:
+                        name = node_text(func_child, src)
+                        edges.append(Edge(
+                            src=scope_id,
+                            dst=f"unresolved::{name}",
+                            kind=EdgeKind.CALLS,
+                            file=rel,
+                            line=sub.start_point[0] + 1,
+                            metadata={"target_name": name},
+                        ))
 
     def _handle_import(
         self,
