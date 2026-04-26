@@ -68,8 +68,3 @@ def uninstall_hook(
     return True
 
 
-def is_installed(repo_root: Path, hook: str = DEFAULT_HOOK_NAME) -> bool:
-    hook_path = _hooks_dir(repo_root) / hook
-    if not hook_path.exists():
-        return False
-    return HOOK_MARKER in hook_path.read_text()

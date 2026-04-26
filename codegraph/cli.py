@@ -45,12 +45,6 @@ def _get_data_dir(repo_root: Path) -> Path:
     return default_data_dir(repo_root)
 
 
-def _stub(name: str) -> None:
-    console.print(
-        f"[yellow]TODO[/yellow] \\[{name}] not yet implemented (Phase 0 skeleton)."
-    )
-
-
 @app.callback()
 def _root(
     ctx: typer.Context,

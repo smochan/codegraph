@@ -23,10 +23,6 @@ REFERENCE_EDGE_KINDS: frozenset[str] = frozenset(
 )
 
 
-def is_resolved(node_id: str) -> bool:
-    return not node_id.startswith("unresolved::")
-
-
 def in_test_module(graph: nx.MultiDiGraph, node_id: str) -> bool:
     """True iff the node is in a file whose MODULE node is marked is_test."""
     attrs = graph.nodes.get(node_id) or {}

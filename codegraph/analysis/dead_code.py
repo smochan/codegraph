@@ -44,17 +44,14 @@ def _has_property_decorator(metadata: dict[str, object]) -> bool:
 def _is_excluded_path(file_path: str) -> bool:
     if not file_path:
         return False
-    for fragment in _EXCLUDED_PATH_FRAGMENTS:
-        if fragment in file_path:
-            return True
-    return False
+    return any(fragment in file_path for fragment in _EXCLUDED_PATH_FRAGMENTS)
 
 
 def _class_has_inherits(graph: nx.MultiDiGraph, class_id: str) -> bool:
-    for _src, _dst, key in graph.out_edges(class_id, keys=True):
-        if key == EdgeKind.INHERITS.value:
-            return True
-    return False
+    return any(
+        key == EdgeKind.INHERITS.value
+        for _src, _dst, key in graph.out_edges(class_id, keys=True)
+    )
 
 
 def _is_polymorphic_override(graph: nx.MultiDiGraph, method_id: str) -> bool:
@@ -63,15 +60,15 @@ def _is_polymorphic_override(graph: nx.MultiDiGraph, method_id: str) -> bool:
     Such methods are likely overrides invoked via base-class dispatch and
     have no static incoming CALL edge.
     """
-    for src, _dst, key in graph.in_edges(method_id, keys=True):
+    for _src, dst, key in graph.out_edges(method_id, keys=True):
         if key != EdgeKind.DEFINED_IN.value:
             continue
-    for _src, dst, key in graph.out_edges(method_id, keys=True):
-        if key == EdgeKind.DEFINED_IN.value:
-            attrs = graph.nodes.get(dst) or {}
-            if _kind_str(attrs.get("kind")) == NodeKind.CLASS.value:
-                if _class_has_inherits(graph, dst):
-                    return True
+        attrs = graph.nodes.get(dst) or {}
+        if (
+            _kind_str(attrs.get("kind")) == NodeKind.CLASS.value
+            and _class_has_inherits(graph, dst)
+        ):
+            return True
     return False
 
 

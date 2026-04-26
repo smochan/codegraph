@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Generator
 from functools import lru_cache
 from pathlib import Path
 
@@ -53,15 +52,6 @@ def node_text(ts_node: tree_sitter.Node, source_bytes: bytes) -> str:
     return source_bytes[ts_node.start_byte:ts_node.end_byte].decode(
         "utf-8", errors="replace"
     )
-
-
-def walk(ts_node: tree_sitter.Node) -> Generator[tree_sitter.Node, None, None]:
-    """Preorder traversal of a tree-sitter tree."""
-    stack = [ts_node]
-    while stack:
-        current = stack.pop()
-        yield current
-        stack.extend(reversed(current.children))
 
 
 def register_extractor(cls: type[ExtractorBase]) -> type[ExtractorBase]:
