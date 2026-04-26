@@ -89,16 +89,34 @@ def _resolve_target(
         src_module = index.module_by_file.get(src_node.file)
 
     # 1. self.X -> derive enclosing class qualname from src qualname.
+    # For `self.foo.bar` style chains, only the first segment after `self.`
+    # is meaningfully resolvable against the enclosing class; the deeper
+    # tail (`.bar`) requires variable-type inference (R3). So we look up
+    # `class_qual.first_segment` and fall through to the remaining
+    # heuristics with the first segment as the new target rather than
+    # constructing a phantom dotted qualname.
     if target.startswith("self."):
         rest = target[len("self."):]
+        head = rest.split(".", 1)[0]
         if src_node is not None and src_node.kind == NodeKind.METHOD:
             parts = src_node.qualname.split(".")
             if len(parts) >= 2:
                 class_qual = ".".join(parts[:-1])
+                # Direct match (no dotted tail).
                 cands = index.by_qualname.get(f"{class_qual}.{rest}", [])
                 if cands:
                     return cands[0]
-        target = rest
+                # Dotted tail: try resolving just the first segment as a
+                # method/attribute on the enclosing class.
+                if head != rest:
+                    cands = index.by_qualname.get(
+                        f"{class_qual}.{head}", []
+                    )
+                    if cands:
+                        return cands[0]
+        # Fall through with just the head; never let "foo.bar" leak as a
+        # phantom qualname into later heuristics.
+        target = head
 
     # 2. Exact qualname.
     if target in index.by_qualname:
@@ -169,13 +187,26 @@ def _build_import_bindings(
         target = edge.metadata.get("target_name")
         if not isinstance(target, str) or not target:
             continue
-        normalized = target.replace("\\", "/").lstrip("./")
+        # Python parser may already produce absolute dotted qualnames for
+        # relative imports (e.g. "pkg.models.Foo"). Only strip leading "./"
+        # and "../" path noise, not bare leading dots that may be part of
+        # a dotted qualname.
+        normalized = target.replace("\\", "/")
+        while normalized.startswith("./") or normalized.startswith("../"):
+            normalized = normalized[2:] if normalized.startswith("./") \
+                else normalized[3:]
         normalized = normalized.replace("/", ".")
         if not normalized:
             continue
-        leaf = normalized.rsplit(".", 1)[-1]
-        bindings[src_node.id][leaf] = normalized
-        bindings[src_node.id][normalized] = normalized
+        imported_name = edge.metadata.get("imported_name")
+        if isinstance(imported_name, str) and imported_name:
+            # Bind the alias used in the source file -> full qualname.
+            bindings[src_node.id][imported_name] = normalized
+            bindings[src_node.id][normalized] = normalized
+        else:
+            leaf = normalized.rsplit(".", 1)[-1]
+            bindings[src_node.id][leaf] = normalized
+            bindings[src_node.id][normalized] = normalized
     return bindings
 
 

@@ -70,6 +70,25 @@ def test_parse_component_calls(extractor: TypeScriptExtractor) -> None:
     assert len(calls) >= 1
 
 
+def test_parse_named_imports_emit_per_name_edges(
+    extractor: TypeScriptExtractor,
+) -> None:
+    """`import { formatName } from './utils'` should emit a per-name IMPORTS
+    edge with imported_name='formatName' and target_name './utils.formatName'.
+    """
+    _, edges = extractor.parse_file(FIXTURE_DIR / "Component.tsx", FIXTURE_DIR)
+    imports = [e for e in edges if e.kind == EdgeKind.IMPORTS]
+    named = [
+        e for e in imports
+        if e.metadata.get("imported_name") == "formatName"
+    ]
+    assert named, (
+        f"expected per-name IMPORTS edge for formatName, got {imports}"
+    )
+    target = named[0].metadata.get("target_name")
+    assert target is not None and target.endswith(".formatName"), target
+
+
 def test_parse_arrow_function(extractor: TypeScriptExtractor) -> None:
     nodes, _ = extractor.parse_file(FIXTURE_DIR / "utils.ts", FIXTURE_DIR)
     names = {n.name for n in nodes if n.kind == NodeKind.FUNCTION}

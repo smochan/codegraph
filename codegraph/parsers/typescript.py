@@ -42,6 +42,48 @@ def _extract_string(node: tree_sitter.Node, src: bytes) -> str:
     return text.strip("'\"` ")
 
 
+def _named_imports(
+    clause: tree_sitter.Node | None, src: bytes
+) -> list[str]:
+    """Extract imported names from an import_clause.
+
+    Handles default imports, named imports (`{ a, b as c }`), and namespace
+    imports (`* as ns`). For aliased imports we record the *original* name
+    so the resolver can bind the alias used in the source via the same
+    full qualname.
+    """
+    if clause is None:
+        return []
+    names: list[str] = []
+    for child in clause.children:
+        if child.type == "identifier":
+            # Default import: `import Foo from 'm'` -> 'Foo'.
+            names.append(node_text(child, src))
+        elif child.type == "named_imports":
+            for spec in child.children:
+                if spec.type != "import_specifier":
+                    continue
+                # First identifier inside specifier is the original name.
+                first = next(
+                    (c for c in spec.children if c.type == "identifier"),
+                    None,
+                )
+                if first is not None:
+                    names.append(node_text(first, src))
+        elif child.type == "namespace_import":
+            # `import * as ns from 'm'` -> bind `ns` to the module itself.
+            ident = next(
+                (c for c in child.children if c.type == "identifier"),
+                None,
+            )
+            if ident is not None:
+                # Namespace alias maps to the module, not a sub-name.
+                # We skip per-name edges for namespace imports; the existing
+                # source-level IMPORTS edge already covers the module.
+                continue
+    return names
+
+
 @register_extractor
 class TypeScriptExtractor(ExtractorBase):
     language = "typescript"
@@ -153,19 +195,44 @@ class TypeScriptExtractor(ExtractorBase):
         edges: list[Edge],
     ) -> None:
         source_node: tree_sitter.Node | None = None
+        clause_node: tree_sitter.Node | None = None
         for child in node.children:
-            if child.type == "string":
+            if child.type == "string" and source_node is None:
                 source_node = child
-                break
-        if source_node is not None:
-            source = _extract_string(source_node, src)
+            elif child.type == "import_clause":
+                clause_node = child
+        if source_node is None:
+            return
+        source = _extract_string(source_node, src)
+        line = node.start_point[0] + 1
+        named = _named_imports(clause_node, src)
+
+        # When there are no named imports (e.g. `import './side-effect'`,
+        # `import * as ns from './m'`), keep the module-level edge. When we
+        # have per-name edges, they carry binding info and the module-level
+        # edge would be redundant noise.
+        if not named:
             edges.append(Edge(
                 src=parent_id,
                 dst=f"unresolved::{source}",
                 kind=EdgeKind.IMPORTS,
                 file=rel,
-                line=node.start_point[0] + 1,
+                line=line,
                 metadata={"source": source, "target_name": source},
+            ))
+
+        for imported_name in named:
+            edges.append(Edge(
+                src=parent_id,
+                dst=f"unresolved::{source}.{imported_name}",
+                kind=EdgeKind.IMPORTS,
+                file=rel,
+                line=line,
+                metadata={
+                    "source": source,
+                    "target_name": f"{source}.{imported_name}",
+                    "imported_name": imported_name,
+                },
             ))
 
     def _handle_class(
