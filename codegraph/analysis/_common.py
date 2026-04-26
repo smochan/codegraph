@@ -36,6 +36,11 @@ def in_test_module(graph: nx.MultiDiGraph, node_id: str) -> bool:
     file_path = attrs.get("file")
     if not file_path:
         return False
+    # Path-based fallback for non-Python test files (e.g. node --test JS files
+    # under tests/) which don't carry the is_test module metadata.
+    normalised = str(file_path).replace("\\", "/")
+    if "/tests/" in normalised or normalised.startswith("tests/"):
+        return True
     for _, other_attrs in graph.nodes(data=True):
         if (
             other_attrs.get("file") == file_path

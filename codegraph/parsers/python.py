@@ -103,6 +103,8 @@ _ENTRYPOINT_DECORATOR_CONTAINS: tuple[str, ...] = (
     "login_required",
     "permission_required",
     "event.listens_for",
+    # Local registry decorators commonly used in this codebase / MCP servers.
+    "_register",
 )
 
 

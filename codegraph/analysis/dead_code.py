@@ -10,12 +10,69 @@ from codegraph.analysis._common import (
     _kind_str,
     in_test_module,
 )
-from codegraph.graph.schema import NodeKind
+from codegraph.graph.schema import EdgeKind, NodeKind
 
 _CANDIDATE_KINDS: frozenset[str] = frozenset(
     {NodeKind.FUNCTION.value, NodeKind.METHOD.value, NodeKind.CLASS.value}
 )
 _ENTRYPOINT_NAMES: frozenset[str] = frozenset({"main", "__main__"})
+
+_PROPERTY_DECORATORS: tuple[str, ...] = (
+    "@property", "@cached_property", "functools.cached_property",
+)
+
+_EXCLUDED_PATH_FRAGMENTS: tuple[str, ...] = (
+    "tests/fixtures/",
+    "tests\\fixtures\\",
+    "/static/",
+    "\\static\\",
+)
+
+
+def _has_property_decorator(metadata: dict[str, object]) -> bool:
+    decorators = metadata.get("decorators") or []
+    if not isinstance(decorators, list):
+        return False
+    for raw in decorators:
+        text = str(raw).strip()
+        for marker in _PROPERTY_DECORATORS:
+            if marker in text:
+                return True
+    return False
+
+
+def _is_excluded_path(file_path: str) -> bool:
+    if not file_path:
+        return False
+    for fragment in _EXCLUDED_PATH_FRAGMENTS:
+        if fragment in file_path:
+            return True
+    return False
+
+
+def _class_has_inherits(graph: nx.MultiDiGraph, class_id: str) -> bool:
+    for _src, _dst, key in graph.out_edges(class_id, keys=True):
+        if key == EdgeKind.INHERITS.value:
+            return True
+    return False
+
+
+def _is_polymorphic_override(graph: nx.MultiDiGraph, method_id: str) -> bool:
+    """True if the method's owning class inherits from another class.
+
+    Such methods are likely overrides invoked via base-class dispatch and
+    have no static incoming CALL edge.
+    """
+    for src, _dst, key in graph.in_edges(method_id, keys=True):
+        if key != EdgeKind.DEFINED_IN.value:
+            continue
+    for _src, dst, key in graph.out_edges(method_id, keys=True):
+        if key == EdgeKind.DEFINED_IN.value:
+            attrs = graph.nodes.get(dst) or {}
+            if _kind_str(attrs.get("kind")) == NodeKind.CLASS.value:
+                if _class_has_inherits(graph, dst):
+                    return True
+    return False
 
 
 @dataclass
@@ -73,6 +130,17 @@ def find_dead_code(
         # The Python parser tags them with metadata["entry_point"] = True.
         metadata = attrs.get("metadata") or {}
         if metadata.get("entry_point"):
+            continue
+        # @property / @cached_property are accessed as attributes, not calls.
+        if _has_property_decorator(metadata):
+            continue
+        # Generated/static frontend assets and test fixtures don't have
+        # traceable call graphs — exclude them from dead-code detection.
+        if _is_excluded_path(str(attrs.get("file") or "")):
+            continue
+        # Polymorphic overrides on classes that inherit have no static
+        # incoming CALL edge (dispatch is via the base class).
+        if kind == NodeKind.METHOD.value and _is_polymorphic_override(graph, nid):
             continue
 
         has_incoming_ref = False
