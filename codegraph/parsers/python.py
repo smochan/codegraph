@@ -130,6 +130,9 @@ _ENTRYPOINT_DECORATOR_SUFFIXES: tuple[str, ...] = (
     ".task",
     # SQLAlchemy.
     ".listens_for",
+    # MCP protocol server (anthropic mcp-python-sdk and similar).
+    ".list_tools", ".call_tool", ".list_resources", ".read_resource",
+    ".list_prompts", ".get_prompt",
 )
 
 # Decorator names matched anywhere in the raw decorator text (covers bare

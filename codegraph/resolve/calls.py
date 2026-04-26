@@ -182,6 +182,19 @@ def _resolve_target(
         # phantom qualname into later heuristics.
         target = head
 
+    # 1b. Scope-relative: when the caller is itself a function/method and
+    # the target names a function defined directly inside the caller (a
+    # nested helper), prefer that closure-local definition over any
+    # module-level same-name function.
+    if (
+        src_node is not None
+        and src_node.kind in (NodeKind.FUNCTION, NodeKind.METHOD)
+    ):
+        nested_q = f"{src_node.qualname}.{target}"
+        cands = index.by_qualname.get(nested_q, [])
+        if cands:
+            return cands[0]
+
     # 2. Exact qualname.
     if target in index.by_qualname:
         cands = index.by_qualname[target]
