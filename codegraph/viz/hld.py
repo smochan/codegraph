@@ -282,6 +282,8 @@ def _build_modules_drilldown(
 
     out_calls: dict[str, list[str]] = defaultdict(list)
     in_calls: dict[str, list[str]] = defaultdict(list)
+    # Map (src_node, dst_qualname) -> edge metadata for callee_args alignment.
+    call_edge_meta: dict[tuple[str, str], dict[str, Any]] = {}
     for src, dst, data in graph.edges(data=True):
         if kind_str(data.get("kind")) != "CALLS":
             continue
@@ -289,6 +291,12 @@ def _build_modules_drilldown(
         dst_qn = graph.nodes[dst].get("qualname")
         if dst_qn:
             out_calls[src].append(str(dst_qn))
+            edge_md = data.get("metadata") or {}
+            if isinstance(edge_md, dict) and ("args" in edge_md or "kwargs" in edge_md):
+                call_edge_meta[(src, str(dst_qn))] = {
+                    "args": list(edge_md.get("args") or []),
+                    "kwargs": dict(edge_md.get("kwargs") or {}),
+                }
         if src_qn:
             in_calls[dst].append(str(src_qn))
 
@@ -306,7 +314,8 @@ def _build_modules_drilldown(
             line_int = int(line)
         except (TypeError, ValueError):
             line_int = 0
-        sym = {
+        callees_list = sorted(set(out_calls.get(nid, [])))[:14]
+        sym: dict[str, Any] = {
             "qualname": sym_qn,
             "name": _short_name(sym_qn) or str(attrs.get("name") or ""),
             "kind": kind,
@@ -314,8 +323,30 @@ def _build_modules_drilldown(
             "fan_in": len(in_calls.get(nid, [])),
             "fan_out": len(out_calls.get(nid, [])),
             "callers": sorted(set(in_calls.get(nid, [])))[:14],
-            "callees": sorted(set(out_calls.get(nid, [])))[:14],
+            "callees": callees_list,
         }
+
+        # DF0/DF1.5 metadata surfacing — omit when absent on the node.
+        node_md = attrs.get("metadata") or {}
+        if isinstance(node_md, dict):
+            if "params" in node_md:
+                sym["params"] = node_md["params"]
+            if "returns" in node_md:
+                sym["returns"] = node_md["returns"]
+            if "role" in node_md and node_md["role"] is not None:
+                sym["role"] = node_md["role"]
+
+        # callee_args parallel array, only when there ARE callees.
+        if callees_list:
+            callee_args: list[dict[str, Any]] = []
+            for cqn in callees_list:
+                meta = call_edge_meta.get((nid, cqn))
+                if meta is None:
+                    callee_args.append({"args": [], "kwargs": {}})
+                else:
+                    callee_args.append(meta)
+            sym["callee_args"] = callee_args
+
         sym_by_module[mqn].append(sym)
 
     for mqn, syms in sym_by_module.items():
