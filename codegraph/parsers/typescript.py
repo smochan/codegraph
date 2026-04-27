@@ -42,6 +42,198 @@ def _extract_string(node: tree_sitter.Node, src: bytes) -> str:
     return text.strip("'\"` ")
 
 
+_SIMPLE_EXPR_TYPES = {
+    "identifier",
+    "string",
+    "number",
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "member_expression",
+    "subscript_expression",
+    "this",
+    "super",
+}
+
+
+def _strip_type_annotation(text: str) -> str:
+    """Remove the leading colon (and whitespace) from a type_annotation text."""
+    s = text.lstrip()
+    if s.startswith(":"):
+        s = s[1:]
+    return s.strip()
+
+
+def _extract_param(
+    p: tree_sitter.Node, src: bytes
+) -> dict[str, str | None] | None:
+    """Extract a single parameter from a `required_parameter`/`optional_parameter`
+    or any pattern node. Returns dict with name/type/default or None to skip.
+    """
+    name: str | None = None
+    type_text: str | None = None
+    default_text: str | None = None
+    saw_eq = False
+    for c in p.children:
+        ct = c.type
+        if ct == "=":
+            saw_eq = True
+            continue
+        if saw_eq:
+            # Default value expression follows '='.
+            if c.is_named:
+                default_text = node_text(c, src)
+            continue
+        if ct == "identifier" and name is None:
+            name = node_text(c, src)
+        elif ct == "rest_pattern":
+            # `...rest` -> name = "...rest"
+            inner = next(
+                (cc for cc in c.children if cc.type == "identifier"),
+                None,
+            )
+            name = (
+                "..." + node_text(inner, src)
+                if inner is not None
+                else node_text(c, src)
+            )
+        elif ct == "type_annotation":
+            type_text = _strip_type_annotation(node_text(c, src))
+        elif ct in ("object_pattern", "array_pattern") and name is None:
+            # Destructured params -> use the raw text as the "name".
+            name = node_text(c, src)
+        elif ct == "?":
+            # Optional parameter marker; nothing to record beyond presence.
+            continue
+    if name is None:
+        return None
+    return {"name": name, "type": type_text, "default": default_text}
+
+
+def _extract_params(
+    params_node: tree_sitter.Node | None, src: bytes
+) -> list[dict[str, str | None]]:
+    if params_node is None:
+        return []
+    out: list[dict[str, str | None]] = []
+    for c in params_node.children:
+        if c.type in ("required_parameter", "optional_parameter"):
+            p = _extract_param(c, src)
+            if p is not None:
+                out.append(p)
+    return out
+
+
+def _extract_return_type(
+    func_node: tree_sitter.Node, params_node: tree_sitter.Node | None, src: bytes
+) -> str | None:
+    """Return the type annotation that follows `formal_parameters` inside a
+    function / method / arrow declaration. Returns text without the leading
+    colon, or None if absent.
+    """
+    # Prefer the named field on TS nodes when present.
+    rt = func_node.child_by_field_name("return_type")
+    if rt is not None and rt.type == "type_annotation":
+        return _strip_type_annotation(node_text(rt, src))
+    # Fallback: walk siblings after `formal_parameters` by start_byte.
+    if params_node is None:
+        return None
+    after = False
+    params_end = params_node.end_byte
+    for c in func_node.children:
+        if not after:
+            if c.start_byte >= params_end:
+                after = True
+            else:
+                continue
+        if c.type == "type_annotation":
+            return _strip_type_annotation(node_text(c, src))
+        if c.type in ("statement_block", "=>"):
+            return None
+    return None
+
+
+def _arg_text(node: tree_sitter.Node, src: bytes) -> str:
+    """Return the text of an argument expression, simplified to '<expr>' if
+    it is not in the allow-list of simple expression types.
+    """
+    if node.type in _SIMPLE_EXPR_TYPES:
+        return node_text(node, src)
+    return "<expr>"
+
+
+def _split_call_arguments(
+    args_node: tree_sitter.Node, src: bytes
+) -> tuple[list[str], dict[str, str]]:
+    """Walk the children of a `call_expression` `arguments` node and return
+    (positional_args, kwargs).
+
+    Rule for object-literal -> kwargs:
+    Split a single object literal into kwargs only when there is exactly one
+    object-literal argument AND it appears as the last positional argument
+    (i.e. trailing options object). Otherwise the object literal is treated
+    as a normal positional arg, simplified to its source text or `<expr>`.
+    """
+    # Collect named children (skip `(`, `)`, `,`).
+    items: list[tree_sitter.Node] = [c for c in args_node.children if c.is_named]
+    if not items:
+        return [], {}
+
+    object_indices = [i for i, n in enumerate(items) if n.type == "object"]
+    last_idx = len(items) - 1
+    split_kwargs = (
+        len(object_indices) == 1 and object_indices[0] == last_idx
+    )
+
+    args: list[str] = []
+    kwargs: dict[str, str] = {}
+
+    for idx, n in enumerate(items):
+        if n.type == "spread_element":
+            # `...rest` -> "*rest"
+            inner = next(
+                (cc for cc in n.children if cc.is_named),
+                None,
+            )
+            if inner is not None and inner.type == "identifier":
+                args.append("*" + node_text(inner, src))
+            else:
+                args.append("*<expr>")
+            continue
+        if split_kwargs and idx == last_idx and n.type == "object":
+            for pair in n.children:
+                if pair.type != "pair":
+                    continue
+                key_node = pair.child_by_field_name("key")
+                if key_node is None:
+                    key_node = next(
+                        (
+                            c for c in pair.children
+                            if c.type in (
+                                "property_identifier", "string", "identifier"
+                            )
+                        ),
+                        None,
+                    )
+                value_node = pair.child_by_field_name("value")
+                if value_node is None:
+                    # Last named child after the colon.
+                    named = [c for c in pair.children if c.is_named]
+                    if len(named) >= 2:
+                        value_node = named[-1]
+                if key_node is None or value_node is None:
+                    continue
+                key_text = node_text(key_node, src)
+                if key_node.type == "string":
+                    key_text = key_text.strip("'\"`")
+                kwargs[key_text] = _arg_text(value_node, src)
+            continue
+        args.append(_arg_text(n, src))
+
+    return args, kwargs
+
+
 def _named_imports(
     clause: tree_sitter.Node | None, src: bytes
 ) -> list[str]:
@@ -348,6 +540,8 @@ class TypeScriptExtractor(ExtractorBase):
 
         params = node.child_by_field_name("parameters")
         sig = f"{name}{node_text(params, src)}" if params is not None else name
+        params_list = _extract_params(params, src)
+        return_type = _extract_return_type(node, params, src)
 
         method_node = Node(
             id=method_id,
@@ -359,7 +553,7 @@ class TypeScriptExtractor(ExtractorBase):
             line_end=node.end_point[0] + 1,
             signature=sig,
             language=lang,
-            metadata={},
+            metadata={"params": params_list, "returns": return_type},
         )
         nodes.append(method_node)
 
@@ -397,6 +591,8 @@ class TypeScriptExtractor(ExtractorBase):
 
         params = node.child_by_field_name("parameters")
         sig = f"{name}{node_text(params, src)}" if params is not None else name
+        params_list = _extract_params(params, src)
+        return_type = _extract_return_type(node, params, src)
 
         func_node = Node(
             id=func_id,
@@ -408,7 +604,7 @@ class TypeScriptExtractor(ExtractorBase):
             line_end=node.end_point[0] + 1,
             signature=sig,
             language=lang,
-            metadata={},
+            metadata={"params": params_list, "returns": return_type},
         )
         nodes.append(func_node)
 
@@ -453,6 +649,17 @@ class TypeScriptExtractor(ExtractorBase):
                 )
                 func_id = make_node_id(NodeKind.FUNCTION, qualname, rel)
 
+                arrow_params = value_node.child_by_field_name("parameters")
+                if arrow_params is None:
+                    for c in value_node.children:
+                        if c.type == "formal_parameters":
+                            arrow_params = c
+                            break
+                params_list = _extract_params(arrow_params, src)
+                return_type = _extract_return_type(
+                    value_node, arrow_params, src
+                )
+
                 func_node = Node(
                     id=func_id,
                     kind=NodeKind.FUNCTION,
@@ -462,7 +669,11 @@ class TypeScriptExtractor(ExtractorBase):
                     line_start=node.start_point[0] + 1,
                     line_end=node.end_point[0] + 1,
                     language=lang,
-                    metadata={"arrow": True},
+                    metadata={
+                        "arrow": True,
+                        "params": params_list,
+                        "returns": return_type,
+                    },
                 )
                 nodes.append(func_node)
 
@@ -492,12 +703,28 @@ class TypeScriptExtractor(ExtractorBase):
                     func_child = child.children[0]
                 if func_child is not None:
                     name = node_text(func_child, src)
+                    args_node = child.child_by_field_name("arguments")
+                    if args_node is None:
+                        for c in child.children:
+                            if c.type == "arguments":
+                                args_node = c
+                                break
+                    if args_node is not None:
+                        call_args, call_kwargs = _split_call_arguments(
+                            args_node, src
+                        )
+                    else:
+                        call_args, call_kwargs = [], {}
                     edges.append(Edge(
                         src=scope_id,
                         dst=f"unresolved::{name}",
                         kind=EdgeKind.CALLS,
                         file=rel,
                         line=child.start_point[0] + 1,
-                        metadata={"target_name": name},
+                        metadata={
+                            "target_name": name,
+                            "args": call_args,
+                            "kwargs": call_kwargs,
+                        },
                     ))
             stack.extend(child.children)
