@@ -1,0 +1,136 @@
+# codegraph PR review workflow — TEMPLATE
+#
+# This file lives OUTSIDE .github/workflows/ on purpose: GitHub rejects
+# pushes to .github/workflows/* from OAuth tokens that lack the `workflow`
+# scope. By keeping the template here, the repo can be cloned + pushed-to
+# with the default `repo` scope; activating the workflow is a one-time
+# manual step (see README → "PR review CI").
+#
+# To activate:
+#   gh auth refresh -h github.com -s workflow
+#   cp .github/ci-templates/pr-review.workflow.yml .github/workflows/pr-review.yml
+#   git add .github/workflows/pr-review.yml
+#   git commit -m "ci: activate codegraph PR review"
+#   git push
+
+name: codegraph PR review
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install codegraph (PR head)
+        run: pip install -e .
+
+      - name: Build baseline graph from main
+        run: |
+          set -euxo pipefail
+          mkdir -p .baseline-checkout
+          git worktree add .baseline-checkout origin/main
+          (
+            cd .baseline-checkout
+            pip install -e . --quiet
+            codegraph build --no-incremental
+            codegraph baseline save --output ../.codegraph/baseline.db
+          )
+          if [ ! -f .codegraph/baseline.db ]; then
+            echo "BASELINE_MISSING=1" >> "$GITHUB_ENV"
+            echo "::warning::No baseline could be saved from main; running first-time review."
+          fi
+
+      - name: Build PR head graph
+        run: codegraph build --no-incremental
+
+      - name: Run codegraph review
+        run: |
+          set -uo pipefail
+          if [ -n "${BASELINE_MISSING:-}" ]; then
+            cat > review.md <<'EOF'
+          ## codegraph PR review
+
+          No baseline graph from `main` was available for this run, so a
+          full diff review was skipped. The PR head was still parsed
+          successfully — codegraph review will activate from the next PR.
+          EOF
+            exit 0
+          fi
+          set +e
+          codegraph review \
+            --format markdown \
+            --output review.md \
+            --fail-on high \
+            --baseline .codegraph/baseline.db
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "REVIEW_FAILED=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Wrap review in comment template
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -e
+          {
+            echo "## codegraph PR review"
+            echo
+            echo "<details open>"
+            echo "<summary><b>Diff vs main</b> · severity ≤ <code>high</code></summary>"
+            echo
+            cat review.md
+            echo
+            echo "</details>"
+            echo
+            echo "<sub>Triggered by codegraph CI · <a href=\"${RUN_URL}\">last run</a></sub>"
+          } > comment.md
+
+      - name: Post or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-file: comment.md
+          edit-mode: replace
+          comment-tag: codegraph-review
+
+      - name: Upload review artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codegraph-review
+          path: |
+            review.md
+            comment.md
+            .codegraph/graph.db
+          retention-days: 7
+
+      - name: Fail if findings exceed threshold
+        if: env.REVIEW_FAILED == '1'
+        run: |
+          echo "::error::codegraph review found high-or-critical findings. See PR comment for details."
+          exit 1
