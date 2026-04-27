@@ -46,18 +46,103 @@ def _get_docstring(block_node: tree_sitter.Node, src: bytes) -> str | None:
     return None
 
 
+def _extract_types_from_type_node(
+    type_node: tree_sitter.Node, src: bytes
+) -> list[str]:
+    """Return the list of simple type names from a ``type`` AST node.
+
+    Handles three shapes:
+    * single identifier / attribute -> one-element list
+    * binary union ``A | B | ...`` -> flattened list of operand names
+    * subscript ``Union[A, B]`` / ``Optional[A]`` -> list of inner names
+
+    Anything else (string forward refs, generics like ``list[Foo]``)
+    returns an empty list — the resolver will simply not bind that
+    attribute, which is safe.
+    """
+    # ``type`` typically has a single inner expression child; descend.
+    inner: tree_sitter.Node | None = None
+    for c in type_node.children:
+        if c.is_named:
+            inner = c
+            break
+    if inner is None:
+        return []
+    return _flatten_type_expr(inner, src)
+
+
+def _flatten_type_expr(node: tree_sitter.Node, src: bytes) -> list[str]:
+    """Recursively flatten a type expression into bare type names."""
+    if node.type in ("identifier", "attribute"):
+        return [node_text(node, src)]
+    if node.type == "binary_operator":
+        # ``A | B`` — only honor union when the operator is ``|``.
+        op_is_pipe = any(
+            c.type == "|" for c in node.children if not c.is_named
+        )
+        if not op_is_pipe:
+            return []
+        out: list[str] = []
+        for c in node.children:
+            if c.is_named:
+                out.extend(_flatten_type_expr(c, src))
+        return out
+    if node.type in ("subscript", "generic_type"):
+        # ``Union[A, B]`` / ``Optional[A]`` — both flatten to operand list.
+        # Tree-sitter parses ``Union[A, B]`` as ``generic_type`` with a
+        # leading identifier and a ``type_parameter`` child; ``Optional[A]``
+        # may be a ``subscript`` depending on grammar version.
+        head_node: tree_sitter.Node | None = None
+        if node.type == "subscript":
+            head_node = node.child_by_field_name("value")
+        else:
+            for c in node.children:
+                if c.type in ("identifier", "attribute"):
+                    head_node = c
+                    break
+        head = node_text(head_node, src) if head_node is not None else ""
+        head_leaf = head.rsplit(".", 1)[-1]
+        if head_leaf not in ("Union", "Optional"):
+            return []
+        out2: list[str] = []
+        for c in node.children:
+            if not c.is_named or c is head_node:
+                continue
+            if c.type == "type_parameter":
+                for inner_c in c.children:
+                    if inner_c.is_named:
+                        out2.extend(_flatten_type_expr(inner_c, src))
+            else:
+                out2.extend(_flatten_type_expr(c, src))
+        return out2
+    if node.type == "type":
+        # Wrapping ``type`` node — descend into its named child.
+        for c in node.children:
+            if c.is_named:
+                return _flatten_type_expr(c, src)
+        return []
+    return []
+
+
 def _collect_class_attr_types(
     body: tree_sitter.Node, src: bytes
-) -> dict[str, str]:
-    """Return ``{attr_name: type_qualname}`` for class-level annotations.
+) -> dict[str, list[str]]:
+    """Return ``{attr_name: [type_qualname, ...]}`` for class annotations.
 
-    Tree-sitter wraps each ``name: Type`` line as
-    ``expression_statement -> assignment -> identifier ":" type -> ...``.
-    We extract simple identifier and dotted-attribute types only; complex
-    generics (``list[Foo]``) and string forward refs are ignored — those
-    require type-system reasoning beyond the current resolver budget.
+    Captures both class-level direct annotations (``svc: Service``,
+    ``svc: Foo | Bar``, ``svc: Union[Foo, Bar]``) AND attribute
+    assignments inside ``__init__`` (including ``if/else`` branches), so
+    a backend-facade pattern like::
+
+        def __init__(self, x):
+            if x:
+                self._b: Foo = Foo()
+            else:
+                self._b = Bar()
+
+    yields ``{"_b": ["Foo", "Bar"]}``.
     """
-    out: dict[str, str] = {}
+    out: dict[str, list[str]] = {}
     for stmt in body.children:
         if stmt.type != "expression_statement":
             continue
@@ -73,19 +158,149 @@ def _collect_class_attr_types(
                     type_node = c
             if name_node is None or type_node is None:
                 continue
-            # Inner of `type` is usually a single identifier or attribute.
-            inner: tree_sitter.Node | None = None
-            for c in type_node.children:
-                if c.type in ("identifier", "attribute"):
-                    inner = c
-                    break
-            if inner is None:
-                continue
             attr_name = node_text(name_node, src)
-            type_text = node_text(inner, src)
-            if attr_name and type_text:
-                out[attr_name] = type_text
+            type_names = _extract_types_from_type_node(type_node, src)
+            if not attr_name or not type_names:
+                continue
+            existing = out.setdefault(attr_name, [])
+            for t in type_names:
+                if t not in existing:
+                    existing.append(t)
+
+    # Walk __init__ for ``self.X = ...`` and ``self.X: T = ...`` bindings.
+    for stmt in body.children:
+        func: tree_sitter.Node | None = None
+        if stmt.type == "function_definition":
+            func = stmt
+        elif stmt.type == "decorated_definition":
+            for c in stmt.children:
+                if c.type == "function_definition":
+                    func = c
+                    break
+        if func is None:
+            continue
+        name_n = func.child_by_field_name("name")
+        if name_n is None or node_text(name_n, src) != "__init__":
+            continue
+        init_body = func.child_by_field_name("body")
+        if init_body is None:
+            continue
+        _collect_self_attr_types_in_block(init_body, src, out)
     return out
+
+
+def _collect_self_attr_types_in_block(
+    block: tree_sitter.Node,
+    src: bytes,
+    out: dict[str, list[str]],
+) -> None:
+    """Walk a function body collecting ``self.X[: T] = Y(...)`` bindings.
+
+    Recurses into ``if/else`` (and ``try/with/for/while``) branches so
+    both arms of a conditional contribute to the attribute's type list.
+    Walrus (``:=``) and dynamic ``setattr`` are deliberately ignored —
+    those are R4+ territory.
+    """
+    for child in block.children:
+        if child.type == "expression_statement":
+            for assignment in child.children:
+                if assignment.type != "assignment":
+                    continue
+                _maybe_record_self_assign(assignment, src, out)
+        elif child.type == "block":
+            # Tree-sitter wraps clause bodies in a ``block`` whose entries
+            # are the actual statements; recurse straight into it.
+            _collect_self_attr_types_in_block(child, src, out)
+        elif child.type in (
+            "if_statement", "with_statement", "try_statement",
+            "for_statement", "while_statement", "elif_clause", "else_clause",
+            "except_clause", "finally_clause",
+        ):
+            # Recurse into all named children — this picks up the clause's
+            # inner ``block`` plus any sibling ``elif_clause`` / ``else_clause``
+            # / ``except_clause`` chains.
+            for sub in child.children:
+                if sub.is_named:
+                    _collect_self_attr_types_in_block(sub, src, out)
+
+
+def _maybe_record_self_assign(
+    assignment: tree_sitter.Node,
+    src: bytes,
+    out: dict[str, list[str]],
+) -> None:
+    """If ``assignment`` is ``self.X[: T] = expr``, record the type(s)."""
+    # Find the LHS (attribute), the optional type annotation, and RHS.
+    lhs: tree_sitter.Node | None = None
+    type_node: tree_sitter.Node | None = None
+    rhs: tree_sitter.Node | None = None
+    seen_eq = False
+    for c in assignment.children:
+        if c.type == "=":
+            seen_eq = True
+            continue
+        if c.type == "type":
+            type_node = c
+            continue
+        if not seen_eq:
+            if lhs is None:
+                lhs = c
+        else:
+            if rhs is None:
+                rhs = c
+    if lhs is None or lhs.type != "attribute":
+        return
+    obj = lhs.child_by_field_name("object")
+    attr = lhs.child_by_field_name("attribute")
+    if obj is None or attr is None:
+        return
+    if node_text(obj, src) != "self":
+        return
+    attr_name = node_text(attr, src)
+    if not attr_name:
+        return
+
+    type_names: list[str] = []
+    if type_node is not None:
+        type_names.extend(_extract_types_from_type_node(type_node, src))
+
+    # If no annotation (or annotation gave nothing useful), fall back
+    # to the constructor name on the RHS.
+    if not type_names and rhs is not None:
+        ctor = _ctor_name_from_expr(rhs, src)
+        if ctor:
+            type_names.append(ctor)
+
+    if not type_names:
+        return
+    existing = out.setdefault(attr_name, [])
+    for t in type_names:
+        if t not in existing:
+            existing.append(t)
+
+
+def _ctor_name_from_expr(
+    node: tree_sitter.Node, src: bytes
+) -> str | None:
+    """Return the constructor name from an RHS expression like ``Foo(...)``.
+
+    Handles ``Foo(...)``, ``mod.Foo(...)`` (returns ``Foo``), and simple
+    identifier references ``Foo`` (when a name is being aliased without
+    instantiation, we still record the type so ``self._b = some_factory``
+    style does NOT match — only ``identifier`` / ``attribute`` whose leaf
+    looks PascalCase counts as a "type-ish" reference).
+
+    Walrus (``named_expression``) is intentionally skipped.
+    """
+    if node.type == "call":
+        func = node.child_by_field_name("function")
+        if func is None:
+            return None
+        text = node_text(func, src).rsplit(".", 1)[-1]
+        if text and text[0].isupper():
+            return text
+        return None
+    return None
 
 
 # --- Argument expression simplification ---------------------------------
