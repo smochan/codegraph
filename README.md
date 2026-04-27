@@ -417,6 +417,47 @@ node --test tests/*.js              # 55 JS tests
 
 ---
 
+## PR review CI (dogfood)
+
+`codegraph` ships its own PR-review workflow as a template. Once activated,
+every PR opened against `main` runs codegraph against itself, posts the diff
+as a sticky PR comment, and fails the check on high-severity findings.
+
+The workflow lives at
+[`.github/ci-templates/pr-review.workflow.yml`](.github/ci-templates/pr-review.workflow.yml)
+(outside `.github/workflows/` so the repo can be cloned and pushed-to with a
+token that lacks the `workflow` OAuth scope). Activate with:
+
+```bash
+gh auth refresh -h github.com -s workflow
+cp .github/ci-templates/pr-review.workflow.yml .github/workflows/pr-review.yml
+git add .github/workflows/pr-review.yml
+git commit -m "ci: activate codegraph PR review"
+git push
+```
+
+Once active, the workflow:
+
+1. Builds a graph from `origin/main` and saves it as a baseline.
+2. Builds a graph from the PR head.
+3. Runs `codegraph review --format markdown --fail-on high` against the diff.
+4. Posts the result as a sticky PR comment (replaced on each push, no spam).
+5. Fails the check if any high-or-critical findings appear.
+
+**Local dry-run** before opening a PR:
+
+```bash
+git fetch origin main
+./scripts/test-pr-review-locally.sh
+# writes review.md + comment.md, exits non-zero if findings exceed --fail-on high
+```
+
+First-PR graceful path: if no baseline can be saved from `main` (brand-new
+repo, empty default branch), the workflow posts a friendly "first-time
+review" comment and passes — codegraph review activates from the next PR.
+
+---
+
 ## Acknowledgements
 
 `codegraph` stands on:
