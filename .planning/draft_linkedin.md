@@ -19,22 +19,28 @@
 > today.
 >
 > Along the way, the analyzer caught 451 false-positive dead-code
-> findings on its own source. We fixed 5 categories of resolver bugs to
-> get that down to 3 — and the 3 that remain are intentional public
-> APIs, documented in code. The test suite grew from 147 to 202 passing
-> across Python and JS. The 3 cycles in our own code are now reported
-> with qualnames instead of opaque hashes, so we could actually discuss
-> them: 2 are accepted (one is a deliberate UI redraw loop, one is a
-> known static-resolver false positive against an MCP `Server.run`
-> method), and 1 is tracked as a v0.1.1 follow-up. Honest engineering on
-> the tool's own code, not a marketing claim.
+> findings on its own source. We fixed 5+ categories of resolver bugs
+> to get that down to 4 — and the 4 that remain are intentional
+> public-API surfaces or genuinely unwired helpers, documented in code.
+> The test suite grew from 147 to **273 passing Python tests** plus 55
+> Node tests. The 3 cycles in our own code are now reported with
+> qualnames instead of opaque hashes, so we could actually discuss
+> them: a deliberate UI redraw loop, a parser self-recursion via
+> `_visit_nested_defs`, and a static-resolver false positive against an
+> MCP `Server.run` method. Honest engineering on the tool's own code,
+> not a marketing claim.
 >
 > What it does: builds a graph of Python and TypeScript / JavaScript
 > repos via tree-sitter; reports dead code with decorator-aware
 > entry-point detection (Typer, FastAPI, Click, Celery, pytest, MCP —
 > 24 framework decorators recognised); reports cycles, hotspots,
-> untested functions; ships a CLI, a web dashboard with the 3D focus
-> view, and an MCP server with 10 tools for Claude Code.
+> untested functions; **captures function signatures and per-call-site
+> arguments (DF0)**; **classifies nodes as HANDLER / SERVICE /
+> COMPONENT / REPO (DF1.5)**; ships a CLI, a web dashboard with the 3D
+> focus view (role-grouped picker, hover signature tooltips, edge
+> labels showing call-site args), and an MCP server with 10 tools for
+> Claude Code (`find_symbol` filterable by role, callers/callees
+> surfacing args + role).
 >
 > What it does NOT do yet: argument-level data flow, service /
 > component classification, cross-stack frontend → API → DB tracing.
@@ -43,7 +49,9 @@
 > MIT, single SQLite file, no daemon.
 >
 > ```
-> pip install codegraph-py
+> # PyPI publish coming soon. For now:
+> git clone https://github.com/smochan/codegraph.git && cd codegraph
+> pip install -e .
 > ```
 >
 > Repo: https://github.com/smochan/codegraph
@@ -114,7 +122,7 @@
 
 ## Pre-publish checklist
 
-- [ ] PyPI 0.1.0 live and `pip install codegraph-py` works on a clean venv
+- [ ] PyPI 0.1.0 live and `pip install codegraph-py` works on a clean venv (deferred — currently install-from-source)
 - [ ] 45s MP4 + 5s loop both exported and previewed on phone
 - [ ] First ~210 chars of the post truncate at the right spot (test on
       LinkedIn mobile preview)
