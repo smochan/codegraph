@@ -639,34 +639,41 @@ test('graph3d.js uses window.SpriteText (no window.THREE coupling)', () => {
     'graph3d.js must reference window.SpriteText');
   assert.ok(/new\s+SpriteText\(/.test(src),
     'graph3d.js must construct SpriteText instances');
+  assert.ok(!/new\s+THREE\.Sprite\(/.test(src),
+    'graph3d.js should no longer construct raw THREE.Sprite');
   assert.ok(/nodeThreeObjectExtend\(true\)/.test(src));
+  assert.ok(/linkThreeObjectExtend\(true\)/.test(src));
+  assert.ok(/linkPositionUpdate\(/.test(src));
 });
 
-test('node sprite helper returns null when window.SpriteText is undefined', () => {
-  // Run the helper in a vm sandbox without window.SpriteText to verify the
+test('sprite helpers return null when window.SpriteText is undefined', () => {
+  // Run the helpers in a vm sandbox without window.SpriteText to verify the
   // graceful fallback path used when esm.sh is blocked.
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d.js'),
     'utf8',
   );
   const nodeFn = src.match(/function makeLabelSprite\(text\)\s*\{[\s\S]*?\n  \}/);
-  assert.ok(nodeFn, 'sprite helper source not found');
-  const code = nodeFn[0]
-    + '\nresult = { node: makeLabelSprite("hi") };';
+  const edgeFn = src.match(/function makeEdgeLabelSprite\(text\)\s*\{[\s\S]*?\n  \}/);
+  assert.ok(nodeFn && edgeFn, 'sprite helper sources not found');
+  const code = nodeFn[0] + '\n' + edgeFn[0]
+    + '\nresult = { node: makeLabelSprite("hi"), edge: makeEdgeLabelSprite("x=1") };';
   const sandbox = { window: {}, result: null };
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
   assert.equal(sandbox.result.node, null);
+  assert.equal(sandbox.result.edge, null);
 });
 
-test('node sprite helper returns a sprite-like object when SpriteText is present', () => {
+test('sprite helpers return a sprite-like object when SpriteText is present', () => {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d.js'),
     'utf8',
   );
   const nodeFn = src.match(/function makeLabelSprite\(text\)\s*\{[\s\S]*?\n  \}/);
-  const code = nodeFn[0]
-    + '\nresult = { node: makeLabelSprite("hello") };';
+  const edgeFn = src.match(/function makeEdgeLabelSprite\(text\)\s*\{[\s\S]*?\n  \}/);
+  const code = nodeFn[0] + '\n' + edgeFn[0]
+    + '\nresult = { node: makeLabelSprite("hello"), edge: makeEdgeLabelSprite("x=1") };';
   function FakeSprite(text) { this.text = text; }
   const sandbox = { window: { SpriteText: FakeSprite }, result: null };
   vm.createContext(sandbox);
@@ -674,6 +681,33 @@ test('node sprite helper returns a sprite-like object when SpriteText is present
   assert.equal(sandbox.result.node.text, 'hello');
   assert.equal(sandbox.result.node.color, '#f1f5ff');
   assert.equal(sandbox.result.node.textHeight, 6);
+  assert.equal(sandbox.result.edge.text, 'x=1');
+  assert.equal(sandbox.result.edge.textHeight, 4);
+});
+
+test('edge sprite cache key is stable across re-renders', () => {
+  // Cache key is built from source/target ids and argLabel, so the same
+  // logical edge passed in repeatedly hits the cache (same object).
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d.js'),
+    'utf8',
+  );
+  const edgeFn = src.match(/function makeEdgeLabelSprite\(text\)\s*\{[\s\S]*?\n  \}/);
+  const cacheBlock = src.match(
+    /var EDGE_SPRITE_CACHE[\s\S]*?function getOrMakeEdgeLabelSprite[\s\S]*?\n  \}/,
+  );
+  assert.ok(edgeFn && cacheBlock);
+  const code = edgeFn[0] + '\n' + cacheBlock[0]
+    + '\nvar link = { source: { id: "m.a" }, target: { id: "m.b" }, argLabel: "x=1" };'
+    + '\nresult = { first: getOrMakeEdgeLabelSprite(link),'
+    + ' second: getOrMakeEdgeLabelSprite(link) };';
+  function FakeSprite(text) { this.text = text; }
+  const sandbox = { window: { SpriteText: FakeSprite }, result: null };
+  vm.createContext(sandbox);
+  vm.runInContext(code, sandbox);
+  assert.ok(sandbox.result.first);
+  assert.strictEqual(sandbox.result.first, sandbox.result.second,
+    'edge sprite cache must return the same instance for the same link');
 });
 
 test('index.html imports three-spritetext from esm.sh as a module', () => {
