@@ -8,8 +8,10 @@ import networkx as nx
 from codegraph.analysis._common import (
     REFERENCE_EDGE_KINDS,
     _kind_str,
+    in_protocol_class,
     in_test_module,
     is_excluded_path,
+    is_protocol_class,
 )
 from codegraph.graph.schema import EdgeKind, NodeKind
 
@@ -122,6 +124,13 @@ def find_dead_code(
         # Generated/static frontend assets and test fixtures don't have
         # traceable call graphs — exclude them from dead-code detection.
         if is_excluded_path(str(attrs.get("file") or "")):
+            continue
+        # Skip ``typing.Protocol`` classes and their methods. Protocols define
+        # structural types for static type checking; they have no runtime
+        # call-graph incoming edges by design.
+        if kind == NodeKind.CLASS.value and is_protocol_class(graph, nid):
+            continue
+        if kind == NodeKind.METHOD.value and in_protocol_class(graph, nid):
             continue
         # Polymorphic overrides on classes that inherit have no static
         # incoming CALL edge (dispatch is via the base class).
