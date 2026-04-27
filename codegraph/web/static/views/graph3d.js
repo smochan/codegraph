@@ -465,6 +465,23 @@
         '</div>',
       ].join('');
     }
+    var T = getTransform();
+    var signature = T.formatSignature ? T.formatSignature(node) : '';
+    var sigBlock = '';
+    if (signature) {
+      sigBlock = [
+        '<div class="g3d-detail-sig-lbl">Signature</div>',
+        '<div class="g3d-detail-sig">', ESC(signature), '</div>',
+      ].join('');
+    }
+    var roleChip = '';
+    if (node.symbolRole) {
+      var color = (T.ROLE_PICKER_COLORS && T.ROLE_PICKER_COLORS[node.symbolRole]) || '#8b9ab8';
+      roleChip = [
+        '<span class="g3d-detail-rolechip" style="background:', ESC(color), ';"></span>',
+        '<span class="g3d-detail-role-name">', ESC(node.symbolRole), '</span>',
+      ].join('');
+    }
     return [
       '<div class="g3d-detail panel p-5">',
       '<div class="text-[11px] uppercase tracking-[0.14em] text-app-3 mb-1">',
@@ -473,8 +490,11 @@
       (node.layer ? (' · layer ' + ESC(node.layer)) : ''),
       '</div>',
       '<div class="text-base font-semibold qn-mono mb-1"><span class="g3d-detail-name">',
-      ESC(node.name || node.id), '</span></div>',
+      ESC(node.name || node.id), '</span>',
+      (roleChip ? ' <span class="g3d-detail-role">' + roleChip + '</span>' : ''),
+      '</div>',
       '<div class="text-xs text-app-3 qn-mono mb-2">', ESC(node.id), '</div>',
+      sigBlock,
       (node.external
         ? '<div class="g3d-detail-hint mt-1">External symbol — terminal leaf.</div>'
         : ''),

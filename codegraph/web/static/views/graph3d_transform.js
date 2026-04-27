@@ -105,6 +105,33 @@ function callArgsFromSym(sym) {
   return out;
 }
 
+// ---- Signature formatting (Change 4 / DF0) ---------------------------------
+//
+// Render a function's signature as a single line:
+//   f(a: int, b: str = "x") -> bool
+// Skip ": type" if type is None/missing; skip "= default" if missing;
+// skip "-> returns" if returns is None/missing. Returns '' when params is
+// empty AND returns is missing — the caller suppresses the entire block.
+function formatSignature(node) {
+  if (!node) return '';
+  var name = node.name || '';
+  var params = Array.isArray(node.params) ? node.params : [];
+  var returns = node.returns;
+  var hasParams = params.length > 0;
+  var hasReturns = returns != null && String(returns).length > 0;
+  if (!hasParams && !hasReturns) return '';
+  var parts = params.map(function (p) {
+    if (!p || !p.name) return '';
+    var s = String(p.name);
+    if (p.type != null && String(p.type).length) s += ': ' + String(p.type);
+    if (p.default != null && String(p.default).length) s += ' = ' + String(p.default);
+    return s;
+  }).filter(function (s) { return s; });
+  var sig = String(name) + '(' + parts.join(', ') + ')';
+  if (hasReturns) sig += ' -> ' + String(returns);
+  return sig;
+}
+
 function clampVal(fanIn) {
   var v = 2 + (Number(fanIn) || 0);
   if (v < 2) v = 2;
@@ -225,6 +252,10 @@ function makeNode(entry, role, depth) {
     val: baseVal,
     color: roleColor(role),
     external: false,
+    // DF0 enrichment — fall back gracefully on older payloads.
+    params: Array.isArray(sym.params) ? sym.params : [],
+    returns: sym.returns != null ? sym.returns : null,
+    symbolRole: sym.role || null,
   };
 }
 
@@ -862,6 +893,7 @@ if (typeof window !== 'undefined') {
     filterGrouped: filterGrouped,
     filterGroupedByRole: filterGroupedByRole,
     formatCallArgs: formatCallArgs,
+    formatSignature: formatSignature,
     ROLE_ORDER: ROLE_ORDER,
     ROLE_PICKER_COLORS: ROLE_PICKER_COLORS,
     isExternalQn: isExternalQn,
@@ -887,6 +919,7 @@ if (typeof module !== 'undefined' && module.exports) {
     filterGrouped: filterGrouped,
     filterGroupedByRole: filterGroupedByRole,
     formatCallArgs: formatCallArgs,
+    formatSignature: formatSignature,
     ROLE_ORDER: ROLE_ORDER,
     ROLE_PICKER_COLORS: ROLE_PICKER_COLORS,
     isExternalQn: isExternalQn,

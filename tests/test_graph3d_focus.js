@@ -582,3 +582,45 @@ test('groupSymbolsByRole handles role=null gracefully (no crash)', () => {
   const fns = noRole.modules[0].functions.map(f => f.name).sort();
   assert.deepEqual(fns, ['fn', 'gn']);
 });
+
+// ---- DF0: signature formatting --------------------------------------------
+
+const { formatSignature } = T;
+
+test('formatSignature renders f(a: int, b: str = "x") -> bool', () => {
+  const node = {
+    name: 'f',
+    params: [
+      { name: 'a', type: 'int', default: null },
+      { name: 'b', type: 'str', default: '"x"' },
+    ],
+    returns: 'bool',
+  };
+  assert.equal(formatSignature(node), 'f(a: int, b: str = "x") -> bool');
+});
+
+test('formatSignature omits ": type" when type is None', () => {
+  const node = {
+    name: 'g',
+    params: [
+      { name: 'x', type: null, default: null },
+      { name: 'y', type: null, default: '0' },
+    ],
+    returns: 'int',
+  };
+  assert.equal(formatSignature(node), 'g(x, y = 0) -> int');
+});
+
+test('formatSignature omits "-> returns" when returns is None', () => {
+  const node = {
+    name: 'h',
+    params: [{ name: 'x', type: 'int', default: null }],
+    returns: null,
+  };
+  assert.equal(formatSignature(node), 'h(x: int)');
+});
+
+test('formatSignature returns empty string when no params and no returns', () => {
+  assert.equal(formatSignature({ name: 'noop', params: [], returns: null }), '');
+  assert.equal(formatSignature({ name: 'noop' }), '');
+});
