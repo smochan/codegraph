@@ -268,20 +268,58 @@ class HldPayload:
 
 
 def serialize_route_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
-    """Serialize ROUTE edges into the HLD payload's `routes` array.
+    """Serialize ROUTE edges into the HLD payload's ``routes`` array.
 
-    Reserved stub for the DF1 agent to fill in. Default returns [] so the
-    payload shape stays stable while DF1 is in flight.
+    One entry per ROUTE edge. Each entry carries the handler's qualname
+    plus the HTTP method/path/framework metadata captured at parse time.
+    Sorted by ``(path, method)`` for stable rendering.
     """
-    return []
+    out: list[dict[str, Any]] = []
+    for src, _dst, data in graph.edges(data=True):
+        if kind_str(data.get("kind")) != "ROUTE":
+            continue
+        md = data.get("metadata") or {}
+        if not isinstance(md, dict):
+            md = {}
+        handler_qn = str(graph.nodes[src].get("qualname") or "")
+        out.append({
+            "handler_qn": handler_qn,
+            "method": str(md.get("method") or ""),
+            "path": str(md.get("path") or ""),
+            "framework": str(md.get("framework") or ""),
+        })
+    out.sort(key=lambda r: (r["path"], r["method"], r["handler_qn"]))
+    return out
 
 
 def serialize_sql_io_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
-    """Serialize READS_FROM / WRITES_TO edges into the HLD payload's `sql_io` array.
+    """Serialize READS_FROM / WRITES_TO edges into ``sql_io`` array.
 
-    Reserved stub for the DF1 agent.
+    One entry per edge with ``function_qn`` (the source) and ``model_qn``
+    (the resolved CLASS qualname). Unresolved edges are dropped during
+    resolution, so every entry here points to a real in-repo model.
     """
-    return []
+    out: list[dict[str, Any]] = []
+    for src, dst, data in graph.edges(data=True):
+        kind = kind_str(data.get("kind"))
+        if kind not in ("READS_FROM", "WRITES_TO"):
+            continue
+        md = data.get("metadata") or {}
+        if not isinstance(md, dict):
+            md = {}
+        function_qn = str(graph.nodes[src].get("qualname") or "")
+        model_qn = str(graph.nodes[dst].get("qualname") or "")
+        if not model_qn:
+            continue
+        out.append({
+            "function_qn": function_qn,
+            "model_qn": model_qn,
+            "operation": str(md.get("operation") or ""),
+            "via": str(md.get("via") or ""),
+            "kind": kind,
+        })
+    out.sort(key=lambda r: (r["function_qn"], r["model_qn"], r["operation"]))
+    return out
 
 
 def serialize_fetch_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:

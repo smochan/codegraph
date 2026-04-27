@@ -24,6 +24,7 @@ EXPECTED_TOOLS = {
     "untested",
     "hotspots",
     "metrics",
+    "dataflow_routes",
 }
 
 

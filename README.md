@@ -49,6 +49,23 @@ until the launch sprint completes (see [Roadmap](#roadmap)). For now, install fr
   HTTP-framework-aware (FastAPI, Flask, Express, NestJS); Typer-CLI symbols are not
   classified as `HANDLER` yet — see [What it does NOT do yet](#what-it-does-not-do-yet).
 
+#### Cross-stack tracing (DF1)
+
+- **`ROUTE` edges** from FastAPI / Flask / aiohttp handlers to a synthetic
+  `route::METHOD::/path` node. `@app.get("/x")`, `@router.post("/y")`, and Flask's
+  `@app.route("/z", methods=["POST", "PUT"])` are all detected; the Flask form
+  expands to one edge per method.
+- **`READS_FROM` / `WRITES_TO` edges** for SQLAlchemy data-access — `session.query(Model)`,
+  `Model.query.filter(...)`, `db.session.query(Model)`, `session.add(Model(...))`, and
+  `session.execute(select|insert|update|delete(Model))`. Edges resolve to the in-repo
+  `CLASS` node for the model; unresolved targets are dropped (no `unresolved::*`
+  noise in the graph).
+- **HLD payload** (`build_hld`) surfaces these as the `routes` and `sql_io` arrays
+  alongside the existing layered diagram, so dashboards and MCP clients can answer
+  "which handler writes to `User`?" in one query.
+- **MCP tool** `dataflow_routes` returns the list of `{handler_qn, method, path, framework}`
+  records for any connected client.
+
 ### 3D focus-mode dashboard
 
 - **Pick any function** from a role-grouped, searchable picker
@@ -63,9 +80,9 @@ until the launch sprint completes (see [Roadmap](#roadmap)). For now, install fr
 ### MCP server
 
 - `codegraph mcp serve` — stdio-transport MCP server for Claude Code or any MCP client.
-- 10 curated tools: `find_symbol` (with role filter), `callers`, `callees`
+- 11 curated tools: `find_symbol` (with role filter), `callers`, `callees`
   (both surfacing args + role), `blast_radius`, `subgraph`, `dead_code`, `cycles`,
-  `untested`, `hotspots`, `metrics`.
+  `untested`, `hotspots`, `metrics`, `dataflow_routes` (DF1 HTTP routes).
 - Returns small, focused subgraphs — avoids flooding context windows.
 
 ### CLI
