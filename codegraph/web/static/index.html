@@ -93,6 +93,19 @@ tailwind.config = {
 <div id="toast-host" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
 <script src="/static/views/graph3d_transform.js"></script>
 <script src="/static/views/graph3d.js"></script>
+<!-- three-spritetext (ESM via esm.sh): pulls its own three bundle and exposes
+     a SpriteText class. Used by graph3d.js for always-visible node + edge
+     labels. Silently no-op if esm.sh is unreachable; HTML hover labels remain. -->
+<script type="module">
+  try {
+    const mod = await import('https://esm.sh/three-spritetext@1.10.0');
+    window.SpriteText = mod.default || mod.SpriteText || mod;
+    window.dispatchEvent(new Event('cg-spritetext-ready'));
+  } catch (e) {
+    // esm.sh blocked or offline — leave window.SpriteText undefined and
+    // let graph3d.js fall back to HTML hover labels.
+  }
+</script>
 <script src="/static/app.js"></script>
 </body>
 </html>
