@@ -287,9 +287,33 @@ def serialize_sql_io_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
 def serialize_fetch_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
     """Serialize FETCH_CALL edges into the HLD payload's `fetches` array.
 
-    Reserved stub for the DF2 agent.
+    Each entry surfaces the caller's qualname plus the method/url/library and
+    parsed body keys captured by the DF2 TypeScript extractor. Stable order
+    by (caller_qn, method, url) for snapshot-friendly output.
     """
-    return []
+    out: list[dict[str, Any]] = []
+    for src, _dst, data in graph.edges(data=True):
+        if kind_str(data.get("kind")) != "FETCH_CALL":
+            continue
+        src_attrs = graph.nodes[src]
+        caller_qn = str(src_attrs.get("qualname") or "")
+        if not caller_qn:
+            continue
+        md = data.get("metadata") or {}
+        if not isinstance(md, dict):
+            md = {}
+        entry: dict[str, Any] = {
+            "caller_qn": caller_qn,
+            "method": str(md.get("method") or ""),
+            "url": str(md.get("url") or ""),
+            "library": str(md.get("library") or ""),
+            "body_keys": list(md.get("body_keys") or []),
+        }
+        if "url_kind" in md:
+            entry["url_kind"] = str(md.get("url_kind") or "")
+        out.append(entry)
+    out.sort(key=lambda e: (e["caller_qn"], e["method"], e["url"]))
+    return out
 
 
 def _build_modules_drilldown(
