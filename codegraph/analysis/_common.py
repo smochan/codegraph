@@ -23,6 +23,64 @@ REFERENCE_EDGE_KINDS: frozenset[str] = frozenset(
 )
 
 
+EXCLUDED_PATH_FRAGMENTS: tuple[str, ...] = (
+    "tests/fixtures/",
+    "tests\\fixtures\\",
+    "/static/",
+    "\\static\\",
+)
+
+
+def is_excluded_path(file_path: str) -> bool:
+    """True iff the file path is under a directory excluded from analysis.
+
+    Test fixtures and static frontend assets don't have traceable call graphs
+    and should not be analysed for dead-code or untested-symbol detection.
+    """
+    if not file_path:
+        return False
+    return any(fragment in file_path for fragment in EXCLUDED_PATH_FRAGMENTS)
+
+
+def is_protocol_class(graph: nx.MultiDiGraph, class_id: str) -> bool:
+    """True iff the class inherits from ``typing.Protocol``.
+
+    Walks INHERITS out-edges and matches any parent whose target name ends in
+    ``Protocol``. This covers ``Protocol``, ``typing.Protocol``, and the
+    parser's ``unresolved::Protocol`` / ``unresolved::typing.Protocol`` forms.
+    """
+    for _src, dst, key, data in graph.out_edges(class_id, keys=True, data=True):
+        if key != EdgeKind.INHERITS.value:
+            continue
+        target_name = ""
+        meta = data.get("metadata") or {}
+        if isinstance(meta, dict):
+            target_name = str(meta.get("target_name") or "")
+        if not target_name:
+            attrs = graph.nodes.get(dst) or {}
+            target_name = str(attrs.get("name") or attrs.get("qualname") or dst)
+        # Strip an unresolved:: prefix if the dst ID was used as fallback.
+        if target_name.startswith("unresolved::"):
+            target_name = target_name.split("::", 1)[1]
+        # Match bare "Protocol" or any dotted form ending with ".Protocol".
+        if target_name == "Protocol" or target_name.endswith(".Protocol"):
+            return True
+    return False
+
+
+def in_protocol_class(graph: nx.MultiDiGraph, method_id: str) -> bool:
+    """True iff this method's owning class is a typing.Protocol."""
+    for _src, dst, key in graph.out_edges(method_id, keys=True):
+        if key != EdgeKind.DEFINED_IN.value:
+            continue
+        attrs = graph.nodes.get(dst) or {}
+        if _kind_str(attrs.get("kind")) != "CLASS":
+            continue
+        if is_protocol_class(graph, dst):
+            return True
+    return False
+
+
 def in_test_module(graph: nx.MultiDiGraph, node_id: str) -> bool:
     """True iff the node is in a file whose MODULE node is marked is_test."""
     attrs = graph.nodes.get(node_id) or {}

@@ -8,7 +8,10 @@ import networkx as nx
 from codegraph.analysis._common import (
     REFERENCE_EDGE_KINDS,
     _kind_str,
+    in_protocol_class,
     in_test_module,
+    is_excluded_path,
+    is_protocol_class,
 )
 from codegraph.graph.schema import EdgeKind, NodeKind
 
@@ -19,13 +22,6 @@ _ENTRYPOINT_NAMES: frozenset[str] = frozenset({"main", "__main__"})
 
 _PROPERTY_DECORATORS: tuple[str, ...] = (
     "@property", "@cached_property", "functools.cached_property",
-)
-
-_EXCLUDED_PATH_FRAGMENTS: tuple[str, ...] = (
-    "tests/fixtures/",
-    "tests\\fixtures\\",
-    "/static/",
-    "\\static\\",
 )
 
 
@@ -39,12 +35,6 @@ def _has_property_decorator(metadata: dict[str, object]) -> bool:
             if marker in text:
                 return True
     return False
-
-
-def _is_excluded_path(file_path: str) -> bool:
-    if not file_path:
-        return False
-    return any(fragment in file_path for fragment in _EXCLUDED_PATH_FRAGMENTS)
 
 
 def _class_has_inherits(graph: nx.MultiDiGraph, class_id: str) -> bool:
@@ -133,7 +123,14 @@ def find_dead_code(
             continue
         # Generated/static frontend assets and test fixtures don't have
         # traceable call graphs — exclude them from dead-code detection.
-        if _is_excluded_path(str(attrs.get("file") or "")):
+        if is_excluded_path(str(attrs.get("file") or "")):
+            continue
+        # Skip ``typing.Protocol`` classes and their methods. Protocols define
+        # structural types for static type checking; they have no runtime
+        # call-graph incoming edges by design.
+        if kind == NodeKind.CLASS.value and is_protocol_class(graph, nid):
+            continue
+        if kind == NodeKind.METHOD.value and in_protocol_class(graph, nid):
             continue
         # Polymorphic overrides on classes that inherit have no static
         # incoming CALL edge (dispatch is via the base class).
