@@ -44,6 +44,57 @@
 
   var CDN_URL = 'https://unpkg.com/3d-force-graph@1/dist/3d-force-graph.min.js';
 
+  // ---- Sprite label cache (Change 1) -------------------------------------
+  //
+  // Build a THREE.Sprite text label per node so labels stay visible at all
+  // camera distances. Labels are cached per node id to avoid GC churn during
+  // re-renders. Distance fade is handled implicitly via sprite scale: a
+  // smaller canvas projects a smaller label far from the camera, keeping
+  // foreground nodes readable without an explicit per-tick LOD pass.
+  var SPRITE_CACHE = new Map();
+
+  function makeLabelSprite(text) {
+    if (typeof window.THREE === 'undefined') return null;
+    var THREE = window.THREE;
+    var fontPx = 36;
+    var pad = 6;
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d');
+    ctx.font = 'bold ' + fontPx + 'px ui-sans-serif, system-ui, sans-serif';
+    var w = Math.ceil(ctx.measureText(String(text || '')).width) + pad * 2;
+    var h = fontPx + pad * 2;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.font = 'bold ' + fontPx + 'px ui-sans-serif, system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(8,12,20,0.55)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#f1f5ff';
+    ctx.fillText(String(text || ''), w / 2, h / 2 + 1);
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    var material = new THREE.SpriteMaterial({
+      map: texture, transparent: true, depthWrite: false,
+    });
+    var sprite = new THREE.Sprite(material);
+    var scale = 0.18;
+    sprite.scale.set(w * scale, h * scale, 1);
+    sprite.position.set(0, 8, 0);
+    return sprite;
+  }
+
+  function getOrMakeLabelSprite(node) {
+    if (!node) return null;
+    var cached = SPRITE_CACHE.get(node.id);
+    if (cached) return cached.sprite;
+    var sprite = makeLabelSprite(node.name || node.id);
+    if (!sprite) return null;
+    SPRITE_CACHE.set(node.id, { sprite: sprite });
+    return sprite;
+  }
+  function clearSpriteCache() { SPRITE_CACHE.clear(); }
+
   function getTransform() {
     var T = window.CG_Graph3DTransform;
     if (!T) throw new Error('graph3d_transform.js not loaded');
@@ -91,6 +142,7 @@
       instance = null;
     }
     if (resizeObs) { try { resizeObs.disconnect(); } catch (e) {} resizeObs = null; }
+    clearSpriteCache();
   }
 
   function fallbackHtml(msg) {
@@ -637,6 +689,8 @@
         .nodeRelSize(4)
         .nodeColor(function (n) { return n.color; })
         .nodeVal(function (n) { return n.val; })
+        .nodeThreeObjectExtend(true)
+        .nodeThreeObject(function (n) { return getOrMakeLabelSprite(n); })
         .nodeLabel(function (n) {
           if (n.external) {
             return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
