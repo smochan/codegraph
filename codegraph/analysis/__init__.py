@@ -4,6 +4,7 @@ from codegraph.analysis.cycles import Cycle, CycleReport, find_cycles
 from codegraph.analysis.dead_code import DeadNode, find_dead_code
 from codegraph.analysis.hotspots import Hotspot, find_hotspots
 from codegraph.analysis.metrics import GraphMetrics, compute_metrics
+from codegraph.analysis.roles import classify_roles
 from codegraph.analysis.untested import UntestedNode, find_untested
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "Hotspot",
     "UntestedNode",
     "blast_radius",
+    "classify_roles",
     "compute_metrics",
     "find_cycles",
     "find_dead_code",
