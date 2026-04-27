@@ -88,6 +88,153 @@ def _collect_class_attr_types(
     return out
 
 
+# --- Argument expression simplification ---------------------------------
+#
+# Per DF0 spec: "simple" arg expressions (literals, identifiers, attributes,
+# subscripts) are captured verbatim; anything else collapses to "<expr>".
+_SIMPLE_ARG_TYPES: frozenset[str] = frozenset({
+    "identifier", "string", "integer", "float",
+    "true", "false", "none",
+    "attribute", "subscript",
+})
+
+
+def _simplify_arg(node: tree_sitter.Node, src: bytes) -> str:
+    """Return arg text if the AST node is a simple form, else ``"<expr>"``."""
+    if node.type in _SIMPLE_ARG_TYPES:
+        return node_text(node, src)
+    return "<expr>"
+
+
+def _extract_params(
+    params_node: tree_sitter.Node,
+    src: bytes,
+    *,
+    skip_self_or_cls: bool,
+) -> list[dict[str, str | None]]:
+    """Walk a ``parameters`` AST block and return DF0 param descriptors.
+
+    Skip the first parameter when ``skip_self_or_cls`` is True and that
+    first parameter is named ``self`` or ``cls``. Variadic forms are
+    captured with ``*`` / ``**`` prefixes on the name.
+    """
+    out: list[dict[str, str | None]] = []
+    first_seen = False
+    for child in params_node.children:
+        if not child.is_named:
+            continue
+        descriptor: dict[str, str | None] | None = None
+        if child.type == "identifier":
+            descriptor = {
+                "name": node_text(child, src),
+                "type": None,
+                "default": None,
+            }
+        elif child.type == "typed_parameter":
+            name_n = next(
+                (c for c in child.children if c.type == "identifier"), None
+            )
+            type_n = next(
+                (c for c in child.children if c.type == "type"), None
+            )
+            if name_n is not None:
+                descriptor = {
+                    "name": node_text(name_n, src),
+                    "type": node_text(type_n, src) if type_n else None,
+                    "default": None,
+                }
+        elif child.type == "default_parameter":
+            name_n = child.child_by_field_name("name")
+            value_n = child.child_by_field_name("value")
+            if name_n is not None:
+                descriptor = {
+                    "name": node_text(name_n, src),
+                    "type": None,
+                    "default": node_text(value_n, src) if value_n else None,
+                }
+        elif child.type == "typed_default_parameter":
+            name_n = child.child_by_field_name("name")
+            type_n = child.child_by_field_name("type")
+            value_n = child.child_by_field_name("value")
+            if name_n is not None:
+                descriptor = {
+                    "name": node_text(name_n, src),
+                    "type": node_text(type_n, src) if type_n else None,
+                    "default": node_text(value_n, src) if value_n else None,
+                }
+        elif child.type == "list_splat_pattern":
+            inner = next(
+                (c for c in child.children if c.type == "identifier"), None
+            )
+            if inner is not None:
+                descriptor = {
+                    "name": f"*{node_text(inner, src)}",
+                    "type": None,
+                    "default": None,
+                }
+        elif child.type == "dictionary_splat_pattern":
+            inner = next(
+                (c for c in child.children if c.type == "identifier"), None
+            )
+            if inner is not None:
+                descriptor = {
+                    "name": f"**{node_text(inner, src)}",
+                    "type": None,
+                    "default": None,
+                }
+        if descriptor is None:
+            continue
+        if (
+            skip_self_or_cls
+            and not first_seen
+            and descriptor["name"] in ("self", "cls")
+        ):
+            first_seen = True
+            continue
+        first_seen = True
+        out.append(descriptor)
+    return out
+
+
+def _extract_call_args(
+    arg_list: tree_sitter.Node, src: bytes
+) -> tuple[list[str], dict[str, str]]:
+    """Return ``(args, kwargs)`` for a ``call.argument_list`` AST node.
+
+    Follows the DF0 capture rules: positional args are simplified via
+    ``_simplify_arg``; keyword args become ``kwargs[name] = simplified``;
+    ``*spread`` becomes ``"*name"`` in args; ``**spread`` becomes
+    ``kwargs["**"] = name``.
+    """
+    args: list[str] = []
+    kwargs: dict[str, str] = {}
+    for child in arg_list.children:
+        if not child.is_named:
+            continue
+        if child.type == "keyword_argument":
+            name_n = child.child_by_field_name("name")
+            value_n = child.child_by_field_name("value")
+            if name_n is not None and value_n is not None:
+                kwargs[node_text(name_n, src)] = _simplify_arg(value_n, src)
+        elif child.type == "list_splat":
+            inner = next(
+                (c for c in child.children if c.is_named), None
+            )
+            if inner is not None:
+                args.append(f"*{node_text(inner, src)}")
+            else:
+                args.append("<expr>")
+        elif child.type == "dictionary_splat":
+            inner = next(
+                (c for c in child.children if c.is_named), None
+            )
+            if inner is not None:
+                kwargs["**"] = node_text(inner, src)
+        else:
+            args.append(_simplify_arg(child, src))
+    return args, kwargs
+
+
 def _get_function_decorators(func_node: tree_sitter.Node, src: bytes) -> list[str]:
     """Collect decorator strings for a function/class definition.
 
@@ -452,6 +599,21 @@ class PythonExtractor(ExtractorBase):
         ) or name == "__main__":
             metadata["entry_point"] = True
 
+        # DF0: capture parameter descriptors and return-type annotation.
+        # Methods skip the leading ``self`` / ``cls`` parameter; classmethods
+        # and staticmethods follow the same rule (``cls`` is dropped, the
+        # static-method case has no implicit first arg so nothing to skip).
+        if params is not None:
+            metadata["params"] = _extract_params(
+                params, src, skip_self_or_cls=(kind == NodeKind.METHOD),
+            )
+        else:
+            metadata["params"] = []
+        return_type_node = node.child_by_field_name("return_type")
+        metadata["returns"] = (
+            node_text(return_type_node, src) if return_type_node else None
+        )
+
         func_node = Node(
             id=func_id,
             kind=kind,
@@ -560,13 +722,22 @@ class PythonExtractor(ExtractorBase):
                     func_child = child.children[0]
                 if func_child is not None:
                     name = node_text(func_child, src)
+                    arg_list = child.child_by_field_name("arguments")
+                    args: list[str] = []
+                    kwargs: dict[str, str] = {}
+                    if arg_list is not None:
+                        args, kwargs = _extract_call_args(arg_list, src)
                     edges.append(Edge(
                         src=scope_id,
                         dst=f"unresolved::{name}",
                         kind=EdgeKind.CALLS,
                         file=rel,
                         line=child.start_point[0] + 1,
-                        metadata={"target_name": name},
+                        metadata={
+                            "target_name": name,
+                            "args": args,
+                            "kwargs": kwargs,
+                        },
                     ))
             # ``decorator`` subtrees are handled by ``_emit_decorator_calls``
             # so we attribute decorator factories to the decorated symbol
@@ -610,13 +781,22 @@ class PythonExtractor(ExtractorBase):
                         func_child = sub.children[0]
                     if func_child is not None:
                         name = node_text(func_child, src)
+                        arg_list = sub.child_by_field_name("arguments")
+                        args: list[str] = []
+                        kwargs: dict[str, str] = {}
+                        if arg_list is not None:
+                            args, kwargs = _extract_call_args(arg_list, src)
                         edges.append(Edge(
                             src=scope_id,
                             dst=f"unresolved::{name}",
                             kind=EdgeKind.CALLS,
                             file=rel,
                             line=sub.start_point[0] + 1,
-                            metadata={"target_name": name},
+                            metadata={
+                                "target_name": name,
+                                "args": args,
+                                "kwargs": kwargs,
+                            },
                         ))
 
     def _handle_import(
