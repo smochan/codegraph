@@ -462,7 +462,128 @@ class TypeScriptExtractor(ExtractorBase):
             nodes.append(test_node)
 
         self._visit(root, rel, qualname, module_id, lang_key, src, nodes, edges)
+        self._collect_require_imports(root, rel, module_id, src, edges)
+        express_routes = self._collect_express_routes(root, src)
+        if express_routes:
+            module_node.metadata["express_routes"] = express_routes
         return nodes, edges
+
+    def _collect_express_routes(
+        self, root: tree_sitter.Node, src: bytes,
+    ) -> list[dict[str, Any]]:
+        """Find Express/Koa-style route registrations anywhere in the tree.
+
+        Matches ``app.get('/x', fn)``, ``router.post('/y', mw, fn)``, etc.
+        Returns a list of ``{"method", "path", "handler_name", "line"}``
+        dicts which is stored on the module node's metadata for downstream
+        consumption by ``codegraph.analysis.infrastructure``.
+        """
+        verbs = {"get", "post", "put", "delete", "patch", "head", "options", "all"}
+        out: list[dict[str, Any]] = []
+        stack: list[tree_sitter.Node] = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "call_expression":
+                func_child = node.child_by_field_name("function")
+                if func_child is not None and func_child.type == "member_expression":
+                    obj_node = func_child.child_by_field_name("object")
+                    prop_node = func_child.child_by_field_name("property")
+                    receiver = node_text(obj_node, src) if obj_node else ""
+                    verb = node_text(prop_node, src).lower() if prop_node else ""
+                    receiver_lc = receiver.lower()
+                    if (
+                        verb in verbs
+                        and (
+                            "router" in receiver_lc
+                            or "app" in receiver_lc
+                            or "api" in receiver_lc
+                            or receiver_lc in ("v1", "v2")
+                        )
+                    ):
+                        args_node = node.child_by_field_name("arguments")
+                        if args_node is None:
+                            for c in node.children:
+                                if c.type == "arguments":
+                                    args_node = c
+                                    break
+                        if args_node is not None:
+                            arg_children = [
+                                c for c in args_node.children
+                                if c.type not in (",", "(", ")")
+                            ]
+                            if arg_children and arg_children[0].type in (
+                                "string", "template_string",
+                            ):
+                                path_text = _extract_string(arg_children[0], src) \
+                                    if arg_children[0].type == "string" \
+                                    else node_text(arg_children[0], src).strip("`")
+                                handler_name = ""
+                                for c in arg_children[1:]:
+                                    if c.type == "identifier":
+                                        handler_name = node_text(c, src)
+                                    elif c.type in (
+                                        "arrow_function", "function",
+                                        "function_expression",
+                                    ):
+                                        handler_name = ""
+                                        break
+                                out.append({
+                                    "method": verb.upper(),
+                                    "path": path_text,
+                                    "handler_name": handler_name,
+                                    "line": node.start_point[0] + 1,
+                                })
+            stack.extend(node.children)
+        return out
+
+    def _collect_require_imports(
+        self,
+        root: tree_sitter.Node,
+        rel: str,
+        module_id: str,
+        src: bytes,
+        edges: list[Edge],
+    ) -> None:
+        """Capture CommonJS ``require("x")`` and dynamic ``import("x")`` as
+        IMPORTS edges. Walks the whole tree once. Idempotent against the
+        ES-import handler — those run on ``import_statement`` nodes which
+        this loop ignores.
+        """
+        stack: list[tree_sitter.Node] = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "call_expression":
+                func_child = node.child_by_field_name("function")
+                if func_child is None and node.children:
+                    func_child = node.children[0]
+                fn_name = node_text(func_child, src) if func_child else ""
+                if fn_name in ("require", "import"):
+                    args_node = node.child_by_field_name("arguments")
+                    if args_node is None:
+                        for c in node.children:
+                            if c.type == "arguments":
+                                args_node = c
+                                break
+                    target = ""
+                    if args_node is not None:
+                        for c in args_node.children:
+                            if c.type == "string":
+                                target = _extract_string(c, src)
+                                break
+                    if target:
+                        edges.append(Edge(
+                            src=module_id,
+                            dst=f"unresolved::{target}",
+                            kind=EdgeKind.IMPORTS,
+                            file=rel,
+                            line=node.start_point[0] + 1,
+                            metadata={
+                                "source": target,
+                                "target_name": target,
+                                "via": fn_name,
+                            },
+                        ))
+            stack.extend(node.children)
 
     def _visit(
         self,
