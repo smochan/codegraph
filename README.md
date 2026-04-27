@@ -258,6 +258,21 @@ codegraph review                   # graph-diff PR review with risk score
 
 > PyPI package coming soon. Until then, install from source as above.
 
+### Try the cross-stack demo
+
+A small FastAPI + SQLAlchemy + React fixture lives in
+[`examples/cross-stack-demo/`](examples/cross-stack-demo/). Run codegraph
+against it to see DF1 (routes), DF2 (fetches), DF1.5 (roles), and DF3/DF4
+(end-to-end trace) all light up:
+
+```bash
+codegraph build --no-incremental --root examples/cross-stack-demo
+codegraph dataflow trace "GET /api/users/{user_id}"
+```
+
+See the demo's [README](examples/cross-stack-demo/README.md) for expected
+output and what to look for.
+
 ---
 
 ## Commands

@@ -607,11 +607,24 @@ def _strip_call_suffix(name: str) -> str:
 
 def _is_session_chain(target: str) -> bool:
     """Return True if the dotted chain's left-most segment looks like a
-    session/db handle (``session.query``, ``db.session.query``, ...)."""
+    session/db handle (``session.query``, ``db.session.query``, ...).
+
+    Also matches ``self.session.X`` / ``self.db.X`` patterns common in
+    repository-style code where the session is held as an instance
+    attribute.
+    """
     if not target:
         return False
-    head = target.split(".", 1)[0].lower()
-    return head in _SESSION_HEAD_TOKENS
+    parts = target.split(".")
+    head = parts[0].lower()
+    if head in _SESSION_HEAD_TOKENS:
+        return True
+    # self.<session-token>.X — repository-pattern method bodies.
+    if head == "self" and len(parts) >= 2:
+        second = parts[1].lower()
+        if second in _SESSION_HEAD_TOKENS:
+            return True
+    return False
 
 
 def _unwrap_to_root_call(node: tree_sitter.Node) -> tree_sitter.Node | None:
