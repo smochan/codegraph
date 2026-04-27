@@ -717,6 +717,45 @@ def _handle_dataflow_fetches(
     return {"fetches": fetches[:limit], "total": len(fetches)}
 
 
+def tool_dataflow_trace(
+    graph: nx.MultiDiGraph, entry: str, depth: int = 6
+) -> dict[str, Any]:
+    """Trace a data flow from an entry through the call graph + cross-layer edges."""
+    from codegraph.analysis.dataflow import trace as _trace
+
+    flow = _trace(graph, entry, max_depth=depth)
+    if flow is None:
+        return {"error": f"entry not found in graph: {entry}"}
+    return flow.to_dict()
+
+
+@_register(
+    "dataflow_trace",
+    {
+        "type": "object",
+        "properties": {
+            "entry": {
+                "type": "string",
+                "description": (
+                    "Function qualname (e.g. 'app.handlers.get_user') or "
+                    "fetch shape ('GET /api/users/{id}')."
+                ),
+            },
+            "depth": {"type": "integer", "default": 6},
+        },
+        "required": ["entry"],
+    },
+)
+def _handle_dataflow_trace(
+    graph: nx.MultiDiGraph, args: dict[str, Any]
+) -> Any:
+    return tool_dataflow_trace(
+        graph,
+        entry=str(args["entry"]),
+        depth=int(args.get("depth", 6)),
+    )
+
+
 # ---------------------------------------------------------------------------
 # MCP Server
 # ---------------------------------------------------------------------------
@@ -763,6 +802,9 @@ def _tool_description(name: str) -> str:
         "dataflow_routes": "List HTTP routes (DF1: FastAPI/Flask handlers)",
         "dataflow_fetches": (
             "List frontend FETCH_CALL edges (caller, method, url, library, body_keys)"
+        ),
+        "dataflow_trace": (
+            "Trace a data flow from entry through call graph + cross-layer edges (DF4)"
         ),
     }
     return descriptions.get(name, name)

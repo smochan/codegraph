@@ -28,6 +28,7 @@ EXPECTED_TOOLS = {
     "hybrid_search",
     "dataflow_routes",
     "dataflow_fetches",
+    "dataflow_trace",
 }
 
 
