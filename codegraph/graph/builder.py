@@ -164,6 +164,33 @@ class GraphBuilder:
             logger.warning("resolver failed: %s", exc)
             stats.errors.append(f"resolver: {exc}")
 
+        # Architectural role classification (DF1.5): stamp HANDLER/SERVICE/
+        # COMPONENT/REPO onto FUNCTION/METHOD/CLASS nodes.
+        try:
+            from codegraph.analysis.roles import classify_roles
+            from codegraph.graph.store_networkx import to_digraph
+
+            graph = to_digraph(self._store)
+            count = classify_roles(graph)
+            if count:
+                updated: list[Node] = []
+                for nid, attrs in graph.nodes(data=True):
+                    metadata = attrs.get("metadata") or {}
+                    if not metadata.get("role"):
+                        continue
+                    existing = self._store.get_node(nid)
+                    if existing is None:
+                        continue
+                    existing.metadata["role"] = metadata["role"]
+                    updated.append(existing)
+                if updated:
+                    self._store.upsert_nodes(updated)
+            self._store.set_meta("last_roles", str(count))
+            logger.info("roles: %d nodes classified", count)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("role classifier failed: %s", exc)
+            stats.errors.append(f"roles: {exc}")
+
         return stats
 
     def _walk_repo(self, spec: Any) -> list[Path]:
