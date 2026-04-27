@@ -67,6 +67,44 @@ function roleColor(role) {
   return ROLE_COLORS[role] || KIND_FALLBACK;
 }
 
+// ---- Call-arg label (Change 2 / DF0) ---------------------------------------
+//
+// Format a single edge's args+kwargs into a short label.
+//   args=[1], kwargs={x:2}  -> "1, x=2"
+//   args=[],  kwargs={}     -> ""
+//   missing                 -> ""
+function formatCallArgs(callArg) {
+  if (!callArg || typeof callArg !== 'object') return '';
+  var parts = [];
+  var args = Array.isArray(callArg.args) ? callArg.args : [];
+  args.forEach(function (a) {
+    if (a === null || a === undefined) return;
+    var s = String(a);
+    if (s.length) parts.push(s);
+  });
+  var kwargs = (callArg.kwargs && typeof callArg.kwargs === 'object') ? callArg.kwargs : {};
+  Object.keys(kwargs).forEach(function (k) {
+    var v = kwargs[k];
+    parts.push(String(k) + '=' + String(v == null ? '' : v));
+  });
+  return parts.join(', ');
+}
+
+// Build a map: callee qualname -> argLabel from a symbol's parallel
+// callees / callee_args arrays. Older payloads without callee_args
+// yield an empty map.
+function callArgsFromSym(sym) {
+  var out = {};
+  if (!sym) return out;
+  var callees = sym.callees || [];
+  var callArgs = sym.callee_args || [];
+  for (var i = 0; i < callees.length; i++) {
+    var label = formatCallArgs(callArgs[i]);
+    if (label) out[callees[i]] = label;
+  }
+  return out;
+}
+
 function clampVal(fanIn) {
   var v = 2 + (Number(fanIn) || 0);
   if (v < 2) v = 2;
@@ -239,7 +277,7 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
   var links = [];
   var linkKeys = new Set();
 
-  function addLink(source, target, role, external) {
+  function addLink(source, target, role, external, argLabel) {
     var key = source + '' + target + '' + role;
     if (linkKeys.has(key)) return;
     linkKeys.add(key);
@@ -250,6 +288,7 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
       kind: 'CALLS',
       color: ROLE_EDGE_COLORS[edgeRole] || EDGE_FALLBACK,
       external: !!external,
+      argLabel: argLabel || '',
     });
   }
 
@@ -266,14 +305,28 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
       for (var i = 0; i < frontier.length; i++) {
         var here = frontier[i];
         var neighbors = step(here);
+        // For descendant edges, args live on `here.callees`. For ancestor
+        // edges, args live on the neighbor's callees pointing at `here`.
+        var hereEntry = index.get(here);
+        var hereCallArgs = (role === 'descendant' && hereEntry)
+          ? callArgsFromSym(hereEntry.sym) : {};
         for (var j = 0; j < neighbors.length; j++) {
           var nb = neighbors[j];
           if (!nb) continue;
           var external = isExternalQn(nb, index);
+          var argLabel = '';
+          if (role === 'descendant') {
+            argLabel = hereCallArgs[nb] || '';
+          } else if (role === 'ancestor') {
+            var nbEntry = index.get(nb);
+            if (nbEntry) {
+              argLabel = callArgsFromSym(nbEntry.sym)[here] || '';
+            }
+          }
           if (external) {
             // Terminal leaf: render once, never traverse.
             var fromToExt = edgeFromTo(here, nb);
-            addLink(fromToExt[0], fromToExt[1], role, true);
+            addLink(fromToExt[0], fromToExt[1], role, true, argLabel);
             if (!nodes.has(nb)) {
               nodes.set(nb, makeExternalNode(nb, d));
             }
@@ -282,7 +335,7 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
           // Emit the edge (even if neighbor was already visited via
           // another path — but dedup via linkKeys).
           var fromTo = edgeFromTo(here, nb);
-          addLink(fromTo[0], fromTo[1], role, false);
+          addLink(fromTo[0], fromTo[1], role, false, argLabel);
           if (visited.has(nb)) continue;
           visited.add(nb);
           // Don't downgrade root if it shows up in a cycle.
@@ -387,7 +440,7 @@ function expandNode(state, hld, qn) {
   var addedNodes = new Set();
   var addedLinkKeys = new Set();
 
-  function addLeaf(neighborQn, role, edgePair) {
+  function addLeaf(neighborQn, role, edgePair, argLabel) {
     if (!neighborQn) return;
     var external = isExternalQn(neighborQn, index);
     var key = linkKey(edgePair[0], edgePair[1]);
@@ -401,6 +454,7 @@ function expandNode(state, hld, qn) {
         kind: 'CALLS',
         color: ROLE_EDGE_COLORS[edgeRole] || EDGE_FALLBACK,
         external: external,
+        argLabel: argLabel || '',
       });
     }
     if (state.nodes.has(neighborQn)) {
@@ -420,11 +474,18 @@ function expandNode(state, hld, qn) {
     addedNodes.add(neighborQn);
   }
 
+  // Descendant edges carry args from this symbol's callee_args.
+  // Ancestor edges (caller -> qn) carry args from the caller's
+  // own callee_args list pointing at qn.
+  var ownCallArgs = callArgsFromSym(sym);
   (sym.callers || []).forEach(function (c) {
-    addLeaf(c, 'ancestor', [c, qn]);
+    var cEntry = index.get(c);
+    var argLabel = '';
+    if (cEntry) argLabel = callArgsFromSym(cEntry.sym)[qn] || '';
+    addLeaf(c, 'ancestor', [c, qn], argLabel);
   });
   (sym.callees || []).forEach(function (c) {
-    addLeaf(c, 'descendant', [qn, c]);
+    addLeaf(c, 'descendant', [qn, c], ownCallArgs[c] || '');
   });
 
   state.expansions.set(qn, { addedNodes: addedNodes, addedLinkKeys: addedLinkKeys });
@@ -655,6 +716,7 @@ if (typeof window !== 'undefined') {
     searchSymbols: searchSymbols,
     groupSymbols: groupSymbols,
     filterGrouped: filterGrouped,
+    formatCallArgs: formatCallArgs,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
     kindColor: kindColor,
@@ -675,6 +737,7 @@ if (typeof module !== 'undefined' && module.exports) {
     searchSymbols: searchSymbols,
     groupSymbols: groupSymbols,
     filterGrouped: filterGrouped,
+    formatCallArgs: formatCallArgs,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
     kindColor: kindColor,

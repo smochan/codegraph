@@ -15,7 +15,7 @@ const T = require(
 const {
   buildFocusGraph, searchSymbols, isExternalQn, indexSymbols,
   makeFocusState, expandNode, collapseNode, isExpanded, snapshotState,
-  groupSymbols, filterGrouped,
+  groupSymbols, filterGrouped, formatCallArgs,
 } = T;
 
 // ---- Fixture builders ------------------------------------------------------
@@ -454,4 +454,39 @@ test('filterGrouped with module-name match keeps all children', () => {
   assert.equal(out.length, 1);
   assert.equal(out[0].qualname, 'pkg.b');
   assert.equal(out[0].functions.length, 1);
+});
+
+// ---- DF0: edge arg labels --------------------------------------------------
+
+test('formatCallArgs returns empty when both args and kwargs are empty/missing', () => {
+  assert.equal(formatCallArgs({ args: [], kwargs: {} }), '');
+  assert.equal(formatCallArgs({}), '');
+  assert.equal(formatCallArgs(null), '');
+  assert.equal(formatCallArgs(undefined), '');
+});
+
+test('formatCallArgs renders kwargs as key=value', () => {
+  assert.equal(formatCallArgs({ args: ['1'], kwargs: { x: '2' } }), '1, x=2');
+  assert.equal(formatCallArgs({ args: [], kwargs: { name: '"hi"' } }), 'name="hi"');
+});
+
+test('buildFocusGraph attaches argLabel to descendant edges from callee_args', () => {
+  const hld = {
+    modules: {
+      'm': {
+        qualname: 'm', file: 'm.py', language: 'python',
+        symbols: [
+          { qualname: 'm.a', name: 'a', kind: 'FUNCTION',
+            fan_in: 0, fan_out: 1, callers: [], callees: ['m.b'],
+            callee_args: [{ args: ['1'], kwargs: { x: '2' } }] },
+          { qualname: 'm.b', name: 'b', kind: 'FUNCTION',
+            fan_in: 1, fan_out: 0, callers: ['m.a'], callees: [] },
+        ],
+      },
+    },
+  };
+  const out = buildFocusGraph(hld, 'm.a', 1, 'descendants');
+  const link = out.links.find(l => l.target === 'm.b');
+  assert.ok(link);
+  assert.equal(link.argLabel, '1, x=2');
 });

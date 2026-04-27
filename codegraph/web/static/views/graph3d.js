@@ -84,6 +84,56 @@
     return sprite;
   }
 
+  // ---- Edge arg label (Change 2 / DF0) ----------------------------------
+  //
+  // Render a small monospace sprite at the midpoint of CALLS edges that
+  // carry a non-empty argLabel (produced by the transform from the
+  // payload's parallel callee_args array).
+  function makeEdgeLabelSprite(text) {
+    if (typeof window.THREE === 'undefined') return null;
+    var THREE = window.THREE;
+    var fontPx = 28;
+    var pad = 4;
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d');
+    ctx.font = fontPx + 'px ui-monospace, SFMono-Regular, Menlo, monospace';
+    var w = Math.ceil(ctx.measureText(String(text || '')).width) + pad * 2;
+    var h = fontPx + pad * 2;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.font = fontPx + 'px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(8,12,20,0.6)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#cbd5f5';
+    ctx.fillText(String(text || ''), w / 2, h / 2 + 1);
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    var material = new THREE.SpriteMaterial({
+      map: texture, transparent: true, depthWrite: false,
+    });
+    var sprite = new THREE.Sprite(material);
+    var scale = 0.14;
+    sprite.scale.set(w * scale, h * scale, 1);
+    return sprite;
+  }
+
+  var EDGE_SPRITE_CACHE = new Map();
+  function getOrMakeEdgeLabelSprite(link) {
+    if (!link) return null;
+    var text = link.argLabel || '';
+    if (!text) return null;
+    var key = (link.source && link.source.id || link.source) + '->'
+      + (link.target && link.target.id || link.target) + '|' + text;
+    var cached = EDGE_SPRITE_CACHE.get(key);
+    if (cached) return cached;
+    var sprite = makeEdgeLabelSprite(text);
+    if (sprite) EDGE_SPRITE_CACHE.set(key, sprite);
+    return sprite;
+  }
+  function clearEdgeSpriteCache() { EDGE_SPRITE_CACHE.clear(); }
+
   function getOrMakeLabelSprite(node) {
     if (!node) return null;
     var cached = SPRITE_CACHE.get(node.id);
@@ -143,6 +193,7 @@
     }
     if (resizeObs) { try { resizeObs.disconnect(); } catch (e) {} resizeObs = null; }
     clearSpriteCache();
+    clearEdgeSpriteCache();
   }
 
   function fallbackHtml(msg) {
@@ -708,6 +759,18 @@
         .linkDirectionalParticles(2)
         .linkDirectionalParticleSpeed(0.006)
         .linkWidth(1.2)
+        .linkThreeObjectExtend(true)
+        .linkThreeObject(function (l) { return getOrMakeEdgeLabelSprite(l); })
+        .linkPositionUpdate(function (sprite, coords) {
+          if (!sprite) return;
+          var s = coords.start; var t = coords.end;
+          if (!s || !t) return;
+          sprite.position.set(
+            (s.x + t.x) / 2,
+            (s.y + t.y) / 2 + 2,
+            (s.z + t.z) / 2
+          );
+        })
         .onNodeHover(function (node) {
           container.style.cursor = node ? 'pointer' : 'grab';
         })
