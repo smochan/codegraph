@@ -44,6 +44,107 @@
 
   var CDN_URL = 'https://unpkg.com/3d-force-graph@1/dist/3d-force-graph.min.js';
 
+  // ---- Sprite label cache (Change 1) -------------------------------------
+  //
+  // Build a THREE.Sprite text label per node so labels stay visible at all
+  // camera distances. Labels are cached per node id to avoid GC churn during
+  // re-renders. Distance fade is handled implicitly via sprite scale: a
+  // smaller canvas projects a smaller label far from the camera, keeping
+  // foreground nodes readable without an explicit per-tick LOD pass.
+  var SPRITE_CACHE = new Map();
+
+  function makeLabelSprite(text) {
+    if (typeof window.THREE === 'undefined') return null;
+    var THREE = window.THREE;
+    var fontPx = 36;
+    var pad = 6;
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d');
+    ctx.font = 'bold ' + fontPx + 'px ui-sans-serif, system-ui, sans-serif';
+    var w = Math.ceil(ctx.measureText(String(text || '')).width) + pad * 2;
+    var h = fontPx + pad * 2;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.font = 'bold ' + fontPx + 'px ui-sans-serif, system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(8,12,20,0.55)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#f1f5ff';
+    ctx.fillText(String(text || ''), w / 2, h / 2 + 1);
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    var material = new THREE.SpriteMaterial({
+      map: texture, transparent: true, depthWrite: false,
+    });
+    var sprite = new THREE.Sprite(material);
+    var scale = 0.18;
+    sprite.scale.set(w * scale, h * scale, 1);
+    sprite.position.set(0, 8, 0);
+    return sprite;
+  }
+
+  // ---- Edge arg label (Change 2 / DF0) ----------------------------------
+  //
+  // Render a small monospace sprite at the midpoint of CALLS edges that
+  // carry a non-empty argLabel (produced by the transform from the
+  // payload's parallel callee_args array).
+  function makeEdgeLabelSprite(text) {
+    if (typeof window.THREE === 'undefined') return null;
+    var THREE = window.THREE;
+    var fontPx = 28;
+    var pad = 4;
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d');
+    ctx.font = fontPx + 'px ui-monospace, SFMono-Regular, Menlo, monospace';
+    var w = Math.ceil(ctx.measureText(String(text || '')).width) + pad * 2;
+    var h = fontPx + pad * 2;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.font = fontPx + 'px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(8,12,20,0.6)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#cbd5f5';
+    ctx.fillText(String(text || ''), w / 2, h / 2 + 1);
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    var material = new THREE.SpriteMaterial({
+      map: texture, transparent: true, depthWrite: false,
+    });
+    var sprite = new THREE.Sprite(material);
+    var scale = 0.14;
+    sprite.scale.set(w * scale, h * scale, 1);
+    return sprite;
+  }
+
+  var EDGE_SPRITE_CACHE = new Map();
+  function getOrMakeEdgeLabelSprite(link) {
+    if (!link) return null;
+    var text = link.argLabel || '';
+    if (!text) return null;
+    var key = (link.source && link.source.id || link.source) + '->'
+      + (link.target && link.target.id || link.target) + '|' + text;
+    var cached = EDGE_SPRITE_CACHE.get(key);
+    if (cached) return cached;
+    var sprite = makeEdgeLabelSprite(text);
+    if (sprite) EDGE_SPRITE_CACHE.set(key, sprite);
+    return sprite;
+  }
+  function clearEdgeSpriteCache() { EDGE_SPRITE_CACHE.clear(); }
+
+  function getOrMakeLabelSprite(node) {
+    if (!node) return null;
+    var cached = SPRITE_CACHE.get(node.id);
+    if (cached) return cached.sprite;
+    var sprite = makeLabelSprite(node.name || node.id);
+    if (!sprite) return null;
+    SPRITE_CACHE.set(node.id, { sprite: sprite });
+    return sprite;
+  }
+  function clearSpriteCache() { SPRITE_CACHE.clear(); }
+
   function getTransform() {
     var T = window.CG_Graph3DTransform;
     if (!T) throw new Error('graph3d_transform.js not loaded');
@@ -91,6 +192,8 @@
       instance = null;
     }
     if (resizeObs) { try { resizeObs.disconnect(); } catch (e) {} resizeObs = null; }
+    clearSpriteCache();
+    clearEdgeSpriteCache();
   }
 
   function fallbackHtml(msg) {
@@ -171,17 +274,35 @@
     var box = host.querySelector('#g3d-picker-results');
     if (!box) return;
     var T = getTransform();
-    var groups = T.filterGrouped(T.groupSymbols(hld), query);
-    if (!groups.length) {
+    var roleGroups = T.filterGroupedByRole(T.groupSymbolsByRole(hld), query);
+    var nonEmpty = roleGroups.filter(function (rg) { return rg.modules.length; });
+    if (!nonEmpty.length) {
       box.innerHTML = '<div class="g3d-picker-noresults">No matches.</div>';
       return;
     }
-    box.innerHTML = groups.map(pickerGroupHtml).join('');
+    box.innerHTML = nonEmpty.map(pickerRoleBucketHtml).join('');
     box.querySelectorAll('.g3d-pick-row').forEach(function (btn) {
       btn.addEventListener('click', function () {
         setFocus(host, hld, btn.dataset.qn);
       });
     });
+  }
+
+  function pickerRoleBucketHtml(rg) {
+    var modules = rg.modules.map(pickerGroupHtml).join('');
+    return [
+      '<div class="g3d-role-bucket">',
+      '<div class="g3d-role-bucket-hdr">',
+      '<span class="g3d-role-chip" style="background:', ESC(rg.color), ';"></span>',
+      '<span class="g3d-role-bucket-name">', ESC(rg.role), '</span>',
+      '<span class="g3d-role-bucket-count">', rg.modules.length, ' module',
+      (rg.modules.length === 1 ? '' : 's'), '</span>',
+      '</div>',
+      '<div class="g3d-role-bucket-body">',
+      modules,
+      '</div>',
+      '</div>',
+    ].join('');
   }
 
   function pickerGroupHtml(g) {
@@ -344,6 +465,23 @@
         '</div>',
       ].join('');
     }
+    var T = getTransform();
+    var signature = T.formatSignature ? T.formatSignature(node) : '';
+    var sigBlock = '';
+    if (signature) {
+      sigBlock = [
+        '<div class="g3d-detail-sig-lbl">Signature</div>',
+        '<div class="g3d-detail-sig">', ESC(signature), '</div>',
+      ].join('');
+    }
+    var roleChip = '';
+    if (node.symbolRole) {
+      var color = (T.ROLE_PICKER_COLORS && T.ROLE_PICKER_COLORS[node.symbolRole]) || '#8b9ab8';
+      roleChip = [
+        '<span class="g3d-detail-rolechip" style="background:', ESC(color), ';"></span>',
+        '<span class="g3d-detail-role-name">', ESC(node.symbolRole), '</span>',
+      ].join('');
+    }
     return [
       '<div class="g3d-detail panel p-5">',
       '<div class="text-[11px] uppercase tracking-[0.14em] text-app-3 mb-1">',
@@ -352,8 +490,11 @@
       (node.layer ? (' · layer ' + ESC(node.layer)) : ''),
       '</div>',
       '<div class="text-base font-semibold qn-mono mb-1"><span class="g3d-detail-name">',
-      ESC(node.name || node.id), '</span></div>',
+      ESC(node.name || node.id), '</span>',
+      (roleChip ? ' <span class="g3d-detail-role">' + roleChip + '</span>' : ''),
+      '</div>',
       '<div class="text-xs text-app-3 qn-mono mb-2">', ESC(node.id), '</div>',
+      sigBlock,
       (node.external
         ? '<div class="g3d-detail-hint mt-1">External symbol — terminal leaf.</div>'
         : ''),
@@ -431,8 +572,12 @@
   // ---- Color & kind legend (Item 3) -------------------------------------
   var LEGEND_KEY = 'cg-3d-legend-collapsed';
   function legendCollapsed() {
-    try { return window.localStorage && window.localStorage.getItem(LEGEND_KEY) === '1'; }
-    catch (e) { return false; }
+    // Change 5: legend is expanded by default. Only collapsed when the
+    // user has explicitly stored '1'. Absence of the key => expanded.
+    try {
+      if (!window.localStorage) return false;
+      return window.localStorage.getItem(LEGEND_KEY) === '1';
+    } catch (e) { return false; }
   }
   function setLegendCollapsed(v) {
     try { window.localStorage && window.localStorage.setItem(LEGEND_KEY, v ? '1' : '0'); }
@@ -449,11 +594,19 @@
       '</button>',
       '<div class="g3d-legend-body">',
       '<div class="g3d-legend-section">',
-      '<div class="g3d-legend-title">Roles</div>',
+      '<div class="g3d-legend-title">Flow</div>',
       legendDot('#fbbf24', 'Ancestor (caller)'),
       legendDot('#22d3ee', 'Descendant (callee)'),
       legendDot('#a78bfa', 'Current focus'),
       legendDotOutline('External / third-party'),
+      '</div>',
+      '<div class="g3d-legend-section">',
+      '<div class="g3d-legend-title">Role</div>',
+      legendDot('#fbbf24', 'HANDLER'),
+      legendDot('#3b82f6', 'SERVICE'),
+      legendDot('#34d399', 'COMPONENT'),
+      legendDot('#c084fc', 'REPO'),
+      legendDot('#8b9ab8', 'no role'),
       '</div>',
       '<div class="g3d-legend-section">',
       '<div class="g3d-legend-title">Kinds</div>',
@@ -637,6 +790,8 @@
         .nodeRelSize(4)
         .nodeColor(function (n) { return n.color; })
         .nodeVal(function (n) { return n.val; })
+        .nodeThreeObjectExtend(true)
+        .nodeThreeObject(function (n) { return getOrMakeLabelSprite(n); })
         .nodeLabel(function (n) {
           if (n.external) {
             return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
@@ -654,6 +809,18 @@
         .linkDirectionalParticles(2)
         .linkDirectionalParticleSpeed(0.006)
         .linkWidth(1.2)
+        .linkThreeObjectExtend(true)
+        .linkThreeObject(function (l) { return getOrMakeEdgeLabelSprite(l); })
+        .linkPositionUpdate(function (sprite, coords) {
+          if (!sprite) return;
+          var s = coords.start; var t = coords.end;
+          if (!s || !t) return;
+          sprite.position.set(
+            (s.x + t.x) / 2,
+            (s.y + t.y) / 2 + 2,
+            (s.z + t.z) / 2
+          );
+        })
         .onNodeHover(function (node) {
           container.style.cursor = node ? 'pointer' : 'grab';
         })

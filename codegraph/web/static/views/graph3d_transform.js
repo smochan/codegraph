@@ -67,6 +67,71 @@ function roleColor(role) {
   return ROLE_COLORS[role] || KIND_FALLBACK;
 }
 
+// ---- Call-arg label (Change 2 / DF0) ---------------------------------------
+//
+// Format a single edge's args+kwargs into a short label.
+//   args=[1], kwargs={x:2}  -> "1, x=2"
+//   args=[],  kwargs={}     -> ""
+//   missing                 -> ""
+function formatCallArgs(callArg) {
+  if (!callArg || typeof callArg !== 'object') return '';
+  var parts = [];
+  var args = Array.isArray(callArg.args) ? callArg.args : [];
+  args.forEach(function (a) {
+    if (a === null || a === undefined) return;
+    var s = String(a);
+    if (s.length) parts.push(s);
+  });
+  var kwargs = (callArg.kwargs && typeof callArg.kwargs === 'object') ? callArg.kwargs : {};
+  Object.keys(kwargs).forEach(function (k) {
+    var v = kwargs[k];
+    parts.push(String(k) + '=' + String(v == null ? '' : v));
+  });
+  return parts.join(', ');
+}
+
+// Build a map: callee qualname -> argLabel from a symbol's parallel
+// callees / callee_args arrays. Older payloads without callee_args
+// yield an empty map.
+function callArgsFromSym(sym) {
+  var out = {};
+  if (!sym) return out;
+  var callees = sym.callees || [];
+  var callArgs = sym.callee_args || [];
+  for (var i = 0; i < callees.length; i++) {
+    var label = formatCallArgs(callArgs[i]);
+    if (label) out[callees[i]] = label;
+  }
+  return out;
+}
+
+// ---- Signature formatting (Change 4 / DF0) ---------------------------------
+//
+// Render a function's signature as a single line:
+//   f(a: int, b: str = "x") -> bool
+// Skip ": type" if type is None/missing; skip "= default" if missing;
+// skip "-> returns" if returns is None/missing. Returns '' when params is
+// empty AND returns is missing — the caller suppresses the entire block.
+function formatSignature(node) {
+  if (!node) return '';
+  var name = node.name || '';
+  var params = Array.isArray(node.params) ? node.params : [];
+  var returns = node.returns;
+  var hasParams = params.length > 0;
+  var hasReturns = returns != null && String(returns).length > 0;
+  if (!hasParams && !hasReturns) return '';
+  var parts = params.map(function (p) {
+    if (!p || !p.name) return '';
+    var s = String(p.name);
+    if (p.type != null && String(p.type).length) s += ': ' + String(p.type);
+    if (p.default != null && String(p.default).length) s += ' = ' + String(p.default);
+    return s;
+  }).filter(function (s) { return s; });
+  var sig = String(name) + '(' + parts.join(', ') + ')';
+  if (hasReturns) sig += ' -> ' + String(returns);
+  return sig;
+}
+
 function clampVal(fanIn) {
   var v = 2 + (Number(fanIn) || 0);
   if (v < 2) v = 2;
@@ -187,6 +252,10 @@ function makeNode(entry, role, depth) {
     val: baseVal,
     color: roleColor(role),
     external: false,
+    // DF0 enrichment — fall back gracefully on older payloads.
+    params: Array.isArray(sym.params) ? sym.params : [],
+    returns: sym.returns != null ? sym.returns : null,
+    symbolRole: sym.role || null,
   };
 }
 
@@ -239,7 +308,7 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
   var links = [];
   var linkKeys = new Set();
 
-  function addLink(source, target, role, external) {
+  function addLink(source, target, role, external, argLabel) {
     var key = source + '' + target + '' + role;
     if (linkKeys.has(key)) return;
     linkKeys.add(key);
@@ -250,6 +319,7 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
       kind: 'CALLS',
       color: ROLE_EDGE_COLORS[edgeRole] || EDGE_FALLBACK,
       external: !!external,
+      argLabel: argLabel || '',
     });
   }
 
@@ -266,14 +336,28 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
       for (var i = 0; i < frontier.length; i++) {
         var here = frontier[i];
         var neighbors = step(here);
+        // For descendant edges, args live on `here.callees`. For ancestor
+        // edges, args live on the neighbor's callees pointing at `here`.
+        var hereEntry = index.get(here);
+        var hereCallArgs = (role === 'descendant' && hereEntry)
+          ? callArgsFromSym(hereEntry.sym) : {};
         for (var j = 0; j < neighbors.length; j++) {
           var nb = neighbors[j];
           if (!nb) continue;
           var external = isExternalQn(nb, index);
+          var argLabel = '';
+          if (role === 'descendant') {
+            argLabel = hereCallArgs[nb] || '';
+          } else if (role === 'ancestor') {
+            var nbEntry = index.get(nb);
+            if (nbEntry) {
+              argLabel = callArgsFromSym(nbEntry.sym)[here] || '';
+            }
+          }
           if (external) {
             // Terminal leaf: render once, never traverse.
             var fromToExt = edgeFromTo(here, nb);
-            addLink(fromToExt[0], fromToExt[1], role, true);
+            addLink(fromToExt[0], fromToExt[1], role, true, argLabel);
             if (!nodes.has(nb)) {
               nodes.set(nb, makeExternalNode(nb, d));
             }
@@ -282,7 +366,7 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
           // Emit the edge (even if neighbor was already visited via
           // another path — but dedup via linkKeys).
           var fromTo = edgeFromTo(here, nb);
-          addLink(fromTo[0], fromTo[1], role, false);
+          addLink(fromTo[0], fromTo[1], role, false, argLabel);
           if (visited.has(nb)) continue;
           visited.add(nb);
           // Don't downgrade root if it shows up in a cycle.
@@ -387,7 +471,7 @@ function expandNode(state, hld, qn) {
   var addedNodes = new Set();
   var addedLinkKeys = new Set();
 
-  function addLeaf(neighborQn, role, edgePair) {
+  function addLeaf(neighborQn, role, edgePair, argLabel) {
     if (!neighborQn) return;
     var external = isExternalQn(neighborQn, index);
     var key = linkKey(edgePair[0], edgePair[1]);
@@ -401,6 +485,7 @@ function expandNode(state, hld, qn) {
         kind: 'CALLS',
         color: ROLE_EDGE_COLORS[edgeRole] || EDGE_FALLBACK,
         external: external,
+        argLabel: argLabel || '',
       });
     }
     if (state.nodes.has(neighborQn)) {
@@ -420,11 +505,18 @@ function expandNode(state, hld, qn) {
     addedNodes.add(neighborQn);
   }
 
+  // Descendant edges carry args from this symbol's callee_args.
+  // Ancestor edges (caller -> qn) carry args from the caller's
+  // own callee_args list pointing at qn.
+  var ownCallArgs = callArgsFromSym(sym);
   (sym.callers || []).forEach(function (c) {
-    addLeaf(c, 'ancestor', [c, qn]);
+    var cEntry = index.get(c);
+    var argLabel = '';
+    if (cEntry) argLabel = callArgsFromSym(cEntry.sym)[qn] || '';
+    addLeaf(c, 'ancestor', [c, qn], argLabel);
   });
   (sym.callees || []).forEach(function (c) {
-    addLeaf(c, 'descendant', [qn, c]);
+    addLeaf(c, 'descendant', [qn, c], ownCallArgs[c] || '');
   });
 
   state.expansions.set(qn, { addedNodes: addedNodes, addedLinkKeys: addedLinkKeys });
@@ -586,6 +678,149 @@ function filterGrouped(groups, query) {
   return out;
 }
 
+// ---- Role-grouped picker (Change 3 / DF1.5) -------------------------------
+//
+// groupSymbolsByRole(hld) -> [
+//   { role: 'HANDLER',  color: '#fbbf24', modules: [<group>] },
+//   { role: 'SERVICE',  color: '#3b82f6', modules: [...] },
+//   { role: 'COMPONENT',color: '#34d399', modules: [...] },
+//   { role: 'REPO',     color: '#c084fc', modules: [...] },
+//   { role: '(no role)',color: '#8b9ab8', modules: [...] },
+// ]
+// Each <group> has the same shape as groupSymbols() emits, but only the
+// symbols matching the bucket role are retained. Methods inherit their
+// class's role; free functions use their own role; symbols without a
+// recognized role land in the "(no role)" bucket. Buckets render in fixed
+// order so the picker UI has stable headers even when a bucket is empty.
+
+var ROLE_ORDER = ['HANDLER', 'SERVICE', 'COMPONENT', 'REPO', '(no role)'];
+var ROLE_PICKER_COLORS = {
+  'HANDLER':   '#fbbf24', // amber
+  'SERVICE':   '#3b82f6', // blue
+  'COMPONENT': '#34d399', // green
+  'REPO':      '#c084fc', // purple-pink
+  '(no role)': '#8b9ab8', // gray
+};
+
+function normalizeRole(role) {
+  if (!role) return '(no role)';
+  var r = String(role).toUpperCase();
+  if (ROLE_PICKER_COLORS[r]) return r;
+  return '(no role)';
+}
+
+function groupSymbolsByRole(hld) {
+  var modules = (hld && hld.modules) || {};
+  var buckets = {};
+  ROLE_ORDER.forEach(function (r) { buckets[r] = {}; });
+
+  function getModule(role, modQn, mod) {
+    if (!buckets[role][modQn]) {
+      buckets[role][modQn] = {
+        qualname: modQn,
+        file: mod.file || '',
+        language: mod.language || '',
+        classes: {},
+        functions: [],
+      };
+    }
+    return buckets[role][modQn];
+  }
+
+  Object.keys(modules).forEach(function (modQn) {
+    var mod = modules[modQn] || {};
+    var symbols = mod.symbols || [];
+    var classByQn = {};
+    symbols.forEach(function (s) {
+      if (s && s.kind === 'CLASS' && s.qualname) classByQn[s.qualname] = s;
+    });
+
+    symbols.forEach(function (s) {
+      if (!s || !s.qualname) return;
+      // Methods inherit their class's role.
+      var ownerClass = null;
+      if (s.kind !== 'CLASS') {
+        Object.keys(classByQn).forEach(function (cqn) {
+          if (s.qualname.indexOf(cqn + '.') === 0) {
+            if (!ownerClass || cqn.length > ownerClass.qualname.length) {
+              ownerClass = classByQn[cqn];
+            }
+          }
+        });
+      }
+      var roleSrc = ownerClass ? (ownerClass.role || s.role) : s.role;
+      var role = normalizeRole(roleSrc);
+      var modEntry = getModule(role, modQn, mod);
+      var meta = {
+        qualname: s.qualname,
+        name: s.name || s.qualname,
+        kind: s.kind,
+        fan_in: Number(s.fan_in) || 0,
+        fan_out: Number(s.fan_out) || 0,
+      };
+      if (s.kind === 'CLASS') {
+        if (!modEntry.classes[s.qualname]) {
+          modEntry.classes[s.qualname] = {
+            qualname: s.qualname,
+            name: s.name || s.qualname,
+            methods: [],
+          };
+        }
+      } else if (ownerClass) {
+        if (!modEntry.classes[ownerClass.qualname]) {
+          modEntry.classes[ownerClass.qualname] = {
+            qualname: ownerClass.qualname,
+            name: ownerClass.name || ownerClass.qualname,
+            methods: [],
+          };
+        }
+        modEntry.classes[ownerClass.qualname].methods.push(meta);
+      } else {
+        modEntry.functions.push(meta);
+      }
+    });
+  });
+
+  return ROLE_ORDER.map(function (role) {
+    var modMap = buckets[role];
+    var modList = Object.keys(modMap).sort().map(function (mqn) {
+      var m = modMap[mqn];
+      var classList = Object.keys(m.classes).sort().map(function (k) {
+        var c = m.classes[k];
+        c.methods.sort(function (a, b) { return a.name.localeCompare(b.name); });
+        return c;
+      });
+      m.functions.sort(function (a, b) { return a.name.localeCompare(b.name); });
+      return {
+        qualname: m.qualname,
+        file: m.file,
+        language: m.language,
+        classes: classList,
+        functions: m.functions,
+      };
+    });
+    return {
+      role: role,
+      color: ROLE_PICKER_COLORS[role],
+      modules: modList,
+    };
+  });
+}
+
+// Filter a role-grouped tree by query, keeping role buckets that contain
+// at least one match. Reuses filterGrouped() per bucket.
+function filterGroupedByRole(roleGroups, query) {
+  var q = String(query || '').trim();
+  if (!q) return roleGroups;
+  return roleGroups.map(function (rg) {
+    return {
+      role: rg.role,
+      color: rg.color,
+      modules: filterGrouped(rg.modules, q),
+    };
+  });
+}
+
 // ---- Symbol search (top-N matches) ----------------------------------------
 
 function searchSymbols(hld, query, limit) {
@@ -654,7 +889,13 @@ if (typeof window !== 'undefined') {
     snapshotState: snapshotState,
     searchSymbols: searchSymbols,
     groupSymbols: groupSymbols,
+    groupSymbolsByRole: groupSymbolsByRole,
     filterGrouped: filterGrouped,
+    filterGroupedByRole: filterGroupedByRole,
+    formatCallArgs: formatCallArgs,
+    formatSignature: formatSignature,
+    ROLE_ORDER: ROLE_ORDER,
+    ROLE_PICKER_COLORS: ROLE_PICKER_COLORS,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
     kindColor: kindColor,
@@ -674,7 +915,13 @@ if (typeof module !== 'undefined' && module.exports) {
     snapshotState: snapshotState,
     searchSymbols: searchSymbols,
     groupSymbols: groupSymbols,
+    groupSymbolsByRole: groupSymbolsByRole,
     filterGrouped: filterGrouped,
+    filterGroupedByRole: filterGroupedByRole,
+    formatCallArgs: formatCallArgs,
+    formatSignature: formatSignature,
+    ROLE_ORDER: ROLE_ORDER,
+    ROLE_PICKER_COLORS: ROLE_PICKER_COLORS,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
     kindColor: kindColor,
