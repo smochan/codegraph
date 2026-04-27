@@ -572,8 +572,12 @@
   // ---- Color & kind legend (Item 3) -------------------------------------
   var LEGEND_KEY = 'cg-3d-legend-collapsed';
   function legendCollapsed() {
-    try { return window.localStorage && window.localStorage.getItem(LEGEND_KEY) === '1'; }
-    catch (e) { return false; }
+    // Change 5: legend is expanded by default. Only collapsed when the
+    // user has explicitly stored '1'. Absence of the key => expanded.
+    try {
+      if (!window.localStorage) return false;
+      return window.localStorage.getItem(LEGEND_KEY) === '1';
+    } catch (e) { return false; }
   }
   function setLegendCollapsed(v) {
     try { window.localStorage && window.localStorage.setItem(LEGEND_KEY, v ? '1' : '0'); }
@@ -590,11 +594,19 @@
       '</button>',
       '<div class="g3d-legend-body">',
       '<div class="g3d-legend-section">',
-      '<div class="g3d-legend-title">Roles</div>',
+      '<div class="g3d-legend-title">Flow</div>',
       legendDot('#fbbf24', 'Ancestor (caller)'),
       legendDot('#22d3ee', 'Descendant (callee)'),
       legendDot('#a78bfa', 'Current focus'),
       legendDotOutline('External / third-party'),
+      '</div>',
+      '<div class="g3d-legend-section">',
+      '<div class="g3d-legend-title">Role</div>',
+      legendDot('#fbbf24', 'HANDLER'),
+      legendDot('#3b82f6', 'SERVICE'),
+      legendDot('#34d399', 'COMPONENT'),
+      legendDot('#c084fc', 'REPO'),
+      legendDot('#8b9ab8', 'no role'),
       '</div>',
       '<div class="g3d-legend-section">',
       '<div class="g3d-legend-title">Kinds</div>',
