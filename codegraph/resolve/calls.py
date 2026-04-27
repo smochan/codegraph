@@ -105,6 +105,126 @@ class _Index:
                 self.module_by_file[node.file] = node
 
 
+def _attr_type_names(
+    class_node: Node, attr_head: str
+) -> list[str]:
+    """Return the list of declared type names for ``self.<attr_head>``.
+
+    Tolerates the legacy schema where ``attr_types[name]`` was a single
+    string rather than a list (R2). Empty list if the attribute is not
+    annotated.
+    """
+    attr_types = class_node.metadata.get("attr_types")
+    if not isinstance(attr_types, dict):
+        return []
+    raw = attr_types.get(attr_head)
+    if isinstance(raw, str):
+        return [raw] if raw else []
+    if isinstance(raw, list):
+        return [t for t in raw if isinstance(t, str) and t]
+    return []
+
+
+def _resolve_self_attr_targets(
+    class_qual: str,
+    head: str,
+    tail: str,
+    index: _Index,
+    imports_for_module: dict[str, dict[str, str]],
+    src_module: Node | None,
+) -> list[Node]:
+    """Resolve ``self.<head>.<tail>`` to one or more candidate nodes.
+
+    Honors a list of candidate type names declared on the enclosing class
+    (R3 union annotation or if/else branch assignment in ``__init__``)
+    and returns one resolved node per type that owns ``tail``.
+    """
+    class_nodes = index.by_qualname.get(class_qual, [])
+    if not class_nodes:
+        return []
+    type_names = _attr_type_names(class_nodes[0], head)
+    if not type_names:
+        return []
+    out: list[Node] = []
+    seen: set[str] = set()
+    for type_name in type_names:
+        node = _resolve_typed_attr_tail(
+            type_name, tail, index, imports_for_module, src_module,
+        )
+        if node is not None and node.id not in seen:
+            seen.add(node.id)
+            out.append(node)
+    return out
+
+
+def _resolve_typed_attr_tail(
+    type_name: str,
+    tail: str,
+    index: _Index,
+    imports_for_module: dict[str, dict[str, str]],
+    src_module: Node | None,
+) -> Node | None:
+    """Resolve ``<type_name>.<tail>`` via fully-qualified, import, or tail."""
+    # 1) Fully-qualified.
+    full = f"{type_name}.{tail}"
+    hit = index.by_qualname.get(full, [])
+    if hit:
+        return hit[0]
+    # 2) Import binding from the same module.
+    if src_module is not None:
+        bind = imports_for_module.get(src_module.id, {})
+        bound = bind.get(type_name)
+        if bound:
+            hit = index.by_qualname.get(f"{bound}.{tail}", [])
+            if hit:
+                return hit[0]
+    # 3) Tail-match: any class whose qualname ends with ``type_name``.
+    for qn in index.by_qualname:
+        if qn == type_name or qn.endswith("." + type_name):
+            hit = index.by_qualname.get(f"{qn}.{tail}", [])
+            if hit:
+                return hit[0]
+    return None
+
+
+def _try_multi_self_attr(
+    target: str,
+    src_node: Node | None,
+    edge_kind: EdgeKind,
+    index: _Index,
+    imports_for_module: dict[str, dict[str, str]],
+) -> list[Node]:
+    """Return >=2 candidate nodes when ``self.X.tail`` has a union type.
+
+    Returns an empty list when the target is not a self-attribute chain,
+    when the enclosing class doesn't declare a union for ``X``, or when
+    only zero/one type resolves. The single-candidate path is left to
+    the regular ``_resolve_target`` logic so we don't double-resolve.
+    """
+    if edge_kind != EdgeKind.CALLS:
+        return []
+    if src_node is None or src_node.kind != NodeKind.METHOD:
+        return []
+    cleaned = _normalize_target(target)
+    if not cleaned.startswith("self."):
+        return []
+    rest = cleaned[len("self."):]
+    head, _, tail = rest.partition(".")
+    if not tail:
+        return []
+    parts = src_node.qualname.split(".")
+    if len(parts) < 2:
+        return []
+    class_qual = ".".join(parts[:-1])
+    src_module = index.module_by_file.get(src_node.file)
+    multi = _resolve_self_attr_targets(
+        class_qual, head, tail, index, imports_for_module, src_module,
+    )
+    if len(multi) < 2:
+        return []
+    return multi
+
+
 def _resolve_target(
     target: str,
     src_node: Node | None,
@@ -144,44 +264,16 @@ def _resolve_target(
                 # Dotted tail: try resolving via class-level type annotation
                 # (\`name: TypeName\` in the class body). If the enclosing
                 # class declares ``head: TypeName``, look up
-                # ``TypeName.<tail>`` against in-repo types.
+                # ``TypeName.<tail>`` against in-repo types. Multi-type
+                # candidates (R3 union / if-else) are returned via
+                # ``_resolve_self_attr_targets`` instead.
                 if tail:
-                    class_node = index.by_qualname.get(class_qual, [])
-                    if class_node:
-                        attr_types = class_node[0].metadata.get("attr_types")
-                        if isinstance(attr_types, dict):
-                            type_name = attr_types.get(head)
-                            if isinstance(type_name, str) and type_name:
-                                # 1) Try the type as a fully-qualified name.
-                                full = f"{type_name}.{tail}"
-                                hit = index.by_qualname.get(full, [])
-                                if hit:
-                                    return hit[0]
-                                # 2) Try resolving the type via an import
-                                # binding from the same module.
-                                if src_module is not None:
-                                    bind = imports_for_module.get(
-                                        src_module.id, {}
-                                    )
-                                    bound = bind.get(type_name)
-                                    if bound:
-                                        hit = index.by_qualname.get(
-                                            f"{bound}.{tail}", []
-                                        )
-                                        if hit:
-                                            return hit[0]
-                                # 3) Tail-match: any class whose qualname
-                                # ends with the type name and which owns
-                                # ``tail``.
-                                for qn, _nodes in index.by_qualname.items():
-                                    if qn == type_name or qn.endswith(
-                                        "." + type_name
-                                    ):
-                                        hit = index.by_qualname.get(
-                                            f"{qn}.{tail}", []
-                                        )
-                                        if hit:
-                                            return hit[0]
+                    multi = _resolve_self_attr_targets(
+                        class_qual, head, tail, index,
+                        imports_for_module, src_module,
+                    )
+                    if multi:
+                        return multi[0]
                 # Dotted tail: try resolving just the first segment as a
                 # method/attribute on the enclosing class.
                 if head != rest:
@@ -322,6 +414,35 @@ def resolve_unresolved_edges(store: SQLiteGraphStore) -> ResolveStats:
             else _strip_unresolved(edge.dst)
         )
         src_node = index.by_id.get(edge.src)
+
+        # R3: ``self.X.tail`` may bind to multiple class types when the
+        # enclosing class declares a union annotation or assigns the
+        # attribute in branching ``__init__`` paths. We emit one edge per
+        # candidate so the dead-code analyzer can see all reachable
+        # implementations.
+        multi = _try_multi_self_attr(
+            target, src_node, edge.kind, index, bindings,
+        )
+        if multi:
+            deletions.append((edge.src, edge.dst, edge.kind))
+            for hit in multi:
+                if hit.id == edge.src:
+                    continue
+                new_edges.append(
+                    Edge(
+                        src=edge.src,
+                        dst=hit.id,
+                        kind=edge.kind,
+                        file=edge.file,
+                        line=edge.line,
+                        metadata={
+                            **edge.metadata, "resolved_from": edge.dst,
+                        },
+                    )
+                )
+            stats.resolved += 1
+            continue
+
         resolved = _resolve_target(target, src_node, index, bindings)
         if resolved is None or resolved.id == edge.src:
             stats.unresolved += 1
