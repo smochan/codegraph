@@ -9,6 +9,7 @@ from codegraph.analysis._common import (
     REFERENCE_EDGE_KINDS,
     _kind_str,
     in_test_module,
+    is_excluded_path,
 )
 from codegraph.graph.schema import EdgeKind, NodeKind
 
@@ -19,13 +20,6 @@ _ENTRYPOINT_NAMES: frozenset[str] = frozenset({"main", "__main__"})
 
 _PROPERTY_DECORATORS: tuple[str, ...] = (
     "@property", "@cached_property", "functools.cached_property",
-)
-
-_EXCLUDED_PATH_FRAGMENTS: tuple[str, ...] = (
-    "tests/fixtures/",
-    "tests\\fixtures\\",
-    "/static/",
-    "\\static\\",
 )
 
 
@@ -39,12 +33,6 @@ def _has_property_decorator(metadata: dict[str, object]) -> bool:
             if marker in text:
                 return True
     return False
-
-
-def _is_excluded_path(file_path: str) -> bool:
-    if not file_path:
-        return False
-    return any(fragment in file_path for fragment in _EXCLUDED_PATH_FRAGMENTS)
 
 
 def _class_has_inherits(graph: nx.MultiDiGraph, class_id: str) -> bool:
@@ -133,7 +121,7 @@ def find_dead_code(
             continue
         # Generated/static frontend assets and test fixtures don't have
         # traceable call graphs — exclude them from dead-code detection.
-        if _is_excluded_path(str(attrs.get("file") or "")):
+        if is_excluded_path(str(attrs.get("file") or "")):
             continue
         # Polymorphic overrides on classes that inherit have no static
         # incoming CALL edge (dispatch is via the base class).

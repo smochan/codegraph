@@ -5,7 +5,11 @@ from dataclasses import dataclass
 
 import networkx as nx
 
-from codegraph.analysis._common import _kind_str, in_test_module
+from codegraph.analysis._common import (
+    _kind_str,
+    in_test_module,
+    is_excluded_path,
+)
 from codegraph.graph.schema import EdgeKind, NodeKind
 
 _CANDIDATE_KINDS: frozenset[str] = frozenset(
@@ -39,6 +43,10 @@ def find_untested(graph: nx.MultiDiGraph) -> list[UntestedNode]:
         if name.startswith("__") and name.endswith("__"):
             continue
         if in_test_module(graph, nid):
+            continue
+        # Skip test fixtures and static frontend assets — same exclusion as
+        # the dead-code analyzer.
+        if is_excluded_path(str(attrs.get("file") or "")):
             continue
         incoming = 0
         from_test = 0

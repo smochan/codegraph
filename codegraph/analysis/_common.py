@@ -23,6 +23,25 @@ REFERENCE_EDGE_KINDS: frozenset[str] = frozenset(
 )
 
 
+EXCLUDED_PATH_FRAGMENTS: tuple[str, ...] = (
+    "tests/fixtures/",
+    "tests\\fixtures\\",
+    "/static/",
+    "\\static\\",
+)
+
+
+def is_excluded_path(file_path: str) -> bool:
+    """True iff the file path is under a directory excluded from analysis.
+
+    Test fixtures and static frontend assets don't have traceable call graphs
+    and should not be analysed for dead-code or untested-symbol detection.
+    """
+    if not file_path:
+        return False
+    return any(fragment in file_path for fragment in EXCLUDED_PATH_FRAGMENTS)
+
+
 def in_test_module(graph: nx.MultiDiGraph, node_id: str) -> bool:
     """True iff the node is in a file whose MODULE node is marked is_test."""
     attrs = graph.nodes.get(node_id) or {}
