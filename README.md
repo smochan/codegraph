@@ -169,6 +169,37 @@ retrieval.
 
 ---
 
+## How codegraph collects context (vs. the alternatives)
+
+Most "AI for code" tooling sits in one of five camps. Each has a different
+shape of strength and a different shape of blind-spot.
+
+| Approach | Examples | Strength | Blind-spot |
+|---|---|---|---|
+| **Embedding retrieval** | Cursor, Cody, Continue, code-review-graph | Prose, comments, docstrings; language-agnostic | Structurally blind — name similarity ≠ "calls X" |
+| **AST / tree-sitter graph** | **codegraph**, RepoGraph, GitNexus | Exact call/import edges; deterministic | Misses prose; one parser per language |
+| **LSP / compiler-grade** | Sourcegraph SCIP | Real types, scope-aware | Slow; one server per language; complex |
+| **Repo map / outline** | Aider `repomap.py` | Lightweight orientation | No edge traversal — model still has to ask for files |
+| **Grep + file-tree** | Bare Claude Code, Codex without MCP | Trivial | No semantics; model wastes turns guessing |
+
+**Where codegraph wins:** anything involving call relationships. *"Trace this
+function's args through the system." "Show HANDLERs without test coverage."
+"Did this refactor break a caller?" "What's the blast radius?"* The graph
+answers these with structural certainty, not similarity scores. DF0 (per-call-site
+args) and DF1.5 (HANDLER/SERVICE/COMPONENT/REPO classification) are differentiators
+inside the graph-based camp — RepoGraph and GitNexus don't have either.
+
+**Where codegraph loses:** *"Find the function that handles refunds"* if the
+word `refunds` only appears in a docstring. *"Why is this written this way?"*
+We don't index prose — embedding tools handle that better.
+
+**Where they're complementary:** the right architecture for a real product is
+**graph + embeddings in the same MCP loop**, not one or the other. Cursor uses
+both internally. The roadmap below puts an open-source embedding layer in v0.3
+so codegraph can offer the same hybrid retrieval, locally, with no API keys.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -326,7 +357,16 @@ See [`.planning/MASTER_PLAN.md`](.planning/MASTER_PLAN.md) and
   confidence scores), DF4 (`dataflow trace` CLI + MCP tool + dashboard Sankey).
   See [`.planning/PLAN_DATAFLOW.md`](.planning/PLAN_DATAFLOW.md) and
   [`.planning/PLAN_V0_2_PARAMETERS.md`](.planning/PLAN_V0_2_PARAMETERS.md).
-- **v0.3+** — Mypy / Pyright type inference integration; more languages.
+- **v0.3 — local embedding layer.** Add `codegraph embed` (chunks + open-weight
+  model → on-disk vector store; default candidates: `CodeRankEmbed` (Apache 2.0,
+  ~140 MB, code-tuned) or `nomic-embed-v2`, with `LanceDB` as the store).
+  New MCP tools: `semantic_search(query, k)` and `hybrid_search(query, role=…, k)`
+  — embedding similarity reranked by graph distance. End-to-end install stays
+  pure-pip, no API keys, no Docker. This closes the prose / semantic gap from
+  the comparison above without giving up structural correctness.
+- **v0.3+** — Mypy / Pyright type inference integration; more languages
+  (Rust, Go, C# via tree-sitter); benchmark publication
+  ([`.planning/RESEARCH_BENCHMARKS.md`](.planning/RESEARCH_BENCHMARKS.md)).
 - **Benchmark work (deferred until 0.1.0 lands publicly)** —
   [`.planning/RESEARCH_BENCHMARKS.md`](.planning/RESEARCH_BENCHMARKS.md) lays
   out a CrossCodeEval pre-flight (~$50, hours) and a SWE-bench Lite +
