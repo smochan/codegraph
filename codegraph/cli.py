@@ -1057,6 +1057,118 @@ def hook_uninstall(
         )
 
 
+@app.command()
+def embed(
+    model: str = typer.Option(
+        "nomic-ai/CodeRankEmbed",
+        "--model",
+        help="HuggingFace model id (default: nomic-ai/CodeRankEmbed).",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Rebuild the index from scratch."
+    ),
+    batch_size: int = typer.Option(
+        32, "--batch-size", help="Embedding batch size."
+    ),
+) -> None:
+    """Build (or refresh) the local embeddings index."""
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
+
+    repo_root = Path.cwd()
+    data_dir = _get_data_dir(repo_root)
+    db_path = data_dir / "graph.db"
+    if not db_path.exists():
+        console.print(
+            "[yellow]No graph found. "
+            "Run [bold]codegraph build[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    try:
+        from codegraph.embed.chunker import chunk_repo
+        from codegraph.embed.embedder import Embedder, MissingDependencyError
+        from codegraph.embed.store import EmbeddingStore, StoredChunk
+    except ImportError as exc:
+        console.print(
+            "[red]error:[/red] embeddings dependencies missing.\n"
+            "Install with: [bold]pip install -e \".[embed]\"[/bold]"
+        )
+        raise typer.Exit(1) from exc
+
+    chunks = list(chunk_repo(repo_root, db_path=db_path))
+    console.print(f"[bold]Embedding[/bold] {len(chunks)} chunks with {model}...")
+
+    try:
+        embedder = Embedder(model)
+    except MissingDependencyError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold]embedding[/bold]"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task_id = progress.add_task("embed", total=max(1, len(chunks)))
+            texts = [c.text for c in chunks]
+            vectors: list[list[float]] = []
+            if texts:
+                # Batch so we can update progress.
+                for i in range(0, len(texts), batch_size):
+                    batch = texts[i : i + batch_size]
+                    vectors.extend(embedder.embed(batch, batch_size=batch_size))
+                    progress.update(task_id, advance=len(batch))
+            else:
+                progress.update(task_id, advance=1)
+
+        rows: list[StoredChunk] = []
+        dim = len(vectors[0]) if vectors else 768
+        for c, v in zip(chunks, vectors, strict=False):
+            rows.append(
+                StoredChunk(
+                    id=c.id,
+                    qualname=c.qualname,
+                    file=c.file,
+                    line_start=c.line_start,
+                    line_end=c.line_end,
+                    kind=c.kind,
+                    role=c.role,
+                    text=c.text,
+                    vector=v,
+                )
+            )
+
+        store = EmbeddingStore(data_dir, dim=dim)
+        if force:
+            store.replace_all(rows)
+        else:
+            store.upsert(rows)
+    except MissingDependencyError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Embeddings Summary")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", justify="right")
+    table.add_row("Chunks indexed", str(len(rows)))
+    table.add_row("Model", model)
+    table.add_row("Dim", str(dim))
+    table.add_row("Backend", store.backend_name)
+    table.add_row("On-disk", f"{store.size_bytes()} bytes")
+    console.print(table)
+
+
 @mcp_app.command("serve")
 def mcp_serve(
     db: str | None = typer.Option(

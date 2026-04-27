@@ -309,7 +309,38 @@ Inside any of these clients, you can ask things like:
 
 The available tools are: `find_symbol` (now with a `role` filter),
 `callers`, `callees`, `blast_radius`, `subgraph`, `dead_code`, `cycles`,
-`untested`, `hotspots`, `metrics`.
+`untested`, `hotspots`, `metrics`, plus v0.3's `semantic_search` and
+`hybrid_search`.
+
+### Hybrid retrieval (v0.3)
+
+Structural graphs are great at "who calls this" and "what depends on this",
+but they don't answer "show me code that handles password reset" — that's a
+prose / semantics question. v0.3 adds an opt-in local embedding layer so
+codegraph covers both retrieval styles.
+
+```bash
+pip install -e ".[embed]"   # pulls sentence-transformers + lancedb
+codegraph build              # graph first
+codegraph embed              # chunks + embeds + writes .codegraph/embeddings.lance
+```
+
+The default model is [`nomic-ai/CodeRankEmbed`](https://huggingface.co/nomic-ai/CodeRankEmbed)
+(Apache 2.0, ~140 MB, 768-dim, code-tuned). Override with `--model` for any
+HuggingFace sentence-transformer. Vectors land in `.codegraph/embeddings.lance`
+alongside the graph DB.
+
+Two new MCP tools come online once the index exists:
+
+- **`semantic_search(query, k=5)`** — pure cosine similarity over the index.
+  Returns `[{qualname, file, line, kind, role, score, text_snippet}]`.
+- **`hybrid_search(query, k=5, role=None, focus_qualname=None)`** — same
+  ranking, optionally filtered by role (`HANDLER` / `SERVICE` / `COMPONENT` /
+  `REPO`) and reranked by graph distance from `focus_qualname` using
+  `final_score = 0.6 · cosine + 0.4 · 1/(1+hops)`.
+
+Everything runs locally — no API keys, no Docker. If the index is missing,
+both tools return `{"error": "no embedding index — run `codegraph embed` first"}`.
 
 ---
 
@@ -357,13 +388,15 @@ See [`.planning/MASTER_PLAN.md`](.planning/MASTER_PLAN.md) and
   confidence scores), DF4 (`dataflow trace` CLI + MCP tool + dashboard Sankey).
   See [`.planning/PLAN_DATAFLOW.md`](.planning/PLAN_DATAFLOW.md) and
   [`.planning/PLAN_V0_2_PARAMETERS.md`](.planning/PLAN_V0_2_PARAMETERS.md).
-- **v0.3 — local embedding layer.** Add `codegraph embed` (chunks + open-weight
-  model → on-disk vector store; default candidates: `CodeRankEmbed` (Apache 2.0,
-  ~140 MB, code-tuned) or `nomic-embed-v2`, with `LanceDB` as the store).
-  New MCP tools: `semantic_search(query, k)` and `hybrid_search(query, role=…, k)`
-  — embedding similarity reranked by graph distance. End-to-end install stays
-  pure-pip, no API keys, no Docker. This closes the prose / semantic gap from
-  the comparison above without giving up structural correctness.
+- **v0.3 — local embedding layer (shipped).** `codegraph embed` chunks the
+  graph at function/method/class boundaries, embeds with an open-weight model
+  (default: `nomic-ai/CodeRankEmbed`, Apache 2.0, ~140 MB, 768-dim, code-tuned),
+  and writes a LanceDB index to `.codegraph/embeddings.lance`. New MCP tools
+  `semantic_search(query, k)` and `hybrid_search(query, k, role=…, focus_qualname=…)`
+  blend embedding similarity with graph distance (`0.6 · cosine + 0.4 ·
+  1/(1+hops)`). End-to-end install stays pure-pip, no API keys, no Docker.
+  This closes the prose / semantic gap from the comparison above without
+  giving up structural correctness.
 - **v0.3+** — Mypy / Pyright type inference integration; more languages
   (Rust, Go, C# via tree-sitter); benchmark publication
   ([`.planning/RESEARCH_BENCHMARKS.md`](.planning/RESEARCH_BENCHMARKS.md)).

@@ -24,6 +24,8 @@ EXPECTED_TOOLS = {
     "untested",
     "hotspots",
     "metrics",
+    "semantic_search",
+    "hybrid_search",
 }
 
 
