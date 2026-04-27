@@ -235,6 +235,226 @@ def _extract_call_args(
     return args, kwargs
 
 
+# --- DF1: HTTP route + SQLAlchemy detection ---------------------------
+#
+# Patterns are regex-based on the raw decorator / call text. Tree-sitter
+# gives us reliable syntactic boundaries; we lean on regex for the inner
+# semantic shape (HTTP method names, model arguments) since the surface
+# vocabulary is small and well-known.
+
+# Recognised HTTP verbs / route helpers across FastAPI, Flask, aiohttp.
+_HTTP_VERBS: tuple[str, ...] = (
+    "get", "post", "put", "delete", "patch",
+    "head", "options", "trace", "websocket",
+)
+
+# Decorator forms:
+#   @<router>.<verb>("/path", ...)
+#   @<router>.<verb>('/path', ...)
+# router is any identifier (app, router, blueprint, bp, ...).
+_ROUTE_VERB_RE = re.compile(
+    r"@\s*(?P<router>[\w.]+)\.(?P<verb>"
+    + "|".join(_HTTP_VERBS)
+    + r")\s*\(\s*['\"](?P<path>[^'\"]+)['\"]"
+)
+# @<router>.route("/path", methods=[...]) — Flask shape.
+_ROUTE_GENERIC_RE = re.compile(
+    r"@\s*(?P<router>[\w.]+)\.route\s*\(\s*['\"](?P<path>[^'\"]+)['\"]"
+)
+_METHODS_KW_RE = re.compile(
+    r"methods\s*=\s*\[(?P<methods>[^\]]*)\]"
+)
+_METHOD_TOKEN_RE = re.compile(r"['\"]([A-Za-z]+)['\"]")
+
+# FastAPI-style routers vs Flask app/blueprint heuristic for `framework`.
+_FASTAPI_ROUTER_TOKENS: frozenset[str] = frozenset({
+    "router", "api_router", "apirouter",
+})
+_FLASK_ROUTER_TOKENS: frozenset[str] = frozenset({
+    "blueprint", "bp", "blueprints",
+})
+
+
+def _classify_framework(router_name: str, has_methods_kw: bool) -> str:
+    """Best-effort framework guess for ROUTE edge metadata.
+
+    Heuristics:
+    * ``methods=[...]`` keyword is Flask-shaped; FastAPI's per-verb
+      decorators don't accept it.
+    * Names containing ``router`` lean FastAPI; ``blueprint``/``bp``
+      lean Flask. Fallback is ``fastapi`` since it is by far the most
+      common modern Python web framework.
+    """
+    head = router_name.rsplit(".", 1)[-1].lower()
+    if has_methods_kw:
+        return "flask"
+    if head in _FLASK_ROUTER_TOKENS:
+        return "flask"
+    if head in _FASTAPI_ROUTER_TOKENS:
+        return "fastapi"
+    return "fastapi"
+
+
+def _extract_route_specs(
+    decorators: list[str],
+) -> list[dict[str, str]]:
+    """Return one dict per HTTP route described by the decorators.
+
+    Flask's ``@app.route("/x", methods=["GET", "POST"])`` produces ONE
+    dict per method (so caller emits one ROUTE edge per method).
+    FastAPI's ``@app.get("/x")`` produces a single dict.
+
+    Each dict has keys: ``method`` (uppercase), ``path``, ``framework``,
+    ``router`` (raw router-variable text).
+    """
+    out: list[dict[str, str]] = []
+    for raw in decorators:
+        text = raw.strip()
+        # @<router>.route(...) — handle FIRST so methods kw is honored,
+        # otherwise the verb regex would never match (no verb in decl).
+        m = _ROUTE_GENERIC_RE.search(text)
+        if m:
+            router = m.group("router")
+            path = m.group("path")
+            framework = _classify_framework(router, has_methods_kw=True)
+            mm = _METHODS_KW_RE.search(text)
+            if mm:
+                methods = [
+                    tok.upper()
+                    for tok in _METHOD_TOKEN_RE.findall(mm.group("methods"))
+                ]
+            else:
+                # Default Flask method when methods= is absent.
+                methods = ["GET"]
+            for method in methods:
+                out.append({
+                    "method": method,
+                    "path": path,
+                    "framework": framework,
+                    "router": router,
+                })
+            continue
+        # @<router>.<verb>(path, ...)
+        m2 = _ROUTE_VERB_RE.search(text)
+        if m2:
+            router = m2.group("router")
+            verb = m2.group("verb")
+            path = m2.group("path")
+            framework = _classify_framework(router, has_methods_kw=False)
+            out.append({
+                "method": verb.upper(),
+                "path": path,
+                "framework": framework,
+                "router": router,
+            })
+    return out
+
+
+# --- SQLAlchemy detection ----------------------------------------------
+#
+# We detect data-access patterns at parse time and emit READS_FROM /
+# WRITES_TO edges with ``dst="unresolved::<ModelName>"``. The post-build
+# resolver rewrites these to real CLASS node ids when the model is in
+# repo; any that remain unresolved are dropped (per DF1 spec).
+
+# Outer verbs we recognise on session/db/conn.
+_SQL_READ_OUTER: frozenset[str] = frozenset({"query", "get", "scalar", "scalars"})
+_SQL_WRITE_OUTER: frozenset[str] = frozenset({"add", "add_all", "delete", "merge"})
+# Inner verbs in session.execute(<inner>(Model)).
+_SQL_READ_INNER: frozenset[str] = frozenset({"select"})
+_SQL_WRITE_INNER: frozenset[str] = frozenset({"insert", "update", "delete"})
+
+# `session`, `db.session`, `db`, `conn`, `cursor`, ... — left-most token
+# of a chain that suggests an ORM/connection root. We accept any
+# identifier and rely on ``execute``/``query``/``add``/etc. as the verb
+# trigger, but record the chain's last identifier in metadata.
+_SESSION_HEAD_TOKENS: frozenset[str] = frozenset({
+    "session", "db", "conn", "connection", "cursor",
+})
+
+
+def _strip_call_suffix(name: str) -> str:
+    """Drop `()` and trailing chained calls — `Foo().bar` -> `Foo.bar`."""
+    out: list[str] = []
+    depth = 0
+    for ch in name:
+        if ch == "(":
+            depth += 1
+            continue
+        if ch == ")":
+            if depth > 0:
+                depth -= 1
+            continue
+        if depth == 0:
+            out.append(ch)
+    return "".join(out).strip().rstrip(".")
+
+
+def _is_session_chain(target: str) -> bool:
+    """Return True if the dotted chain's left-most segment looks like a
+    session/db handle (``session.query``, ``db.session.query``, ...)."""
+    if not target:
+        return False
+    head = target.split(".", 1)[0].lower()
+    return head in _SESSION_HEAD_TOKENS
+
+
+def _unwrap_to_root_call(node: tree_sitter.Node) -> tree_sitter.Node | None:
+    """Follow ``call.function -> attribute.object`` chains down to the
+    leftmost ``call`` node.
+
+    Used for ``select(Model).where(...).order_by(...)`` style chains so we
+    extract ``select(Model)``'s argument, not the outer chained call's.
+    """
+    cur: tree_sitter.Node | None = node
+    while cur is not None and cur.type == "call":
+        func_child = cur.child_by_field_name("function")
+        # If function is itself an attribute whose object is a call, the
+        # inner call is the "root"; descend.
+        if (
+            func_child is not None
+            and func_child.type == "attribute"
+        ):
+            obj = func_child.child_by_field_name("object")
+            if obj is not None and obj.type == "call":
+                cur = obj
+                continue
+        break
+    return cur
+
+
+def _model_name_from_call_arg(arg_text: str) -> str | None:
+    """Extract a Model name from a call-argument expression.
+
+    Handles:
+    * ``User`` — bare identifier
+    * ``User(...)`` — constructor call (returns ``User``)
+    * ``[User(...), Other()]`` — list with a Model constructor (returns
+      ``User``, the first model)
+    * ``some_chain.User`` — last segment
+    """
+    if not arg_text:
+        return None
+    text = arg_text.strip()
+    if text.startswith("[") and text.endswith("]"):
+        # ``add_all([User(...), ...])`` — pick the first PascalCase token.
+        inner = text[1:-1]
+        tokens: list[str] = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", inner)
+        for tok in tokens:
+            if tok and tok[0].isupper():
+                return tok
+        return None
+    # Drop call args / parens.
+    no_parens = _strip_call_suffix(text)
+    # Last identifier segment after dotting.
+    leaf = no_parens.rsplit(".", 1)[-1]
+    if not leaf or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", leaf):
+        return None
+    if not leaf[0].isupper():
+        return None
+    return leaf
+
+
 def _get_function_decorators(func_node: tree_sitter.Node, src: bytes) -> list[str]:
     """Collect decorator strings for a function/class definition.
 
@@ -636,8 +856,20 @@ class PythonExtractor(ExtractorBase):
 
         self._emit_decorator_calls(node, rel, func_id, src, edges)
 
+        # DF1 — HTTP route extraction. One ROUTE edge per (method, path);
+        # Flask's ``methods=[...]`` expands to multiple edges.
+        for spec in _extract_route_specs(decorators):
+            self._emit_route_edge(
+                spec, func_id, rel, node.start_point[0] + 1,
+                nodes, edges,
+            )
+
         if body is not None:
             self._collect_calls(body, rel, func_id, src, edges)
+            # DF1 — SQLAlchemy READS_FROM / WRITES_TO. Walk the body for
+            # ORM session calls; emits ``unresolved::Model`` edges that
+            # the post-build resolver rewrites to real CLASS ids.
+            self._collect_sql_io(body, rel, func_id, src, edges)
             # Visit nested defs so their bodies and calls are not lost.
             # The innermost named function owns its calls — that mirrors
             # the runtime attribution and matches what users expect when
@@ -798,6 +1030,240 @@ class PythonExtractor(ExtractorBase):
                                 "kwargs": kwargs,
                             },
                         ))
+
+    # --- DF1: route + SQL emission helpers ----------------------------
+
+    def _emit_route_edge(
+        self,
+        spec: dict[str, str],
+        func_id: str,
+        rel: str,
+        line: int,
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> None:
+        """Create a synthetic route node + ROUTE edge from handler.
+
+        The synthetic node uses ``NodeKind.VARIABLE`` (sentinel — see
+        ``metadata.synthetic_kind``). Its id encodes ``METHOD::PATH`` so
+        multiple handlers binding the same route share the destination.
+        """
+        method = spec["method"]
+        path = spec["path"]
+        synthetic_qualname = f"route::{method}::{path}"
+        synthetic_id = f"route::{method}::{path}"
+        # Avoid duplicate node emission when multiple handlers in the
+        # same file declare the same route — caller reuses the same id.
+        if not any(n.id == synthetic_id for n in nodes):
+            nodes.append(Node(
+                id=synthetic_id,
+                kind=NodeKind.VARIABLE,
+                name=f"{method} {path}",
+                qualname=synthetic_qualname,
+                file=rel,
+                line_start=line,
+                line_end=line,
+                language="python",
+                metadata={
+                    "synthetic_kind": "ROUTE",
+                    "method": method,
+                    "path": path,
+                    "framework": spec["framework"],
+                },
+            ))
+        edges.append(Edge(
+            src=func_id,
+            dst=synthetic_id,
+            kind=EdgeKind.ROUTE,
+            file=rel,
+            line=line,
+            metadata={
+                "method": method,
+                "path": path,
+                "framework": spec["framework"],
+            },
+        ))
+
+    def _collect_sql_io(
+        self,
+        body: tree_sitter.Node,
+        rel: str,
+        scope_id: str,
+        src: bytes,
+        edges: list[Edge],
+    ) -> None:
+        """Walk a function body for SQLAlchemy data-access patterns.
+
+        Emits ``READS_FROM`` / ``WRITES_TO`` edges with
+        ``dst="unresolved::<ModelName>"`` so the post-build resolver can
+        rewrite them to real CLASS node ids by qualname/tail match.
+        """
+        stack: list[tree_sitter.Node] = list(body.children)
+        while stack:
+            child = stack.pop()
+            if child.type == "call":
+                self._maybe_emit_sql_edge(child, rel, scope_id, src, edges)
+            # Stop at nested defs — their bodies own their own edges.
+            if child.type not in (
+                "class_definition", "function_definition", "decorator",
+            ):
+                stack.extend(child.children)
+
+    def _maybe_emit_sql_edge(
+        self,
+        call_node: tree_sitter.Node,
+        rel: str,
+        scope_id: str,
+        src: bytes,
+        edges: list[Edge],
+    ) -> None:
+        """Inspect one ``call`` AST node for an SQLAlchemy data-op."""
+        func_child = call_node.child_by_field_name("function")
+        if func_child is None:
+            return
+        target = node_text(func_child, src)
+        # `Model.query.filter(...)` or `Model.query` — Flask-SQLAlchemy.
+        m_query = re.match(
+            r"^([A-Z][\w]*)\.query(?:\.|$)", target,
+        )
+        if m_query:
+            model = m_query.group(1)
+            edges.append(Edge(
+                src=scope_id,
+                dst=f"unresolved::{model}",
+                kind=EdgeKind.READS_FROM,
+                file=rel,
+                line=call_node.start_point[0] + 1,
+                metadata={
+                    "operation": "select",
+                    "via": "Model.query",
+                    "model_name": model,
+                    "target_name": model,
+                },
+            ))
+            return
+        # session-style chain — `session.query(Model)`, `db.session.add(...)`.
+        if not _is_session_chain(target):
+            return
+        verb = target.rsplit(".", 1)[-1]
+        # session.query(Model) / session.get(Model, id) / .scalars(...)
+        if verb in _SQL_READ_OUTER:
+            self._emit_sql_from_first_arg(
+                call_node, rel, scope_id, src, edges,
+                kind=EdgeKind.READS_FROM, operation="select",
+                via=f"session.{verb}",
+            )
+            return
+        if verb in _SQL_WRITE_OUTER:
+            op = "delete" if verb == "delete" else "insert"
+            self._emit_sql_from_first_arg(
+                call_node, rel, scope_id, src, edges,
+                kind=EdgeKind.WRITES_TO, operation=op,
+                via=f"session.{verb}",
+            )
+            return
+        if verb == "execute":
+            # session.execute(select(Model)) / insert(Model) / etc.
+            self._emit_sql_from_execute(
+                call_node, rel, scope_id, src, edges,
+            )
+
+    def _emit_sql_from_first_arg(
+        self,
+        call_node: tree_sitter.Node,
+        rel: str,
+        scope_id: str,
+        src: bytes,
+        edges: list[Edge],
+        *,
+        kind: EdgeKind,
+        operation: str,
+        via: str,
+    ) -> None:
+        arg_list = call_node.child_by_field_name("arguments")
+        if arg_list is None:
+            return
+        first_named = next(
+            (c for c in arg_list.children if c.is_named), None,
+        )
+        if first_named is None:
+            return
+        model = _model_name_from_call_arg(node_text(first_named, src))
+        if not model:
+            return
+        edges.append(Edge(
+            src=scope_id,
+            dst=f"unresolved::{model}",
+            kind=kind,
+            file=rel,
+            line=call_node.start_point[0] + 1,
+            metadata={
+                "operation": operation,
+                "via": via,
+                "model_name": model,
+                "target_name": model,
+            },
+        ))
+
+    def _emit_sql_from_execute(
+        self,
+        call_node: tree_sitter.Node,
+        rel: str,
+        scope_id: str,
+        src: bytes,
+        edges: list[Edge],
+    ) -> None:
+        """Handle ``session.execute(select|insert|update|delete(Model))``."""
+        arg_list = call_node.child_by_field_name("arguments")
+        if arg_list is None:
+            return
+        first_named = next(
+            (c for c in arg_list.children if c.is_named), None,
+        )
+        if first_named is None:
+            return
+        # Drill through ``.values(...)`` / ``.where(...)`` chains —
+        # ``select(Model).where(...)`` keeps wrapping the original
+        # constructor call inside ``function -> attribute -> object``.
+        first_named = _unwrap_to_root_call(first_named)
+        if first_named is None or first_named.type != "call":
+            return
+        inner_func = first_named.child_by_field_name("function")
+        if inner_func is None:
+            return
+        inner_name = node_text(inner_func, src).rsplit(".", 1)[-1]
+        if inner_name in _SQL_READ_INNER:
+            kind = EdgeKind.READS_FROM
+            operation = "select"
+        elif inner_name in _SQL_WRITE_INNER:
+            kind = EdgeKind.WRITES_TO
+            operation = inner_name
+        else:
+            return
+        inner_args = first_named.child_by_field_name("arguments")
+        if inner_args is None:
+            return
+        first_inner = next(
+            (c for c in inner_args.children if c.is_named), None,
+        )
+        if first_inner is None:
+            return
+        model = _model_name_from_call_arg(node_text(first_inner, src))
+        if not model:
+            return
+        edges.append(Edge(
+            src=scope_id,
+            dst=f"unresolved::{model}",
+            kind=kind,
+            file=rel,
+            line=call_node.start_point[0] + 1,
+            metadata={
+                "operation": operation,
+                "via": f"session.execute({inner_name})",
+                "model_name": model,
+                "target_name": model,
+            },
+        ))
 
     def _handle_import(
         self,

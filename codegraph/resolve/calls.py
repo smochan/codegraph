@@ -23,7 +23,19 @@ from codegraph.graph.schema import Edge, EdgeKind, Node, NodeKind
 from codegraph.graph.store_sqlite import SQLiteGraphStore
 
 _REFERENCE_KINDS: frozenset[EdgeKind] = frozenset(
-    {EdgeKind.CALLS, EdgeKind.IMPORTS, EdgeKind.INHERITS, EdgeKind.IMPLEMENTS}
+    {
+        EdgeKind.CALLS, EdgeKind.IMPORTS, EdgeKind.INHERITS,
+        EdgeKind.IMPLEMENTS,
+        # DF1 — SQLAlchemy data-access edges. Emitted unresolved by the
+        # Python parser (model name only) and rewritten here when a
+        # matching CLASS exists in-repo.
+        EdgeKind.READS_FROM, EdgeKind.WRITES_TO,
+    }
+)
+# Edge kinds that the DF1 spec requires to be DROPPED when they cannot
+# be resolved (rather than left as ``unresolved::*`` for downstream tools).
+_DROP_IF_UNRESOLVED: frozenset[EdgeKind] = frozenset(
+    {EdgeKind.READS_FROM, EdgeKind.WRITES_TO}
 )
 _DEFINITION_KINDS: frozenset[NodeKind] = frozenset(
     {NodeKind.FUNCTION, NodeKind.METHOD, NodeKind.CLASS, NodeKind.MODULE}
@@ -313,6 +325,18 @@ def resolve_unresolved_edges(store: SQLiteGraphStore) -> ResolveStats:
         resolved = _resolve_target(target, src_node, index, bindings)
         if resolved is None or resolved.id == edge.src:
             stats.unresolved += 1
+            # DF1: drop unresolved data-access edges so the graph never
+            # carries ``unresolved::Model`` placeholders for SQL I/O.
+            if edge.kind in _DROP_IF_UNRESOLVED:
+                deletions.append((edge.src, edge.dst, edge.kind))
+            continue
+        # DF1 sanity: READS_FROM/WRITES_TO must resolve to a CLASS.
+        if (
+            edge.kind in _DROP_IF_UNRESOLVED
+            and resolved.kind != NodeKind.CLASS
+        ):
+            stats.unresolved += 1
+            deletions.append((edge.src, edge.dst, edge.kind))
             continue
         deletions.append((edge.src, edge.dst, edge.kind))
         new_edges.append(

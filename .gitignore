@@ -36,3 +36,4 @@ env/
 .playwright-mcp/
 # Local screenshot scratch files (visual smoke tests)
 three-d-*.png
+.claude/

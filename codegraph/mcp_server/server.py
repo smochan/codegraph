@@ -554,6 +554,27 @@ def _handle_metrics(graph: nx.MultiDiGraph, args: dict[str, Any]) -> Any:
     return tool_metrics(graph)
 
 
+def tool_dataflow_routes(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
+    """List HTTP routes captured by DF1 (FastAPI / Flask).
+
+    Each entry: ``{handler_qn, method, path, framework}``. Sorted by
+    ``(path, method)``. Returns ``[]`` when the graph carries no ROUTE
+    edges (e.g. the repo has no Python web framework usage).
+    """
+    from codegraph.viz.hld import serialize_route_edges
+    return serialize_route_edges(graph)
+
+
+@_register(
+    "dataflow_routes",
+    {"type": "object", "properties": {}},
+)
+def _handle_dataflow_routes(
+    graph: nx.MultiDiGraph, args: dict[str, Any]
+) -> Any:
+    return tool_dataflow_routes(graph)
+
+
 # ---------------------------------------------------------------------------
 # v0.3 — semantic + hybrid search
 # ---------------------------------------------------------------------------
@@ -710,6 +731,7 @@ def _tool_description(name: str) -> str:
         "metrics": "Return aggregate graph metrics",
         "semantic_search": "Free-text semantic search over the embeddings index",
         "hybrid_search": "Semantic search reranked by graph distance + role filter",
+        "dataflow_routes": "List HTTP routes (DF1: FastAPI/Flask handlers)",
     }
     return descriptions.get(name, name)
 
