@@ -647,6 +647,149 @@ function filterGrouped(groups, query) {
   return out;
 }
 
+// ---- Role-grouped picker (Change 3 / DF1.5) -------------------------------
+//
+// groupSymbolsByRole(hld) -> [
+//   { role: 'HANDLER',  color: '#fbbf24', modules: [<group>] },
+//   { role: 'SERVICE',  color: '#3b82f6', modules: [...] },
+//   { role: 'COMPONENT',color: '#34d399', modules: [...] },
+//   { role: 'REPO',     color: '#c084fc', modules: [...] },
+//   { role: '(no role)',color: '#8b9ab8', modules: [...] },
+// ]
+// Each <group> has the same shape as groupSymbols() emits, but only the
+// symbols matching the bucket role are retained. Methods inherit their
+// class's role; free functions use their own role; symbols without a
+// recognized role land in the "(no role)" bucket. Buckets render in fixed
+// order so the picker UI has stable headers even when a bucket is empty.
+
+var ROLE_ORDER = ['HANDLER', 'SERVICE', 'COMPONENT', 'REPO', '(no role)'];
+var ROLE_PICKER_COLORS = {
+  'HANDLER':   '#fbbf24', // amber
+  'SERVICE':   '#3b82f6', // blue
+  'COMPONENT': '#34d399', // green
+  'REPO':      '#c084fc', // purple-pink
+  '(no role)': '#8b9ab8', // gray
+};
+
+function normalizeRole(role) {
+  if (!role) return '(no role)';
+  var r = String(role).toUpperCase();
+  if (ROLE_PICKER_COLORS[r]) return r;
+  return '(no role)';
+}
+
+function groupSymbolsByRole(hld) {
+  var modules = (hld && hld.modules) || {};
+  var buckets = {};
+  ROLE_ORDER.forEach(function (r) { buckets[r] = {}; });
+
+  function getModule(role, modQn, mod) {
+    if (!buckets[role][modQn]) {
+      buckets[role][modQn] = {
+        qualname: modQn,
+        file: mod.file || '',
+        language: mod.language || '',
+        classes: {},
+        functions: [],
+      };
+    }
+    return buckets[role][modQn];
+  }
+
+  Object.keys(modules).forEach(function (modQn) {
+    var mod = modules[modQn] || {};
+    var symbols = mod.symbols || [];
+    var classByQn = {};
+    symbols.forEach(function (s) {
+      if (s && s.kind === 'CLASS' && s.qualname) classByQn[s.qualname] = s;
+    });
+
+    symbols.forEach(function (s) {
+      if (!s || !s.qualname) return;
+      // Methods inherit their class's role.
+      var ownerClass = null;
+      if (s.kind !== 'CLASS') {
+        Object.keys(classByQn).forEach(function (cqn) {
+          if (s.qualname.indexOf(cqn + '.') === 0) {
+            if (!ownerClass || cqn.length > ownerClass.qualname.length) {
+              ownerClass = classByQn[cqn];
+            }
+          }
+        });
+      }
+      var roleSrc = ownerClass ? (ownerClass.role || s.role) : s.role;
+      var role = normalizeRole(roleSrc);
+      var modEntry = getModule(role, modQn, mod);
+      var meta = {
+        qualname: s.qualname,
+        name: s.name || s.qualname,
+        kind: s.kind,
+        fan_in: Number(s.fan_in) || 0,
+        fan_out: Number(s.fan_out) || 0,
+      };
+      if (s.kind === 'CLASS') {
+        if (!modEntry.classes[s.qualname]) {
+          modEntry.classes[s.qualname] = {
+            qualname: s.qualname,
+            name: s.name || s.qualname,
+            methods: [],
+          };
+        }
+      } else if (ownerClass) {
+        if (!modEntry.classes[ownerClass.qualname]) {
+          modEntry.classes[ownerClass.qualname] = {
+            qualname: ownerClass.qualname,
+            name: ownerClass.name || ownerClass.qualname,
+            methods: [],
+          };
+        }
+        modEntry.classes[ownerClass.qualname].methods.push(meta);
+      } else {
+        modEntry.functions.push(meta);
+      }
+    });
+  });
+
+  return ROLE_ORDER.map(function (role) {
+    var modMap = buckets[role];
+    var modList = Object.keys(modMap).sort().map(function (mqn) {
+      var m = modMap[mqn];
+      var classList = Object.keys(m.classes).sort().map(function (k) {
+        var c = m.classes[k];
+        c.methods.sort(function (a, b) { return a.name.localeCompare(b.name); });
+        return c;
+      });
+      m.functions.sort(function (a, b) { return a.name.localeCompare(b.name); });
+      return {
+        qualname: m.qualname,
+        file: m.file,
+        language: m.language,
+        classes: classList,
+        functions: m.functions,
+      };
+    });
+    return {
+      role: role,
+      color: ROLE_PICKER_COLORS[role],
+      modules: modList,
+    };
+  });
+}
+
+// Filter a role-grouped tree by query, keeping role buckets that contain
+// at least one match. Reuses filterGrouped() per bucket.
+function filterGroupedByRole(roleGroups, query) {
+  var q = String(query || '').trim();
+  if (!q) return roleGroups;
+  return roleGroups.map(function (rg) {
+    return {
+      role: rg.role,
+      color: rg.color,
+      modules: filterGrouped(rg.modules, q),
+    };
+  });
+}
+
 // ---- Symbol search (top-N matches) ----------------------------------------
 
 function searchSymbols(hld, query, limit) {
@@ -715,8 +858,12 @@ if (typeof window !== 'undefined') {
     snapshotState: snapshotState,
     searchSymbols: searchSymbols,
     groupSymbols: groupSymbols,
+    groupSymbolsByRole: groupSymbolsByRole,
     filterGrouped: filterGrouped,
+    filterGroupedByRole: filterGroupedByRole,
     formatCallArgs: formatCallArgs,
+    ROLE_ORDER: ROLE_ORDER,
+    ROLE_PICKER_COLORS: ROLE_PICKER_COLORS,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
     kindColor: kindColor,
@@ -736,8 +883,12 @@ if (typeof module !== 'undefined' && module.exports) {
     snapshotState: snapshotState,
     searchSymbols: searchSymbols,
     groupSymbols: groupSymbols,
+    groupSymbolsByRole: groupSymbolsByRole,
     filterGrouped: filterGrouped,
+    filterGroupedByRole: filterGroupedByRole,
     formatCallArgs: formatCallArgs,
+    ROLE_ORDER: ROLE_ORDER,
+    ROLE_PICKER_COLORS: ROLE_PICKER_COLORS,
     isExternalQn: isExternalQn,
     indexSymbols: indexSymbols,
     kindColor: kindColor,

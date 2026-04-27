@@ -490,3 +490,95 @@ test('buildFocusGraph attaches argLabel to descendant edges from callee_args', (
   assert.ok(link);
   assert.equal(link.argLabel, '1, x=2');
 });
+
+// ---- DF1.5: role-grouped picker -------------------------------------------
+
+const { groupSymbolsByRole, ROLE_ORDER } = T;
+
+function roleHld() {
+  return {
+    modules: {
+      'app.api': {
+        qualname: 'app.api', file: 'app/api.py', language: 'python',
+        symbols: [
+          { qualname: 'app.api.UserView', name: 'UserView', kind: 'CLASS',
+            role: 'HANDLER', fan_in: 0, fan_out: 0, callers: [], callees: [] },
+          { qualname: 'app.api.UserView.get', name: 'get', kind: 'METHOD',
+            fan_in: 0, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+      'app.svc': {
+        qualname: 'app.svc', file: 'app/svc.py', language: 'python',
+        symbols: [
+          { qualname: 'app.svc.UserService', name: 'UserService', kind: 'CLASS',
+            role: 'SERVICE', fan_in: 0, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+      'app.repo': {
+        qualname: 'app.repo', file: 'app/repo.py', language: 'python',
+        symbols: [
+          { qualname: 'app.repo.UserRepo', name: 'UserRepo', kind: 'CLASS',
+            role: 'REPO', fan_in: 0, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+      'app.ui': {
+        qualname: 'app.ui', file: 'app/ui.py', language: 'python',
+        symbols: [
+          { qualname: 'app.ui.Card', name: 'Card', kind: 'CLASS',
+            role: 'COMPONENT', fan_in: 0, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+      'app.util': {
+        qualname: 'app.util', file: 'app/util.py', language: 'python',
+        symbols: [
+          { qualname: 'app.util.helper', name: 'helper', kind: 'FUNCTION',
+            fan_in: 0, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+    },
+  };
+}
+
+test('groupSymbolsByRole returns the 5 role buckets in fixed order', () => {
+  const out = groupSymbolsByRole(roleHld());
+  const roles = out.map(b => b.role);
+  assert.deepEqual(roles, ['HANDLER', 'SERVICE', 'COMPONENT', 'REPO', '(no role)']);
+  assert.deepEqual(roles, ROLE_ORDER);
+  // Methods inherit class role: app.api.UserView.get goes under HANDLER.
+  const handler = out[0];
+  assert.equal(handler.modules.length, 1);
+  assert.equal(handler.modules[0].qualname, 'app.api');
+  assert.equal(handler.modules[0].classes.length, 1);
+  assert.equal(handler.modules[0].classes[0].methods.length, 1);
+});
+
+test('symbols without role land in "(no role)" bucket', () => {
+  const out = groupSymbolsByRole(roleHld());
+  const noRole = out[out.length - 1];
+  assert.equal(noRole.role, '(no role)');
+  assert.equal(noRole.modules.length, 1);
+  assert.equal(noRole.modules[0].qualname, 'app.util');
+  assert.equal(noRole.modules[0].functions[0].name, 'helper');
+});
+
+test('groupSymbolsByRole handles role=null gracefully (no crash)', () => {
+  const hld = {
+    modules: {
+      'm': {
+        qualname: 'm', file: 'm.py', language: 'python',
+        symbols: [
+          { qualname: 'm.fn', name: 'fn', kind: 'FUNCTION', role: null,
+            fan_in: 0, fan_out: 0, callers: [], callees: [] },
+          { qualname: 'm.gn', name: 'gn', kind: 'FUNCTION',
+            fan_in: 0, fan_out: 0, callers: [], callees: [] },
+        ],
+      },
+    },
+  };
+  const out = groupSymbolsByRole(hld);
+  const noRole = out.find(b => b.role === '(no role)');
+  assert.ok(noRole);
+  assert.equal(noRole.modules.length, 1);
+  const fns = noRole.modules[0].functions.map(f => f.name).sort();
+  assert.deepEqual(fns, ['fn', 'gn']);
+});

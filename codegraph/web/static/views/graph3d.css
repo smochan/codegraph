@@ -492,3 +492,36 @@
   flex-wrap: wrap;
 }
 .g3d-legend-lbl { font-size: 11px; }
+
+/* ---- Role-grouped picker (Change 3) ---- */
+.g3d-role-bucket {
+  border-bottom: 1px solid var(--line);
+}
+.g3d-role-bucket:last-child { border-bottom: 0; }
+.g3d-role-bucket-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 8px;
+  background: linear-gradient(180deg, rgba(167,139,250,0.06), transparent);
+  border-bottom: 1px dashed var(--line);
+}
+.g3d-role-chip {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.25) inset;
+}
+.g3d-role-bucket-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--txt-0);
+}
+.g3d-role-bucket-count {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--txt-3);
+}

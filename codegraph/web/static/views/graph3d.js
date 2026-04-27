@@ -274,17 +274,35 @@
     var box = host.querySelector('#g3d-picker-results');
     if (!box) return;
     var T = getTransform();
-    var groups = T.filterGrouped(T.groupSymbols(hld), query);
-    if (!groups.length) {
+    var roleGroups = T.filterGroupedByRole(T.groupSymbolsByRole(hld), query);
+    var nonEmpty = roleGroups.filter(function (rg) { return rg.modules.length; });
+    if (!nonEmpty.length) {
       box.innerHTML = '<div class="g3d-picker-noresults">No matches.</div>';
       return;
     }
-    box.innerHTML = groups.map(pickerGroupHtml).join('');
+    box.innerHTML = nonEmpty.map(pickerRoleBucketHtml).join('');
     box.querySelectorAll('.g3d-pick-row').forEach(function (btn) {
       btn.addEventListener('click', function () {
         setFocus(host, hld, btn.dataset.qn);
       });
     });
+  }
+
+  function pickerRoleBucketHtml(rg) {
+    var modules = rg.modules.map(pickerGroupHtml).join('');
+    return [
+      '<div class="g3d-role-bucket">',
+      '<div class="g3d-role-bucket-hdr">',
+      '<span class="g3d-role-chip" style="background:', ESC(rg.color), ';"></span>',
+      '<span class="g3d-role-bucket-name">', ESC(rg.role), '</span>',
+      '<span class="g3d-role-bucket-count">', rg.modules.length, ' module',
+      (rg.modules.length === 1 ? '' : 's'), '</span>',
+      '</div>',
+      '<div class="g3d-role-bucket-body">',
+      modules,
+      '</div>',
+      '</div>',
+    ].join('');
   }
 
   function pickerGroupHtml(g) {
