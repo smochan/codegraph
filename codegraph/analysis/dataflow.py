@@ -235,6 +235,121 @@ def match_route(
     return (best[0], best[1])
 
 
+_FRONTEND_EXTS = (".tsx", ".jsx")
+_FETCH_ENTRY_RE = re.compile(
+    r"^\s*(?:url:\s*)?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|WEBSOCKET)\s+(\S+)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _resolve_entry_node(
+    graph: nx.MultiDiGraph, entry: str
+) -> str | None:
+    """Find a node id matching the given qualname (exact, case-insensitive)."""
+    target = entry.strip()
+    for nid, attrs in graph.nodes(data=True):
+        qn = str(attrs.get("qualname") or "")
+        if qn == target:
+            return str(nid)
+    # Case-insensitive fallback
+    lower = target.lower()
+    for nid, attrs in graph.nodes(data=True):
+        qn = str(attrs.get("qualname") or "")
+        if qn.lower() == lower:
+            return str(nid)
+    return None
+
+
+def _layer_for(attrs: dict[str, Any]) -> str:
+    """Pick a layer label from a node's attrs."""
+    metadata = attrs.get("metadata") or {}
+    role = ""
+    if isinstance(metadata, dict):
+        role_val = metadata.get("role")
+        role = str(role_val) if role_val else ""
+    if role == "REPO":
+        return "db"
+    if role == "COMPONENT":
+        return "frontend"
+    file_path = str(attrs.get("file") or "").lower()
+    if any(file_path.endswith(ext) for ext in _FRONTEND_EXTS):
+        return "frontend"
+    return "backend"
+
+
+def _hop_from_node(
+    graph: nx.MultiDiGraph,
+    node_id: str,
+    *,
+    args: list[str] | None = None,
+    kwargs: dict[str, str] | None = None,
+    confidence: float = 1.0,
+) -> FlowHop:
+    attrs = graph.nodes.get(node_id) or {}
+    metadata = attrs.get("metadata") or {}
+    role = None
+    if isinstance(metadata, dict):
+        role_val = metadata.get("role")
+        if role_val:
+            role = str(role_val)
+    return FlowHop(
+        layer=_layer_for(attrs),
+        qualname=str(attrs.get("qualname") or node_id),
+        file=str(attrs.get("file") or ""),
+        line=int(attrs.get("line_start") or 0),
+        args=list(args or []),
+        kwargs=dict(kwargs or {}),
+        role=role,
+        confidence=confidence,
+    )
+
+
+def _outgoing_calls(
+    graph: nx.MultiDiGraph, node_id: str
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return [(target_id, edge_metadata)] for outgoing CALLS edges."""
+    out: list[tuple[str, dict[str, Any]]] = []
+    for _src, dst, key, edata in graph.out_edges(node_id, keys=True, data=True):
+        if key == EdgeKind.CALLS.value:
+            meta = edata.get("metadata") or {}
+            out.append((str(dst), meta if isinstance(meta, dict) else {}))
+    return out
+
+
+def _outgoing_data_edges(
+    graph: nx.MultiDiGraph, node_id: str
+) -> list[tuple[str, str]]:
+    """Return [(target_id, edge_kind)] for READS_FROM / WRITES_TO edges."""
+    out: list[tuple[str, str]] = []
+    for _src, dst, key in graph.out_edges(node_id, keys=True):
+        if key in (EdgeKind.READS_FROM.value, EdgeKind.WRITES_TO.value):
+            out.append((str(dst), str(key)))
+    return out
+
+
+def _outgoing_fetches(
+    graph: nx.MultiDiGraph, node_id: str
+) -> list[dict[str, Any]]:
+    """Return list of FETCH_CALL edge metadata dicts originating from this node."""
+    out: list[dict[str, Any]] = []
+    for _src, _dst, key, edata in graph.out_edges(node_id, keys=True, data=True):
+        if key == EdgeKind.FETCH_CALL.value:
+            meta = edata.get("metadata") or {}
+            if isinstance(meta, dict):
+                out.append(meta)
+    return out
+
+
+def _edge_args(meta: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+    args_raw = meta.get("args") or []
+    kwargs_raw = meta.get("kwargs") or {}
+    args = [str(a) for a in args_raw] if isinstance(args_raw, list) else []
+    kwargs: dict[str, str] = {}
+    if isinstance(kwargs_raw, dict):
+        kwargs = {str(k): str(v) for k, v in kwargs_raw.items()}
+    return args, kwargs
+
+
 def trace(
     graph: nx.MultiDiGraph,
     entry: str,
@@ -246,15 +361,156 @@ def trace(
     ``entry`` may be:
 
       * a fully-qualified symbol name — walk forwards over CALLS edges
-      * ``"url:METHOD /path"`` — start from a frontend ``FETCH_CALL`` and stitch
-        through the matching ROUTE handler
+      * ``"METHOD /path"`` (or ``"url:METHOD /path"``) — find a backend handler
+        via :func:`match_route` and walk from there
 
-    Returns ``None`` when ``entry`` cannot be located in the graph.
+    Returns ``None`` when the entry cannot be located.
 
-    Implemented by DF4 (agent A2). Stub returns ``None`` so the CLI / MCP layer
-    can register the public surface.
+    Hop construction:
+      * each visited node becomes a :class:`FlowHop`
+      * args/kwargs come from the *incoming* CALLS edge that brought us here
+      * READS_FROM / WRITES_TO edges become trailing ``layer=db`` hops
+      * outgoing FETCH_CALL edges trigger a cross-layer match via
+        :func:`match_route`; if no match, the partial chain is returned with
+        confidence dropped accordingly
+      * cycle detection: already-visited nodes are skipped silently
+      * stop after ``max_depth`` outgoing hops
     """
-    return None
+    # ---- Resolve the starting node --------------------------------------
+    fetch_match = _FETCH_ENTRY_RE.match(entry)
+    start_node: str | None = None
+    initial_confidence = 1.0
+    initial_args: list[str] = []
+    initial_kwargs: dict[str, str] = {}
+    initial_method: str | None = None
+    initial_path: str | None = None
+
+    if fetch_match:
+        method = fetch_match.group(1).upper()
+        path = fetch_match.group(2)
+        result = match_route(graph, path, method)
+        if result is None:
+            return DataFlow(entry=entry, hops=[], confidence=0.0)
+        handler_qn, conf = result
+        start_node = _resolve_entry_node(graph, handler_qn)
+        initial_confidence = conf
+        initial_method = method
+        initial_path = path
+    else:
+        start_node = _resolve_entry_node(graph, entry)
+
+    if start_node is None:
+        return None
+
+    # ---- Walk the graph -------------------------------------------------
+    hops: list[FlowHop] = []
+    visited: set[str] = set()
+
+    first_hop = _hop_from_node(
+        graph,
+        start_node,
+        args=initial_args,
+        kwargs=initial_kwargs,
+        confidence=initial_confidence,
+    )
+    if initial_method is not None:
+        first_hop.method = initial_method
+    if initial_path is not None:
+        first_hop.path = initial_path
+    hops.append(first_hop)
+    visited.add(start_node)
+
+    current = start_node
+    confidences: list[float] = [initial_confidence]
+    depth = 0
+
+    while depth < max_depth:
+        # 1. Cross-layer fetch transition (if any)
+        fetches = _outgoing_fetches(graph, current)
+        consumed_via_fetch = False
+        for fmeta in fetches:
+            url = str(fmeta.get("url") or "")
+            method = str(fmeta.get("method") or "GET")
+            body_keys_raw = fmeta.get("body_keys") or []
+            body_keys = (
+                [str(k) for k in body_keys_raw]
+                if isinstance(body_keys_raw, list)
+                else None
+            )
+            result = match_route(graph, url, method, body_keys=body_keys)
+            if result is None:
+                continue
+            handler_qn, conf = result
+            handler_node = _resolve_entry_node(graph, handler_qn)
+            if handler_node is None or handler_node in visited:
+                continue
+            hop = _hop_from_node(
+                graph,
+                handler_node,
+                args=[],
+                kwargs={},
+                confidence=conf,
+            )
+            hop.method = method
+            hop.path = url
+            hops.append(hop)
+            visited.add(handler_node)
+            confidences.append(conf)
+            current = handler_node
+            consumed_via_fetch = True
+            break  # follow one fetch per hop
+        if consumed_via_fetch:
+            depth += 1
+            continue
+
+        # 2. Standard CALLS traversal — pick the first outgoing edge
+        callees = _outgoing_calls(graph, current)
+        next_step: tuple[str, list[str], dict[str, str]] | None = None
+        for dst, meta in callees:
+            if dst in visited:
+                continue
+            args, kwargs = _edge_args(meta)
+            next_step = (dst, args, kwargs)
+            break
+
+        if next_step is not None:
+            dst, args, kwargs = next_step
+            hop = _hop_from_node(
+                graph,
+                dst,
+                args=args,
+                kwargs=kwargs,
+                confidence=1.0,
+            )
+            hops.append(hop)
+            visited.add(dst)
+            confidences.append(1.0)
+            current = dst
+            depth += 1
+            continue
+
+        # 3. Terminal data edges (READS_FROM / WRITES_TO) — emit and stop
+        for dst, kind in _outgoing_data_edges(graph, current):
+            if dst in visited:
+                continue
+            db_attrs = graph.nodes.get(dst) or {}
+            db_qn = str(db_attrs.get("qualname") or dst)
+            db_hop = FlowHop(
+                layer="db",
+                qualname=db_qn,
+                file=str(db_attrs.get("file") or ""),
+                line=int(db_attrs.get("line_start") or 0),
+                role="REPO",
+                confidence=1.0,
+            )
+            db_hop.kwargs = {"op": kind}
+            hops.append(db_hop)
+            visited.add(dst)
+            confidences.append(1.0)
+        break
+
+    final_conf = min(confidences) if confidences else 0.0
+    return DataFlow(entry=entry, hops=hops, confidence=final_conf)
 
 
 __all__ = ["DataFlow", "FlowHop", "match_route", "trace"]

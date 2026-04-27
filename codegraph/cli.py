@@ -27,10 +27,15 @@ query_app = typer.Typer(help="Query small, focused subgraphs.", no_args_is_help=
 baseline_app = typer.Typer(help="Manage baseline snapshots.", no_args_is_help=True)
 hook_app = typer.Typer(help="Manage git hooks.", no_args_is_help=True)
 mcp_app = typer.Typer(help="Run codegraph as an MCP server.", no_args_is_help=True)
+dataflow_app = typer.Typer(
+    help="Trace data flows across frontend / backend / db layers.",
+    no_args_is_help=True,
+)
 app.add_typer(query_app, name="query")
 app.add_typer(baseline_app, name="baseline")
 app.add_typer(hook_app, name="hook")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(dataflow_app, name="dataflow")
 
 console = Console()
 
@@ -1055,6 +1060,74 @@ def hook_uninstall(
         console.print(
             f"[yellow]No codegraph-managed {hook} hook to remove.[/yellow]"
         )
+
+
+@dataflow_app.command("trace")
+def dataflow_trace_cmd(
+    entry: str = typer.Argument(
+        ...,
+        help=(
+            "Entry point — either a function qualname (e.g. "
+            "'app.handlers.get_user'), or a fetch shape "
+            "('GET /api/users/{id}')."
+        ),
+    ),
+    depth: int = typer.Option(6, "--depth", help="Max trace depth (hops)."),
+    fmt: str = typer.Option("markdown", "--format", help="markdown|json"),
+) -> None:
+    """Trace a data flow from an entry point through the call graph and
+    cross-layer edges. Output is markdown or JSON.
+    """
+    import json as _json
+
+    from codegraph.analysis.dataflow import trace as _trace
+
+    repo_root = Path.cwd()
+    graph = _open_graph(repo_root)
+    if graph is None:
+        raise typer.Exit(1)
+
+    flow = _trace(graph, entry, max_depth=depth)
+    if flow is None:
+        console.print(
+            f"[yellow]No symbol or route matched: {entry}[/yellow]"
+        )
+        raise typer.Exit(2)
+
+    if fmt == "json":
+        typer.echo(_json.dumps(flow.to_dict(), indent=2))
+        return
+
+    # Default: rich markdown-ish output
+    console.print(
+        f"\n[bold]Flow trace from:[/bold] {flow.entry}  "
+        f"([cyan]confidence: {flow.confidence:.2f}[/cyan])\n"
+    )
+    if not flow.hops:
+        console.print("  [yellow](no hops)[/yellow]")
+        return
+    layer_styles = {
+        "frontend": "magenta",
+        "backend": "cyan",
+        "db": "yellow",
+    }
+    for i, hop in enumerate(flow.hops):
+        prefix = "  " if i == 0 else "   ↓\n  "
+        layer_label = f"[{layer_styles.get(hop.layer, 'white')}][{hop.layer}][/]"
+        loc = f"{hop.file}:{hop.line}" if hop.file else ""
+        role = f" [bold]{hop.role}[/bold]" if hop.role else ""
+        line1 = f"{prefix}{layer_label} {loc}  [white]{hop.qualname}[/white]{role}"
+        console.print(line1)
+        if hop.method and hop.path:
+            console.print(
+                f"            [dim]{hop.method} {hop.path}[/dim]"
+            )
+        if hop.args or hop.kwargs:
+            args_str = ", ".join(hop.args)
+            kwargs_str = ", ".join(f"{k}={v}" for k, v in hop.kwargs.items())
+            joined = ", ".join(s for s in (args_str, kwargs_str) if s)
+            console.print(f"            [dim]args: ({joined})[/dim]")
+    console.print()
 
 
 @app.command()
