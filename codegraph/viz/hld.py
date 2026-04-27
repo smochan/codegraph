@@ -260,6 +260,36 @@ class HldPayload:
     mermaid_context: str
     metrics: dict[str, int]
     root: str = ""
+    # v0.2 cross-stack data-flow surfaces (default empty so older payloads
+    # remain backwards-compatible). DF1 fills routes/sql; DF2 fills fetches.
+    routes: list[dict[str, Any]] = field(default_factory=list)
+    sql_io: list[dict[str, Any]] = field(default_factory=list)
+    fetches: list[dict[str, Any]] = field(default_factory=list)
+
+
+def serialize_route_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
+    """Serialize ROUTE edges into the HLD payload's `routes` array.
+
+    Reserved stub for the DF1 agent to fill in. Default returns [] so the
+    payload shape stays stable while DF1 is in flight.
+    """
+    return []
+
+
+def serialize_sql_io_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
+    """Serialize READS_FROM / WRITES_TO edges into the HLD payload's `sql_io` array.
+
+    Reserved stub for the DF1 agent.
+    """
+    return []
+
+
+def serialize_fetch_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
+    """Serialize FETCH_CALL edges into the HLD payload's `fetches` array.
+
+    Reserved stub for the DF2 agent.
+    """
+    return []
 
 
 def _build_modules_drilldown(
@@ -426,6 +456,9 @@ def build_hld(graph: nx.MultiDiGraph) -> HldPayload:
         mermaid_context=mermaid_context,
         metrics=metrics,
         root=root,
+        routes=serialize_route_edges(graph),
+        sql_io=serialize_sql_io_edges(graph),
+        fetches=serialize_fetch_edges(graph),
     )
 
 

@@ -31,6 +31,12 @@ class EdgeKind(str, Enum):
     RETURNS = "RETURNS"
     PARAM_OF = "PARAM_OF"
     TESTED_BY = "TESTED_BY"
+    # v0.2 cross-stack data-flow edges (populated by DF1 / DF2 extractors).
+    # Reserved here so DF1/DF2 agents don't both edit this enum in parallel.
+    ROUTE = "ROUTE"               # HANDLER → URL pattern (DF1, FastAPI/Flask)
+    READS_FROM = "READS_FROM"     # function → SQLAlchemy model on read (DF1)
+    WRITES_TO = "WRITES_TO"       # function → SQLAlchemy model on write (DF1)
+    FETCH_CALL = "FETCH_CALL"     # frontend call site → URL string (DF2, fetch/axios)
 
 
 class Node(BaseModel):
