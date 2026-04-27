@@ -554,6 +554,35 @@ def _handle_metrics(graph: nx.MultiDiGraph, args: dict[str, Any]) -> Any:
     return tool_metrics(graph)
 
 
+@_register(
+    "dataflow_fetches",
+    {
+        "type": "object",
+        "properties": {
+            "library": {
+                "type": "string",
+                "description": (
+                    "Optional filter on library: "
+                    "fetch | axios | swr | tanstack | apiclient"
+                ),
+            },
+            "limit": {"type": "integer", "default": 200},
+        },
+    },
+)
+def _handle_dataflow_fetches(
+    graph: nx.MultiDiGraph, args: dict[str, Any]
+) -> Any:
+    """Surface DF2 FETCH_CALL edges as a flat list (caller_qn, method, url, …)."""
+    from codegraph.viz.hld import serialize_fetch_edges
+    fetches = serialize_fetch_edges(graph)
+    library = args.get("library")
+    if isinstance(library, str) and library:
+        fetches = [f for f in fetches if f.get("library") == library]
+    limit = int(args.get("limit", 200))
+    return {"fetches": fetches[:limit], "total": len(fetches)}
+
+
 # ---------------------------------------------------------------------------
 # MCP Server
 # ---------------------------------------------------------------------------
@@ -595,6 +624,9 @@ def _tool_description(name: str) -> str:
         "untested": "List untested functions/methods",
         "hotspots": "List hotspot callables by fan-in/out/LOC",
         "metrics": "Return aggregate graph metrics",
+        "dataflow_fetches": (
+            "List frontend FETCH_CALL edges (caller, method, url, library, body_keys)"
+        ),
     }
     return descriptions.get(name, name)
 

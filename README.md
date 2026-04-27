@@ -63,15 +63,37 @@ until the launch sprint completes (see [Roadmap](#roadmap)). For now, install fr
 ### MCP server
 
 - `codegraph mcp serve` — stdio-transport MCP server for Claude Code or any MCP client.
-- 10 curated tools: `find_symbol` (with role filter), `callers`, `callees`
+- 11 curated tools: `find_symbol` (with role filter), `callers`, `callees`
   (both surfacing args + role), `blast_radius`, `subgraph`, `dead_code`, `cycles`,
-  `untested`, `hotspots`, `metrics`.
+  `untested`, `hotspots`, `metrics`, `dataflow_fetches` (DF2).
 - Returns small, focused subgraphs — avoids flooding context windows.
 
 ### CLI
 
 - `build`, `analyze`, `query`, `baseline`, `hook`, `mcp`, `serve`, `init`, `viz`,
   `explore`, `review`, `status`.
+
+### Cross-stack tracing (DF2)
+
+- **`FETCH_CALL` extraction** — TypeScript / TSX / JavaScript parser detects
+  HTTP call sites and emits a `FETCH_CALL` edge from the enclosing function or
+  method to a synthetic URL node. Recognised libraries:
+  - `fetch(url, init?)` — global fetch (method/body inferred from the init
+    object literal, including `body: JSON.stringify({...})`)
+  - `axios.get|post|put|delete|patch(url, body?)` and `axios({ method, url, data })`
+  - `useSWR(url, fetcher)` — treated as `GET`
+  - `useQuery({ queryKey, queryFn })` — best-effort when `queryFn` is a simple
+    fetch / axios call
+  - `apiClient.get|post|put|delete(url)` — generic api-client heuristic
+- **Body-key capture** — top-level keys of the request body object literal
+  (or the object passed to `JSON.stringify`) are surfaced as `body_keys`
+  metadata, which DF3 will use to disambiguate same-route handlers by
+  argument shape.
+- **URL handling** — string literals are captured verbatim; template literals
+  preserve their `${...}` placeholders; identifier-only URLs flag
+  `url_kind="dynamic"` so the stitcher can skip path normalisation.
+- **HLD payload** — `serialize_fetch_edges` exposes the per-call-site list as
+  `payload.fetches` for DF3 / DF4 consumers.
 
 ---
 
