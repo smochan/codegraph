@@ -688,6 +688,35 @@ def _handle_hybrid_search(graph: nx.MultiDiGraph, args: dict[str, Any]) -> Any:
     )
 
 
+@_register(
+    "dataflow_fetches",
+    {
+        "type": "object",
+        "properties": {
+            "library": {
+                "type": "string",
+                "description": (
+                    "Optional filter on library: "
+                    "fetch | axios | swr | tanstack | apiclient"
+                ),
+            },
+            "limit": {"type": "integer", "default": 200},
+        },
+    },
+)
+def _handle_dataflow_fetches(
+    graph: nx.MultiDiGraph, args: dict[str, Any]
+) -> Any:
+    """Surface DF2 FETCH_CALL edges as a flat list (caller_qn, method, url, …)."""
+    from codegraph.viz.hld import serialize_fetch_edges
+    fetches = serialize_fetch_edges(graph)
+    library = args.get("library")
+    if isinstance(library, str) and library:
+        fetches = [f for f in fetches if f.get("library") == library]
+    limit = int(args.get("limit", 200))
+    return {"fetches": fetches[:limit], "total": len(fetches)}
+
+
 # ---------------------------------------------------------------------------
 # MCP Server
 # ---------------------------------------------------------------------------
@@ -732,6 +761,9 @@ def _tool_description(name: str) -> str:
         "semantic_search": "Free-text semantic search over the embeddings index",
         "hybrid_search": "Semantic search reranked by graph distance + role filter",
         "dataflow_routes": "List HTTP routes (DF1: FastAPI/Flask handlers)",
+        "dataflow_fetches": (
+            "List frontend FETCH_CALL edges (caller, method, url, library, body_keys)"
+        ),
     }
     return descriptions.get(name, name)
 

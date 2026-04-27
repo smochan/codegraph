@@ -27,6 +27,7 @@ EXPECTED_TOOLS = {
     "semantic_search",
     "hybrid_search",
     "dataflow_routes",
+    "dataflow_fetches",
 }
 
 
