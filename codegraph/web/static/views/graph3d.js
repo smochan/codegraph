@@ -54,33 +54,16 @@
   var SPRITE_CACHE = new Map();
 
   function makeLabelSprite(text) {
-    if (typeof window.THREE === 'undefined') return null;
-    var THREE = window.THREE;
-    var fontPx = 36;
-    var pad = 6;
-    var canvas = document.createElement('canvas');
-    var ctx = canvas.getContext('2d');
-    ctx.font = 'bold ' + fontPx + 'px ui-sans-serif, system-ui, sans-serif';
-    var w = Math.ceil(ctx.measureText(String(text || '')).width) + pad * 2;
-    var h = fontPx + pad * 2;
-    canvas.width = w;
-    canvas.height = h;
-    ctx.font = 'bold ' + fontPx + 'px ui-sans-serif, system-ui, sans-serif';
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(8,12,20,0.55)';
-    ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = '#f1f5ff';
-    ctx.fillText(String(text || ''), w / 2, h / 2 + 1);
-    var texture = new THREE.CanvasTexture(canvas);
-    texture.minFilter = THREE.LinearFilter;
-    var material = new THREE.SpriteMaterial({
-      map: texture, transparent: true, depthWrite: false,
-    });
-    var sprite = new THREE.Sprite(material);
-    var scale = 0.18;
-    sprite.scale.set(w * scale, h * scale, 1);
-    sprite.position.set(0, 8, 0);
+    var SpriteText = (typeof window !== 'undefined') ? window.SpriteText : null;
+    if (typeof SpriteText !== 'function') return null;
+    var sprite = new SpriteText(String(text || ''));
+    sprite.color = '#f1f5ff';
+    sprite.backgroundColor = 'rgba(8,12,20,0.55)';
+    sprite.padding = 2;
+    sprite.borderRadius = 3;
+    sprite.fontFace = 'Inter, ui-sans-serif, system-ui, sans-serif';
+    sprite.fontWeight = 'bold';
+    sprite.textHeight = 6;
     return sprite;
   }
 
@@ -841,6 +824,8 @@
           return '<div class="g3d-tip g3d-tip-edge"><b>args</b>: '
             + escapeBasic(l.argLabel) + '</div>';
         })
+        .nodeThreeObjectExtend(true)
+        .nodeThreeObject(function (n) { return getOrMakeLabelSprite(n); })
         .onNodeHover(function (node) {
           container.style.cursor = node ? 'pointer' : 'grab';
         })

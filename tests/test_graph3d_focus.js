@@ -624,3 +624,65 @@ test('formatSignature returns empty string when no params and no returns', () =>
   assert.equal(formatSignature({ name: 'noop', params: [], returns: null }), '');
   assert.equal(formatSignature({ name: 'noop' }), '');
 });
+
+// ---- W1: SpriteText labels (always-on) ------------------------------------
+
+const fs = require('node:fs');
+const vm = require('node:vm');
+
+test('graph3d.js uses window.SpriteText (no window.THREE coupling)', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d.js'),
+    'utf8',
+  );
+  assert.ok(/window\.SpriteText/.test(src),
+    'graph3d.js must reference window.SpriteText');
+  assert.ok(/new\s+SpriteText\(/.test(src),
+    'graph3d.js must construct SpriteText instances');
+  assert.ok(/nodeThreeObjectExtend\(true\)/.test(src));
+});
+
+test('node sprite helper returns null when window.SpriteText is undefined', () => {
+  // Run the helper in a vm sandbox without window.SpriteText to verify the
+  // graceful fallback path used when esm.sh is blocked.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d.js'),
+    'utf8',
+  );
+  const nodeFn = src.match(/function makeLabelSprite\(text\)\s*\{[\s\S]*?\n  \}/);
+  assert.ok(nodeFn, 'sprite helper source not found');
+  const code = nodeFn[0]
+    + '\nresult = { node: makeLabelSprite("hi") };';
+  const sandbox = { window: {}, result: null };
+  vm.createContext(sandbox);
+  vm.runInContext(code, sandbox);
+  assert.equal(sandbox.result.node, null);
+});
+
+test('node sprite helper returns a sprite-like object when SpriteText is present', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d.js'),
+    'utf8',
+  );
+  const nodeFn = src.match(/function makeLabelSprite\(text\)\s*\{[\s\S]*?\n  \}/);
+  const code = nodeFn[0]
+    + '\nresult = { node: makeLabelSprite("hello") };';
+  function FakeSprite(text) { this.text = text; }
+  const sandbox = { window: { SpriteText: FakeSprite }, result: null };
+  vm.createContext(sandbox);
+  vm.runInContext(code, sandbox);
+  assert.equal(sandbox.result.node.text, 'hello');
+  assert.equal(sandbox.result.node.color, '#f1f5ff');
+  assert.equal(sandbox.result.node.textHeight, 6);
+});
+
+test('index.html imports three-spritetext from esm.sh as a module', () => {
+  const html = fs.readFileSync(
+    path.join(__dirname, '..', 'codegraph', 'web', 'static', 'index.html'),
+    'utf8',
+  );
+  assert.ok(/<script type="module">/.test(html));
+  assert.ok(/esm\.sh\/three-spritetext@1\.10\.0/.test(html),
+    'three-spritetext must be pinned to 1.10.0 via esm.sh');
+  assert.ok(/window\.SpriteText\s*=/.test(html));
+});
