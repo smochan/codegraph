@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - UNRELEASED
+## [Unreleased]
+
+> 0.1.0 is in-progress / pre-release. The README, CLI, MCP server, and 3D
+> dashboard reflect the current state of `main`, but the package has not yet
+> been pushed to PyPI. Items below describe what has shipped on `main` and
+> will roll into the eventual 0.1.0 tag. Install from source for now
+> (`pip install -e .`).
+
+### Post-launch-sprint additions (still pre-release)
+
+- **DF0 — function signatures + per-call-site arguments.** Python and
+  TypeScript parsers now capture parameter lists, return-type annotations,
+  and the literal text of each call-site argument and kwarg.
+- **DF1.5 — role classification.** Functions and classes are tagged
+  `HANDLER` / `SERVICE` / `COMPONENT` / `REPO` based on framework patterns
+  (HTTP frameworks today; CLI handlers deferred).
+- **3D focus-mode dashboard.** Pick any function from a role-grouped picker;
+  trace ancestors and descendants; expand or collapse inline; always-on node
+  labels; color/role legend; hover signature tooltips; edge labels with
+  call-site args; external calls render as terminal leaves.
+- **MCP surface.** `find_symbol` accepts a role filter; `callers` and
+  `callees` surface params + role + per-call-site args; HLD payload exposes
+  DF0 + DF1.5 metadata.
+- **Resolver R2 patterns.** Same-file constructor calls, decorator-call
+  edges, class-annotation `self.X.Y` chains, and fresh-instance method
+  calls are now resolved on Python (10 dead-code findings → 3 → 4 today
+  after subsequent feature additions).
+- **Cycles with qualnames.** Both `analyze` and the MCP `cycles` tool
+  resolve cycle node IDs to dotted qualnames.
+
+## [0.1.0] - in-progress
 
 ### Added
 
