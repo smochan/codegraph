@@ -779,6 +779,25 @@
     if (pop) pop.hidden = true;
   }
 
+  function injectLegendOverlay(host) {
+    // ForceGraph3D() overwrites the container's contents on mount, so we
+    // attach the legend AFTER mount as a positioned sibling overlay inside
+    // the same wrap. Idempotent — replaces a stale legend if present.
+    var stage = host.querySelector('#g3d-stage');
+    if (!stage) return;
+    var prior = host.querySelector('#g3d-legend');
+    if (prior && prior.parentNode) prior.parentNode.removeChild(prior);
+    var temp = document.createElement('div');
+    temp.innerHTML = legendHtml();  // trusted, all-internal
+    var legend = temp.firstChild;
+    if (!legend) return;
+    var canvasWrap = host.querySelector('#g3d-canvas');
+    var parent = canvasWrap ? canvasWrap.parentElement : stage;
+    parent.style.position = parent.style.position || 'relative';
+    parent.appendChild(legend);
+    wireLegend(host);
+  }
+
   function bootScene(host, hld, data) {
     var container = host.querySelector('#g3d-canvas');
     if (!container || typeof window.ForceGraph3D === 'undefined') return;
@@ -790,17 +809,25 @@
         .nodeRelSize(4)
         .nodeColor(function (n) { return n.color; })
         .nodeVal(function (n) { return n.val; })
-        .nodeThreeObjectExtend(true)
-        .nodeThreeObject(function (n) { return getOrMakeLabelSprite(n); })
         .nodeLabel(function (n) {
+          // Library-native HTML hover label (no THREE required).
+          // Always renders: name (large), kind+role (small), signature if present.
           if (n.external) {
-            return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
-              + escapeBasic(n.qualname) + '<br><i>(external)</i></div>';
+            return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b>'
+              + '<div class="g3d-tip-meta">' + escapeBasic(n.qualname)
+              + ' · <i>external</i></div></div>';
           }
-          // Tooltip kept lightweight — fan-in/fan-out belong to the
-          // Hotspots view, not the data-flow story (Item 5).
-          return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b><br>'
-            + escapeBasic(n.kind) + ' · ' + escapeBasic(n.role) + '</div>';
+          var T = (typeof window !== 'undefined' && window.CG_Graph3DTransform) || null;
+          var sig = (T && typeof T.formatSignature === 'function')
+            ? T.formatSignature(n) : '';
+          var sigHtml = sig
+            ? '<div class="g3d-tip-sig">' + escapeBasic(sig) + '</div>' : '';
+          var roleHtml = n.symbolRole
+            ? ' · <span class="g3d-tip-role">' + escapeBasic(n.symbolRole) + '</span>'
+            : '';
+          return '<div class="g3d-tip"><b>' + escapeBasic(n.name) + '</b>'
+            + '<div class="g3d-tip-meta">' + escapeBasic(n.kind) + roleHtml + '</div>'
+            + sigHtml + '</div>';
         })
         .linkColor(function (l) { return l.color; })
         .linkOpacity(0.6)
@@ -809,17 +836,10 @@
         .linkDirectionalParticles(2)
         .linkDirectionalParticleSpeed(0.006)
         .linkWidth(1.2)
-        .linkThreeObjectExtend(true)
-        .linkThreeObject(function (l) { return getOrMakeEdgeLabelSprite(l); })
-        .linkPositionUpdate(function (sprite, coords) {
-          if (!sprite) return;
-          var s = coords.start; var t = coords.end;
-          if (!s || !t) return;
-          sprite.position.set(
-            (s.x + t.x) / 2,
-            (s.y + t.y) / 2 + 2,
-            (s.z + t.z) / 2
-          );
+        .linkLabel(function (l) {
+          if (!l.argLabel) return '';
+          return '<div class="g3d-tip g3d-tip-edge"><b>args</b>: '
+            + escapeBasic(l.argLabel) + '</div>';
         })
         .onNodeHover(function (node) {
           container.style.cursor = node ? 'pointer' : 'grab';
@@ -861,6 +881,7 @@
         });
         resizeObs.observe(container);
       }
+      injectLegendOverlay(host);
     } catch (e) {
       host.innerHTML = fallbackHtml('WebGL initialization failed: ' + (e && e.message || e));
       wireFallback(host);
