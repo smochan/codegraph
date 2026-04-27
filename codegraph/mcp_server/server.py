@@ -555,6 +555,119 @@ def _handle_metrics(graph: nx.MultiDiGraph, args: dict[str, Any]) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# v0.3 — semantic + hybrid search
+# ---------------------------------------------------------------------------
+
+
+def tool_semantic_search(
+    graph: nx.MultiDiGraph,
+    query: str,
+    k: int = 5,
+    *,
+    repo_root: Path | None = None,
+) -> Any:
+    """Pure cosine-similarity search against the embeddings index."""
+    try:
+        from codegraph.embed.query import IndexMissingError, semantic_query
+    except ImportError as exc:
+        return {
+            "error": "embeddings module unavailable",
+            "detail": str(exc),
+        }
+    try:
+        hits = semantic_query(query, k=k, repo_root=repo_root)
+    except IndexMissingError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:  # pragma: no cover
+        return {"error": f"semantic search failed: {exc}"}
+    return [hit.as_dict() for hit in hits]
+
+
+def tool_hybrid_search(
+    graph: nx.MultiDiGraph,
+    query: str,
+    k: int = 5,
+    *,
+    role: str | None = None,
+    focus_qualname: str | None = None,
+    repo_root: Path | None = None,
+) -> Any:
+    """Semantic search reranked by graph distance from a focus node."""
+    try:
+        from codegraph.embed.query import IndexMissingError, hybrid_query
+    except ImportError as exc:
+        return {
+            "error": "embeddings module unavailable",
+            "detail": str(exc),
+        }
+    try:
+        hits = hybrid_query(
+            query,
+            k=k,
+            role=role,
+            focus_qn=focus_qualname,
+            repo_root=repo_root,
+            graph=graph,
+        )
+    except IndexMissingError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:  # pragma: no cover
+        return {"error": f"hybrid search failed: {exc}"}
+    return [hit.as_dict(score_field="final_score") for hit in hits]
+
+
+@_register(
+    "semantic_search",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Free-text query"},
+            "k": {"type": "integer", "default": 5},
+        },
+        "required": ["query"],
+    },
+)
+def _handle_semantic_search(graph: nx.MultiDiGraph, args: dict[str, Any]) -> Any:
+    return tool_semantic_search(
+        graph,
+        query=str(args["query"]),
+        k=int(args.get("k", 5)),
+    )
+
+
+@_register(
+    "hybrid_search",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Free-text query"},
+            "k": {"type": "integer", "default": 5},
+            "role": {
+                "type": "string",
+                "enum": ["HANDLER", "SERVICE", "COMPONENT", "REPO"],
+                "description": "Filter to symbols with this role",
+            },
+            "focus_qualname": {
+                "type": "string",
+                "description": "Rerank hits by graph distance from this symbol",
+            },
+        },
+        "required": ["query"],
+    },
+)
+def _handle_hybrid_search(graph: nx.MultiDiGraph, args: dict[str, Any]) -> Any:
+    role = args.get("role")
+    focus = args.get("focus_qualname")
+    return tool_hybrid_search(
+        graph,
+        query=str(args["query"]),
+        k=int(args.get("k", 5)),
+        role=str(role) if role is not None else None,
+        focus_qualname=str(focus) if focus is not None else None,
+    )
+
+
+# ---------------------------------------------------------------------------
 # MCP Server
 # ---------------------------------------------------------------------------
 
@@ -595,6 +708,8 @@ def _tool_description(name: str) -> str:
         "untested": "List untested functions/methods",
         "hotspots": "List hotspot callables by fan-in/out/LOC",
         "metrics": "Return aggregate graph metrics",
+        "semantic_search": "Free-text semantic search over the embeddings index",
+        "hybrid_search": "Semantic search reranked by graph distance + role filter",
     }
     return descriptions.get(name, name)
 
