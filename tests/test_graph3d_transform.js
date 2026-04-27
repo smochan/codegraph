@@ -175,3 +175,53 @@ test('edgeColor varies by edge kind', () => {
   assert.notEqual(a, b);
   assert.notEqual(b, c);
 });
+
+// ---------------------------------------------------------------------------
+// linkKey() — pure helper used for dedup. Not exported; load via vm.
+// ---------------------------------------------------------------------------
+
+const fs = require('node:fs');
+const vm = require('node:vm');
+
+function loadLinkKey() {
+  const file = path.join(
+    __dirname, '..', 'codegraph', 'web', 'static', 'views', 'graph3d_transform.js'
+  );
+  const source = fs.readFileSync(file, 'utf-8');
+  const match = source.match(/function linkKey\(source,\s*target\)\s*\{[\s\S]*?\n\}/);
+  if (!match) throw new Error('linkKey() not found in graph3d_transform.js');
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(`${match[0]}\nthis.linkKey = linkKey;`, sandbox);
+  return sandbox.linkKey;
+}
+
+const linkKey = loadLinkKey();
+
+test('linkKey accepts plain string ids', () => {
+  assert.equal(linkKey('a', 'b'), 'a->b');
+});
+
+test('linkKey extracts .id from object source', () => {
+  assert.equal(linkKey({ id: 'x' }, 'y'), 'x->y');
+});
+
+test('linkKey extracts .id from object target', () => {
+  assert.equal(linkKey('a', { id: 'b' }), 'a->b');
+});
+
+test('linkKey works for both objects', () => {
+  assert.equal(linkKey({ id: 'foo' }, { id: 'bar' }), 'foo->bar');
+});
+
+test('linkKey stringifies non-string ids', () => {
+  assert.equal(linkKey(1, 2), '1->2');
+});
+
+test('linkKey is deterministic — same inputs same output', () => {
+  assert.equal(linkKey('a', 'b'), linkKey('a', 'b'));
+});
+
+test('linkKey distinguishes direction', () => {
+  assert.notEqual(linkKey('a', 'b'), linkKey('b', 'a'));
+});
