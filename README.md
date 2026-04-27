@@ -214,7 +214,13 @@ codegraph review                   # graph-diff PR review with risk score
 
 ---
 
-## Use with Claude Code
+## Use with MCP-compatible AI clients
+
+`codegraph` ships an MCP server (`codegraph mcp serve`) that exposes the
+graph to any client supporting the [Model Context Protocol](https://modelcontextprotocol.io/).
+The server config is identical across clients — only the file location differs.
+
+### Claude Code
 
 Add to `~/.claude.json` (or register with `claude mcp add`):
 
@@ -229,12 +235,50 @@ Add to `~/.claude.json` (or register with `claude mcp add`):
 }
 ```
 
-Then, inside a Claude Code conversation, you can ask:
+### Cursor
+
+Add to `~/.cursor/mcp.json` (or per-workspace `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "codegraph",
+      "args": ["mcp", "serve", "--db", ".codegraph/graph.db"]
+    }
+  }
+}
+```
+
+### Codex CLI
+
+Codex reads MCP config from `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.codegraph]
+command = "codegraph"
+args = ["mcp", "serve", "--db", ".codegraph/graph.db"]
+```
+
+### VS Code (Continue, Cline, or any MCP extension)
+
+Most VS Code AI extensions accept the same JSON shape under their own
+settings key. Continue uses `~/.continue/config.json` → `mcpServers`;
+Cline uses the workspace MCP settings. Point them at the `codegraph`
+binary the same way.
+
+### Once connected
+
+Inside any of these clients, you can ask things like:
 
 > *"Which functions have the highest blast radius in the auth module?"*
 > *"Show me everything that calls `UserService.login`, and surface the args at each call site."*
 > *"List the HANDLER nodes — which routes have no test coverage?"*
 > *"Are there any import cycles in this PR?"*
+
+The available tools are: `find_symbol` (now with a `role` filter),
+`callers`, `callees`, `blast_radius`, `subgraph`, `dead_code`, `cycles`,
+`untested`, `hotspots`, `metrics`.
 
 ---
 
