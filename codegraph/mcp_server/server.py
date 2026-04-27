@@ -46,13 +46,33 @@ def _load_graph(db_path: Path | None = None) -> nx.MultiDiGraph:
 # Pure tool-handler functions (testable without MCP machinery)
 # ---------------------------------------------------------------------------
 
+def _node_df_metadata(attrs: dict[str, Any]) -> dict[str, Any]:
+    """Extract DF0/DF1.5 metadata fields from a node — omit when absent."""
+    md = attrs.get("metadata") or {}
+    out: dict[str, Any] = {}
+    if not isinstance(md, dict):
+        return out
+    if "params" in md:
+        out["params"] = md["params"]
+    if "returns" in md:
+        out["returns"] = md["returns"]
+    if "role" in md and md["role"] is not None:
+        out["role"] = md["role"]
+    return out
+
+
 def tool_find_symbol(
     graph: nx.MultiDiGraph,
     query: str,
     kind: str | None = None,
     limit: int = 20,
+    role: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Substring match on qualname (case-insensitive)."""
+    """Substring match on qualname (case-insensitive).
+
+    Optional ``role`` filters to symbols whose ``metadata.role`` matches
+    one of HANDLER, SERVICE, COMPONENT, REPO.
+    """
     q = query.lower()
     results: list[dict[str, Any]] = []
     for nid, attrs in graph.nodes(data=True):
@@ -62,14 +82,17 @@ def tool_find_symbol(
         node_kind = str(attrs.get("kind") or "")
         if kind and node_kind.lower() != kind.lower():
             continue
-        results.append(
-            {
-                "qualname": qualname,
-                "kind": node_kind,
-                "file": str(attrs.get("file") or ""),
-                "line": int(attrs.get("line_start") or 0),
-            }
-        )
+        df_md = _node_df_metadata(attrs)
+        if role is not None and df_md.get("role") != role:
+            continue
+        hit: dict[str, Any] = {
+            "qualname": qualname,
+            "kind": node_kind,
+            "file": str(attrs.get("file") or ""),
+            "line": int(attrs.get("line_start") or 0),
+        }
+        hit.update(df_md)
+        results.append(hit)
         if len(results) >= limit:
             break
     return results
@@ -97,7 +120,7 @@ def tool_callers(
         current_depth = visited[current]
         if current_depth >= depth:
             continue
-        for src, _dst, key in graph.in_edges(current, keys=True):
+        for src, _dst, key, edata in graph.in_edges(current, keys=True, data=True):
             if key not in REFERENCE_EDGE_KINDS:
                 continue
             if src in visited:
@@ -105,13 +128,19 @@ def tool_callers(
             visited[src] = current_depth + 1
             queue.append(src)
             attrs = graph.nodes.get(src) or {}
-            results.append(
-                {
-                    "qualname": str(attrs.get("qualname") or src),
-                    "file": str(attrs.get("file") or ""),
-                    "depth": current_depth + 1,
-                }
-            )
+            entry: dict[str, Any] = {
+                "qualname": str(attrs.get("qualname") or src),
+                "file": str(attrs.get("file") or ""),
+                "depth": current_depth + 1,
+            }
+            entry.update(_node_df_metadata(attrs))
+            edge_md = edata.get("metadata") or {}
+            if isinstance(edge_md, dict):
+                if "args" in edge_md:
+                    entry["args"] = list(edge_md.get("args") or [])
+                if "kwargs" in edge_md:
+                    entry["kwargs"] = dict(edge_md.get("kwargs") or {})
+            results.append(entry)
 
     return results
 
@@ -137,7 +166,7 @@ def tool_callees(
         current_depth = visited[current]
         if current_depth >= depth:
             continue
-        for _src, dst, key in graph.out_edges(current, keys=True):
+        for _src, dst, key, edata in graph.out_edges(current, keys=True, data=True):
             if key != EdgeKind.CALLS.value:
                 continue
             if dst in visited:
@@ -145,13 +174,19 @@ def tool_callees(
             visited[dst] = current_depth + 1
             queue.append(dst)
             attrs = graph.nodes.get(dst) or {}
-            results.append(
-                {
-                    "qualname": str(attrs.get("qualname") or dst),
-                    "file": str(attrs.get("file") or ""),
-                    "depth": current_depth + 1,
-                }
-            )
+            entry: dict[str, Any] = {
+                "qualname": str(attrs.get("qualname") or dst),
+                "file": str(attrs.get("file") or ""),
+                "depth": current_depth + 1,
+            }
+            entry.update(_node_df_metadata(attrs))
+            edge_md = edata.get("metadata") or {}
+            if isinstance(edge_md, dict):
+                if "args" in edge_md:
+                    entry["args"] = list(edge_md.get("args") or [])
+                if "kwargs" in edge_md:
+                    entry["kwargs"] = dict(edge_md.get("kwargs") or {})
+            results.append(entry)
 
     return results
 
@@ -376,6 +411,11 @@ def _register(
             "query": {"type": "string", "description": "Substring to match in qualname"},
             "kind": {"type": "string", "description": "Filter by node kind"},
             "limit": {"type": "integer", "default": 20},
+            "role": {
+                "type": "string",
+                "enum": ["HANDLER", "SERVICE", "COMPONENT", "REPO"],
+                "description": "Filter by classified role (DF1.5)",
+            },
         },
         "required": ["query"],
     },
@@ -383,11 +423,13 @@ def _register(
 def _handle_find_symbol(
     graph: nx.MultiDiGraph, args: dict[str, Any]
 ) -> Any:
+    role_arg = args.get("role")
     return tool_find_symbol(
         graph,
         query=str(args["query"]),
         kind=args.get("kind"),
         limit=int(args.get("limit", 20)),
+        role=str(role_arg) if role_arg is not None else None,
     )
 
 
