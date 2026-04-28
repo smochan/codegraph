@@ -11,6 +11,11 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    # `secrets` in step-level `if:` was failing the workflow validator on
+    # non-tag pushes ("workflow file issue"). Lift to job-level env and
+    # compare a plain env var in the step.
+    env:
+      HAS_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,7 +42,7 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        if: env.HAS_PYPI_TOKEN == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
