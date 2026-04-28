@@ -309,12 +309,25 @@ def _hop_from_node(
 def _outgoing_calls(
     graph: nx.MultiDiGraph, node_id: str
 ) -> list[tuple[str, dict[str, Any]]]:
-    """Return [(target_id, edge_metadata)] for outgoing CALLS edges."""
+    """Return [(target_id, edge_metadata)] for outgoing CALLS edges.
+
+    Resolved targets (real nodes) are returned before unresolved sentinel
+    targets (``unresolved::*``). Trace traversal picks the first non-visited
+    callee, so this ordering matters: we want real next-hops to win over
+    decorator stubs and unbound name references.
+    """
     out: list[tuple[str, dict[str, Any]]] = []
     for _src, dst, key, edata in graph.out_edges(node_id, keys=True, data=True):
         if key == EdgeKind.CALLS.value:
             meta = edata.get("metadata") or {}
             out.append((str(dst), meta if isinstance(meta, dict) else {}))
+
+    def _is_unresolved(target_id: str) -> bool:
+        attrs = graph.nodes.get(target_id) or {}
+        qn = str(attrs.get("qualname") or target_id)
+        return qn.startswith("unresolved::") or target_id.startswith("unresolved::")
+
+    out.sort(key=lambda t: (1 if _is_unresolved(t[0]) else 0))
     return out
 
 
@@ -515,4 +528,176 @@ def trace(
     return DataFlow(entry=entry, hops=hops, confidence=final_conf)
 
 
-__all__ = ["DataFlow", "FlowHop", "match_route", "trace"]
+def shape_hops_for_handler(
+    graph: nx.MultiDiGraph,
+    handler_qn: str,
+    *,
+    method: str = "",
+    path: str = "",
+    max_depth: int = 6,
+) -> dict[str, Any]:
+    """Return the per-handler ``dataflow`` payload for the HLD view.
+
+    Output shape (matches the v0.3 unified-trace contract)::
+
+        {
+          "hops": [
+            {"kind": "FETCH_CALL"|"ROUTE"|"CALL"|"READS_FROM"|"WRITES_TO",
+             "qualname": str, "file": str, "line": int,
+             "args": [str, ...], "role": str | None,
+             "body_keys": [str, ...]   # FETCH_CALL only
+            },
+            ...
+          ],
+          "confidence": float,
+        }
+
+    Each hop drops the per-hop ``confidence`` field; only the top-level
+    chain confidence is reported.
+
+    The shaping logic:
+
+    * walk forward from ``handler_qn`` using :func:`trace`
+    * tag the entry hop ``ROUTE`` and stamp method/path
+    * tag intermediate FlowHops ``CALL``
+    * tag terminal db-layer hops ``READS_FROM`` / ``WRITES_TO`` based on
+      the ``op`` recorded by :func:`trace`
+    * prepend any frontend ``FETCH_CALL`` callers whose ``match_route``
+      resolves to this handler — that gives the chain a real frontend
+      entry point in repos that have one
+    """
+    if not handler_qn:
+        return {"hops": [], "confidence": 0.0}
+
+    flow = trace(graph, handler_qn, max_depth=max_depth)
+    if flow is None or not flow.hops:
+        return {"hops": [], "confidence": 0.0}
+
+    hops_out: list[dict[str, Any]] = []
+
+    # Prepend any frontend FETCH_CALL caller(s) that resolve to this handler.
+    fetch_hops = _frontend_fetch_hops_for_handler(graph, handler_qn)
+    hops_out.extend(fetch_hops)
+
+    real_idx = 0
+    for hop in flow.hops:
+        # Skip unresolved sentinel nodes (e.g. decorator call sites the
+        # resolver never bound). They aren't useful in the trace UI.
+        if hop.qualname.startswith("unresolved::"):
+            continue
+        kind = _classify_hop_kind(hop, real_idx)
+        real_idx += 1
+        # For terminal db hops, FlowHop hard-codes role="REPO" — re-read
+        # the actual node metadata so unannotated CLASS nodes (e.g. plain
+        # SQLAlchemy models) surface as null per the v0.3 contract.
+        role: str | None = hop.role
+        if kind in ("READS_FROM", "WRITES_TO"):
+            role = _node_role(graph, hop.qualname)
+        entry: dict[str, Any] = {
+            "kind": kind,
+            "qualname": hop.qualname,
+            "file": hop.file,
+            "line": hop.line,
+            "args": list(hop.args),
+            "role": role,
+        }
+        hops_out.append(entry)
+
+    # Stamp method/path onto the ROUTE hop — find it (might not be hop 0
+    # if FETCH_CALL was prepended).
+    if method or path:
+        for h in hops_out:
+            if h.get("kind") == "ROUTE":
+                if method:
+                    h["method"] = method
+                if path:
+                    h["path"] = path
+                break
+
+    return {"hops": hops_out, "confidence": float(flow.confidence)}
+
+
+def _node_role(graph: nx.MultiDiGraph, qualname: str) -> str | None:
+    """Read the ``metadata.role`` field off the node with this qualname."""
+    if not qualname:
+        return None
+    for _nid, attrs in graph.nodes(data=True):
+        if str(attrs.get("qualname") or "") != qualname:
+            continue
+        meta = attrs.get("metadata") or {}
+        if isinstance(meta, dict):
+            role = meta.get("role")
+            if role:
+                return str(role)
+        return None
+    return None
+
+
+def _classify_hop_kind(hop: FlowHop, index: int) -> str:
+    """Map a :class:`FlowHop` to one of the contract ``kind`` strings."""
+    if hop.layer == "db":
+        op = hop.kwargs.get("op") if hop.kwargs else ""
+        if op in (EdgeKind.WRITES_TO.value, "WRITES_TO"):
+            return "WRITES_TO"
+        return "READS_FROM"
+    if index == 0:
+        return "ROUTE"
+    return "CALL"
+
+
+def _frontend_fetch_hops_for_handler(
+    graph: nx.MultiDiGraph, handler_qn: str
+) -> list[dict[str, Any]]:
+    """Return zero or more FETCH_CALL hop dicts whose route resolves to handler_qn."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for src, _dst, key, edata in graph.edges(keys=True, data=True):
+        if key != EdgeKind.FETCH_CALL.value:
+            continue
+        meta = edata.get("metadata") or {}
+        if not isinstance(meta, dict):
+            continue
+        url = str(meta.get("url") or "")
+        method = str(meta.get("method") or "GET")
+        body_keys_raw = meta.get("body_keys") or []
+        body_keys = (
+            [str(k) for k in body_keys_raw]
+            if isinstance(body_keys_raw, list)
+            else []
+        )
+        result = match_route(graph, url, method, body_keys=body_keys or None)
+        if result is None or result[0] != handler_qn:
+            continue
+        src_attrs = graph.nodes.get(src) or {}
+        caller_qn = str(src_attrs.get("qualname") or "")
+        if not caller_qn or caller_qn in seen:
+            continue
+        seen.add(caller_qn)
+        role_val = None
+        node_md = src_attrs.get("metadata") or {}
+        if isinstance(node_md, dict):
+            r = node_md.get("role")
+            if r:
+                role_val = str(r)
+        out.append({
+            "kind": "FETCH_CALL",
+            "qualname": caller_qn,
+            "file": str(src_attrs.get("file") or ""),
+            "line": int(src_attrs.get("line_start") or 0),
+            "args": [],
+            "role": role_val,
+            "body_keys": body_keys,
+            "method": method,
+            "url": url,
+        })
+    out.sort(key=lambda e: (str(e["qualname"]), str(e.get("url") or "")))
+    return out
+
+
+__all__ = [
+    "DataFlow",
+    "FlowHop",
+    "match_route",
+    "shape_hops_for_handler",
+    "trace",
+]

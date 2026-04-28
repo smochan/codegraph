@@ -267,13 +267,28 @@ class HldPayload:
     fetches: list[dict[str, Any]] = field(default_factory=list)
 
 
-def serialize_route_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
+def serialize_route_edges(
+    graph: nx.MultiDiGraph,
+    *,
+    include_dataflow: bool = True,
+) -> list[dict[str, Any]]:
     """Serialize ROUTE edges into the HLD payload's ``routes`` array.
 
     One entry per ROUTE edge. Each entry carries the handler's qualname
     plus the HTTP method/path/framework metadata captured at parse time.
     Sorted by ``(path, method)`` for stable rendering.
+
+    When ``include_dataflow`` is True (the default), each entry also gets
+    a ``dataflow`` field (see
+    :func:`codegraph.analysis.dataflow.shape_hops_for_handler`) so the
+    architecture dashboard can render a full per-handler trace without an
+    extra API round-trip. Set to False for callers that want the legacy
+    shape (e.g. existing snapshots, bandwidth-sensitive clients).
     """
+    # Local import: keeps the analysis package independent of the viz
+    # layer's import order and avoids cycles.
+    from codegraph.analysis.dataflow import shape_hops_for_handler
+
     out: list[dict[str, Any]] = []
     for src, _dst, data in graph.edges(data=True):
         if kind_str(data.get("kind")) != "ROUTE":
@@ -281,13 +296,29 @@ def serialize_route_edges(graph: nx.MultiDiGraph) -> list[dict[str, Any]]:
         md = data.get("metadata") or {}
         if not isinstance(md, dict):
             md = {}
-        handler_qn = str(graph.nodes[src].get("qualname") or "")
-        out.append({
+        src_attrs = graph.nodes[src]
+        handler_qn = str(src_attrs.get("qualname") or "")
+        method = str(md.get("method") or "")
+        path = str(md.get("path") or "")
+        entry: dict[str, Any] = {
             "handler_qn": handler_qn,
-            "method": str(md.get("method") or ""),
-            "path": str(md.get("path") or ""),
+            "method": method,
+            "path": path,
             "framework": str(md.get("framework") or ""),
-        })
+        }
+        if include_dataflow:
+            # Pull the role off the handler node, if DF1.5 has assigned one.
+            role: str | None = None
+            node_md = src_attrs.get("metadata") or {}
+            if isinstance(node_md, dict):
+                role_val = node_md.get("role")
+                if role_val:
+                    role = str(role_val)
+            entry["role"] = role
+            entry["dataflow"] = shape_hops_for_handler(
+                graph, handler_qn, method=method, path=path,
+            )
+        out.append(entry)
     out.sort(key=lambda r: (r["path"], r["method"], r["handler_qn"]))
     return out
 
