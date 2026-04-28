@@ -506,6 +506,16 @@ See [`.planning/MASTER_PLAN.md`](.planning/MASTER_PLAN.md) and
 
 ---
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) — covers local setup, what CI
+checks (and how to run the same checks locally before pushing), commit /
+PR conventions, and the merge process. Run
+`./scripts/test-pr-review-locally.sh` before opening a PR to catch CI
+failures one round-trip earlier.
+
+---
+
 ## License
 
 [MIT](LICENSE) © mochan
