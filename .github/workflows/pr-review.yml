@@ -34,9 +34,6 @@ jobs:
         run: pip install -e .
 
       - name: Build baseline graph from main
-        # The baseline lives in /tmp so it never appears as a path in the
-        # PR-head graph build. Without this, every file in .baseline-checkout/
-        # got reported as PR-introduced "new dead code".
         run: |
           set -euxo pipefail
           BASELINE_DIR="${RUNNER_TEMP}/cg-baseline-checkout"
@@ -90,7 +87,7 @@ jobs:
             echo "## codegraph PR review"
             echo
             echo "<details open>"
-            echo "<summary><b>Diff vs main</b> · severity ≤ <code>high</code></summary>"
+            echo "<summary><b>Diff vs main</b> · severity &le; <code>high</code></summary>"
             echo
             cat review.md
             echo
@@ -99,10 +96,42 @@ jobs:
             echo "<sub>Triggered by codegraph CI · <a href=\"${RUN_URL}\">last run</a></sub>"
           } > comment.md
 
+      - name: Write findings to job summary
+        # Always renders the review on the run page so fork-PR contributors
+        # (who don't get a PR comment) can see the result without downloading
+        # an artifact.
+        if: always()
+        run: |
+          set -uo pipefail
+          if [ -f review.md ]; then
+            {
+              echo "# codegraph PR review"
+              echo
+              if [ "${REVIEW_FAILED:-}" = "1" ]; then
+                echo "**Status:** failed (findings exceed \`--fail-on high\`)"
+              else
+                echo "**Status:** passed"
+              fi
+              echo
+              echo "How to reproduce locally before pushing:"
+              echo
+              echo '```bash'
+              echo "git fetch origin main"
+              echo "./scripts/test-pr-review-locally.sh"
+              echo '```'
+              echo
+              echo "---"
+              echo
+              cat review.md
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::review.md was not produced; check earlier steps."
+          fi
+
       - name: Post or update PR comment
         # Posting needs a write-scoped GITHUB_TOKEN, which GitHub does NOT
-        # grant on PRs from a fork. Skip the comment step on fork PRs and
-        # rely on the artifact + the failed-check status instead.
+        # grant on PRs from a fork. Skip on fork PRs; the job summary above
+        # already shows the findings on the run page.
         if: github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         uses: peter-evans/create-or-update-comment@v4
@@ -115,7 +144,7 @@ jobs:
       - name: Note for fork-PR contributors
         if: github.event.pull_request.head.repo.full_name != github.repository
         run: |
-          echo "::notice::PR is from a fork — comment step skipped (GitHub restricts GITHUB_TOKEN to read-only on fork PRs). Download the 'codegraph-review' artifact below to see the full diff review."
+          echo "::notice::PR is from a fork — full review is in the job summary above and the codegraph-review artifact below. Run ./scripts/test-pr-review-locally.sh to reproduce."
 
       - name: Upload review artifact
         if: always()
@@ -131,5 +160,5 @@ jobs:
       - name: Fail if findings exceed threshold
         if: env.REVIEW_FAILED == '1'
         run: |
-          echo "::error::codegraph review found high-or-critical findings. See PR comment (or artifact for fork PRs) for details."
+          echo "::error::codegraph review found high-or-critical findings. See the job summary above for the full report."
           exit 1
