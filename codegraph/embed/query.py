@@ -21,6 +21,7 @@ class Hit:
     score: float
     text_snippet: str
 
+    # pragma: codegraph-public-api
     def as_dict(self, *, score_field: str = "score") -> dict[str, Any]:
         return {
             "qualname": self.qualname,

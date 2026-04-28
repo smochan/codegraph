@@ -44,6 +44,7 @@ class FlowHop:
     role: str | None = None  # HANDLER / SERVICE / COMPONENT / REPO if known
     confidence: float = 1.0
 
+    # pragma: codegraph-public-api
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "layer": self.layer,
@@ -75,6 +76,7 @@ class DataFlow:
     hops: list[FlowHop] = field(default_factory=list)
     confidence: float = 1.0
 
+    # pragma: codegraph-public-api
     def to_dict(self) -> dict[str, Any]:
         return {
             "entry": self.entry,

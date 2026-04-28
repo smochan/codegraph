@@ -121,6 +121,12 @@ def find_dead_code(
         # @property / @cached_property are accessed as attributes, not calls.
         if _has_property_decorator(metadata):
             continue
+        # Pragma-marked public-API symbols are intentionally exposed for
+        # library consumers; the codebase itself may not call them, but
+        # they are not dead. See `# pragma: codegraph-public-api` /
+        # `# codegraph: public-api` (or `// ...` for TS) in source.
+        if metadata.get("public_api"):
+            continue
         # Generated/static frontend assets and test fixtures don't have
         # traceable call graphs — exclude them from dead-code detection.
         if is_excluded_path(str(attrs.get("file") or "")):

@@ -29,6 +29,7 @@ __all__ = [
 ]
 
 
+# pragma: codegraph-public-api
 def query(text: str, *, k: int = 5) -> list[Hit]:
     """Shortcut: run a semantic query against the cwd ``.codegraph`` index."""
     return semantic_query(text, k=k)

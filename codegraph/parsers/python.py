@@ -683,6 +683,71 @@ def _model_name_from_call_arg(arg_text: str) -> str | None:
     return leaf
 
 
+# --- Public-API pragma detection ----------------------------------------
+#
+# A function or class can be exempted from dead-code analysis by prefixing
+# its definition with one of these pragma comments on the line immediately
+# before the def/class (or before the topmost decorator). A trailing
+# same-line pragma (``def foo(): ...  # pragma: codegraph-public-api``) is
+# also accepted.
+_PUBLIC_API_PRAGMAS: tuple[str, ...] = (
+    "# pragma: codegraph-public-api",
+    "# codegraph: public-api",
+)
+
+
+def _line_has_public_api_pragma(line: str) -> bool:
+    stripped = line.strip()
+    return any(pragma in stripped for pragma in _PUBLIC_API_PRAGMAS)
+
+
+def _has_public_api_pragma(def_node: tree_sitter.Node, src: bytes) -> bool:
+    """Return True if the def/class node is preceded by a public-API pragma.
+
+    The pragma must sit on the line immediately above the definition (or
+    above the topmost decorator, when decorators are present) or as a
+    trailing comment on the def/class signature line itself.
+    """
+    container: tree_sitter.Node = def_node
+    if (
+        def_node.parent is not None
+        and def_node.parent.type == "decorated_definition"
+    ):
+        container = def_node.parent
+
+    start_byte = container.start_byte
+    end_byte = container.end_byte
+
+    # Same-line trailing pragma: scan from the def signature start to the
+    # first newline of the def body.
+    sig_end = src.find(b"\n", start_byte)
+    if sig_end == -1:
+        sig_end = end_byte
+    sig_line = src[start_byte:sig_end].decode("utf-8", errors="replace")
+    if _line_has_public_api_pragma(sig_line):
+        return True
+
+    # Walk backward through whitespace-only lines until we find a non-blank
+    # line; if that line is a pragma comment, we're matched.
+    cursor = start_byte
+    # Step back past the leading newline of the def's line.
+    if cursor > 0 and src[cursor - 1:cursor] == b"\n":
+        cursor -= 1
+    while cursor > 0:
+        # Find the start of the previous line.
+        prev_nl = src.rfind(b"\n", 0, cursor)
+        line_start = prev_nl + 1 if prev_nl != -1 else 0
+        line = src[line_start:cursor].decode("utf-8", errors="replace")
+        if not line.strip():
+            # Blank line — keep walking.
+            cursor = prev_nl
+            if cursor <= 0:
+                return False
+            continue
+        return _line_has_public_api_pragma(line)
+    return False
+
+
 def _get_function_decorators(func_node: tree_sitter.Node, src: bytes) -> list[str]:
     """Collect decorator strings for a function/class definition.
 
@@ -933,6 +998,8 @@ class PythonExtractor(ExtractorBase):
             extra_decorator_patterns=self.extra_entry_point_decorators,
         ):
             cls_metadata["entry_point"] = True
+        if _has_public_api_pragma(node, src):
+            cls_metadata["public_api"] = True
 
         body_for_attrs = node.child_by_field_name("body")
         attr_types = (
@@ -1046,6 +1113,8 @@ class PythonExtractor(ExtractorBase):
             extra_decorator_patterns=self.extra_entry_point_decorators,
         ) or name == "__main__":
             metadata["entry_point"] = True
+        if _has_public_api_pragma(node, src):
+            metadata["public_api"] = True
 
         # DF0: capture parameter descriptors and return-type annotation.
         # Methods skip the leading ``self`` / ``cls`` parameter; classmethods

@@ -34,6 +34,7 @@ class StoredChunk:
     text: str
     vector: list[float] = field(default_factory=list)
 
+    # pragma: codegraph-public-api
     def to_json(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -260,18 +261,23 @@ class EmbeddingStore:
             self.backend_name = "json"
 
     # ------------------------------------------------------------------
+    # pragma: codegraph-public-api
     def upsert(self, rows: Iterable[StoredChunk]) -> None:
         self._backend.upsert(rows)
 
+    # pragma: codegraph-public-api
     def replace_all(self, rows: Iterable[StoredChunk]) -> None:
         self._backend.replace_all(rows)
 
+    # pragma: codegraph-public-api
     def all(self) -> list[StoredChunk]:
         return self._backend.all()
 
+    # pragma: codegraph-public-api
     def query(self, vector: Sequence[float], k: int = 5) -> list[tuple[StoredChunk, float]]:
         return self._backend.query(vector, k)
 
+    # pragma: codegraph-public-api
     def size_bytes(self) -> int:
         return self._backend.size_bytes()
 
@@ -289,6 +295,7 @@ class IndexStats:
     backend: str
     on_disk_bytes: int
 
+    # pragma: codegraph-public-api
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
 

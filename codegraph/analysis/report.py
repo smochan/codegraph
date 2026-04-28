@@ -33,6 +33,7 @@ class AnalyzeReport:
     hotspots: list[Hotspot]
     warnings: list[str] = field(default_factory=list)
 
+    # pragma: codegraph-public-api
     def to_dict(self) -> dict[str, Any]:
         return {
             "metrics": _metrics_to_dict(self.metrics),

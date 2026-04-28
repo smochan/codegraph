@@ -32,6 +32,63 @@ def _is_test_file(rel_path: str) -> bool:
     return bool(_TEST_RE.search(rel_path) or _TEST_DIR_RE.search(rel_path))
 
 
+# --- Public-API pragma detection ----------------------------------------
+#
+# A TypeScript/JavaScript function, method, or class is exempted from
+# dead-code analysis by an immediately-preceding line comment of the form
+# ``// pragma: codegraph-public-api`` or ``// codegraph: public-api``.
+_PUBLIC_API_PRAGMAS_TS: tuple[str, ...] = (
+    "// pragma: codegraph-public-api",
+    "// codegraph: public-api",
+)
+
+
+def _line_has_public_api_pragma_ts(line: str) -> bool:
+    stripped = line.strip()
+    return any(pragma in stripped for pragma in _PUBLIC_API_PRAGMAS_TS)
+
+
+def _has_public_api_pragma_ts(def_node: tree_sitter.Node, src: bytes) -> bool:
+    """Return True if a TS def/class is preceded by a public-API pragma.
+
+    Mirrors the Python helper: walks backward past blank lines from the
+    definition's start byte and matches the first non-blank line against
+    the pragma forms. Same-line trailing pragmas are also accepted.
+    Walks through ``export_statement`` wrappers so a pragma above an
+    ``export function foo()`` declaration is honored.
+    """
+    container: tree_sitter.Node = def_node
+    parent = def_node.parent
+    while parent is not None and parent.type in (
+        "export_statement", "ambient_declaration",
+    ):
+        container = parent
+        parent = parent.parent
+    start_byte = container.start_byte
+
+    sig_end = src.find(b"\n", start_byte)
+    if sig_end == -1:
+        sig_end = container.end_byte
+    sig_line = src[start_byte:sig_end].decode("utf-8", errors="replace")
+    if _line_has_public_api_pragma_ts(sig_line):
+        return True
+
+    cursor = start_byte
+    if cursor > 0 and src[cursor - 1:cursor] == b"\n":
+        cursor -= 1
+    while cursor > 0:
+        prev_nl = src.rfind(b"\n", 0, cursor)
+        line_start = prev_nl + 1 if prev_nl != -1 else 0
+        line = src[line_start:cursor].decode("utf-8", errors="replace")
+        if not line.strip():
+            cursor = prev_nl
+            if cursor <= 0:
+                return False
+            continue
+        return _line_has_public_api_pragma_ts(line)
+    return False
+
+
 def _file_to_qualname(rel_path: str) -> str:
     p = PurePosixPath(rel_path)
     stem = str(p.with_suffix(""))
@@ -706,6 +763,9 @@ class TypeScriptExtractor(ExtractorBase):
         qualname = f"{parent_qualname}.{name}" if parent_qualname else name
         class_id = make_node_id(NodeKind.CLASS, qualname, rel)
 
+        cls_md: dict[str, Any] = {}
+        if _has_public_api_pragma_ts(node, src):
+            cls_md["public_api"] = True
         class_node = Node(
             id=class_id,
             kind=NodeKind.CLASS,
@@ -715,7 +775,7 @@ class TypeScriptExtractor(ExtractorBase):
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
             language=lang,
-            metadata={},
+            metadata=cls_md,
         )
         nodes.append(class_node)
 
@@ -799,6 +859,12 @@ class TypeScriptExtractor(ExtractorBase):
         params_list = _extract_params(params, src)
         return_type = _extract_return_type(node, params, src)
 
+        method_md: dict[str, Any] = {
+            "params": params_list,
+            "returns": return_type,
+        }
+        if _has_public_api_pragma_ts(node, src):
+            method_md["public_api"] = True
         method_node = Node(
             id=method_id,
             kind=NodeKind.METHOD,
@@ -809,7 +875,7 @@ class TypeScriptExtractor(ExtractorBase):
             line_end=node.end_point[0] + 1,
             signature=sig,
             language=lang,
-            metadata={"params": params_list, "returns": return_type},
+            metadata=method_md,
         )
         nodes.append(method_node)
 
@@ -851,6 +917,12 @@ class TypeScriptExtractor(ExtractorBase):
         params_list = _extract_params(params, src)
         return_type = _extract_return_type(node, params, src)
 
+        func_md: dict[str, Any] = {
+            "params": params_list,
+            "returns": return_type,
+        }
+        if _has_public_api_pragma_ts(node, src):
+            func_md["public_api"] = True
         func_node = Node(
             id=func_id,
             kind=NodeKind.FUNCTION,
@@ -861,7 +933,7 @@ class TypeScriptExtractor(ExtractorBase):
             line_end=node.end_point[0] + 1,
             signature=sig,
             language=lang,
-            metadata={"params": params_list, "returns": return_type},
+            metadata=func_md,
         )
         nodes.append(func_node)
 

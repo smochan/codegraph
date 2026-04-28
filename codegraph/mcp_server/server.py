@@ -397,6 +397,7 @@ tool_registry: dict[str, tuple[_HandlerFn, dict[str, Any]]] = {}
 def _register(
     name: str, schema: dict[str, Any]
 ) -> Callable[[_HandlerFn], _HandlerFn]:
+    # pragma: codegraph-public-api
     def decorator(fn: _HandlerFn) -> _HandlerFn:
         tool_registry[name] = (fn, schema)
         return fn
