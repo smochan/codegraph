@@ -15,25 +15,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Post-launch-sprint additions (still pre-release)
 
+#### Cross-stack data-flow tracing (DF0 → DF4)
+
 - **DF0 — function signatures + per-call-site arguments.** Python and
-  TypeScript parsers now capture parameter lists, return-type annotations,
+  TypeScript parsers capture parameter lists, return-type annotations,
   and the literal text of each call-site argument and kwarg.
+- **DF1 — HTTP routes + SQL data access.** FastAPI / Flask / aiohttp
+  `ROUTE` edges; SQLAlchemy `READS_FROM` / `WRITES_TO` edges including
+  `self.session.X` repository-pattern detection.
 - **DF1.5 — role classification.** Functions and classes are tagged
-  `HANDLER` / `SERVICE` / `COMPONENT` / `REPO` based on framework patterns
-  (HTTP frameworks today; CLI handlers deferred).
+  `HANDLER` / `SERVICE` / `COMPONENT` / `REPO` based on framework patterns.
+- **DF2 — frontend `FETCH_CALL` extraction.** `fetch` / `axios` / `useSWR` /
+  `useQuery` / api-client patterns emit `FETCH_CALL` edges with method,
+  url, and body-key metadata.
+- **DF3 — URL stitcher (`match_route`).** Stitches frontend `FETCH_CALL`
+  URLs to backend `ROUTE` handlers with placeholder normalisation
+  (`/users/{id}`, `${id}`, `:id`, numeric segments) and a body-key
+  overlap bonus.
+- **DF4 — `codegraph dataflow trace`.** Walks the call graph + cross-layer
+  edges and emits an ordered `DataFlow`. Available as a CLI subcommand and
+  the MCP `dataflow_trace` tool.
+
+#### v0.3 embedding layer
+
+- **`codegraph/embed/`** — chunker + embedder + LanceDB / JSON store.
+- **`codegraph embed` CLI.** Default model `nomic-ai/CodeRankEmbed`
+  (Apache 2.0, ~140 MB, 768-dim).
+- **MCP tools** `semantic_search` and `hybrid_search`. Hybrid reranks
+  embedding similarity by graph distance from a focus node.
+- Optional install: `pip install -e ".[embed]"`.
+
+#### 3D dashboard
+
 - **3D focus-mode dashboard.** Pick any function from a role-grouped picker;
   trace ancestors and descendants; expand or collapse inline; always-on node
-  labels; color/role legend; hover signature tooltips; edge labels with
-  call-site args; external calls render as terminal leaves.
-- **MCP surface.** `find_symbol` accepts a role filter; `callers` and
-  `callees` surface params + role + per-call-site args; HLD payload exposes
-  DF0 + DF1.5 metadata.
-- **Resolver R2 patterns.** Same-file constructor calls, decorator-call
-  edges, class-annotation `self.X.Y` chains, and fresh-instance method
-  calls are now resolved on Python (10 dead-code findings → 3 → 4 today
-  after subsequent feature additions).
+  labels via `three-spritetext`; color/role legend; hover signature tooltips;
+  edge labels with call-site args; external calls render as terminal leaves.
+
+#### MCP surface
+
+- **15 tools registered.** `find_symbol` (with role filter), `callers`,
+  `callees` (both surfacing params + role + per-call-site args),
+  `blast_radius`, `subgraph`, `dead_code`, `cycles`, `untested`, `hotspots`,
+  `metrics`, `semantic_search`, `hybrid_search`, `dataflow_routes`,
+  `dataflow_fetches`, `dataflow_trace`.
+- HLD payload exposes DF0 + DF1.5 + DF1 + DF2 metadata.
+
+#### Resolver
+
+- **R2 patterns.** Same-file constructor calls, decorator-call edges,
+  class-annotation `self.X.Y` chains, and fresh-instance method calls
+  are now resolved on Python.
+- **R3 patterns.** Conditional `self.X` assignments (`if/else` branches)
+  and class-level union annotations (`Foo | Bar`) bind to all candidate
+  types.
+
+#### Analysis & quality
+
 - **Cycles with qualnames.** Both `analyze` and the MCP `cycles` tool
   resolve cycle node IDs to dotted qualnames.
+- **Analyzer hardening.** Pure line-shift no longer triggers
+  `modified-signature` findings (was producing 50+ false-positives on
+  PRs that touched the top of high-traffic files like `app.js`).
+- **Skip paths extended.** `tests/fixtures/`, `/static/`, and `examples/`
+  are auto-excluded from dead-code and untested-function analysers.
+- **Protocol classes** are no longer flagged as dead code.
+
+#### CI & contributor experience
+
+- **`codegraph PR review` GitHub Actions workflow.** Builds baseline from
+  `origin/main`, builds PR head, runs `codegraph review`, posts sticky
+  PR comment (or run-summary on fork PRs), fails the check on
+  `--fail-on high`.
+- **`ci.yml` self-explanatory failures.** Inline `::error` annotations on
+  the Files tab; every failing step writes a step-summary block with the
+  exact local-fix command.
+- **`scripts/test-pr-review-locally.sh`** — emulates the CI review locally
+  so contributors can pre-validate before pushing.
+- **`CONTRIBUTING.md`** — covers setup, commit / PR conventions, branch
+  protection, and the dogfood loop.
+- **`examples/cross-stack-demo/`** — FastAPI + SQLAlchemy + React fixture
+  exercising the full DF0 → DF4 chain. 9 regression tests assert it stays
+  reproducible.
 
 ## [0.1.0] - in-progress
 

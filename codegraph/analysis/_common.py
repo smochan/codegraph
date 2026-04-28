@@ -28,6 +28,12 @@ EXCLUDED_PATH_FRAGMENTS: tuple[str, ...] = (
     "tests\\fixtures\\",
     "/static/",
     "\\static\\",
+    # Demo / example repos are documentation, not call-graph-traceable code.
+    # Their entry points are framework-driven (FastAPI decorators, React JSX
+    # mount points) so the call-graph analyser would otherwise flag every
+    # showcase symbol as "dead" or "untested".
+    "examples/",
+    "examples\\",
 )
 
 
