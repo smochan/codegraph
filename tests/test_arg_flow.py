@@ -378,3 +378,83 @@ def test_arg_flow_keys_are_stable_across_all_hops() -> None:
     expected = {"userId", "tenantId"}
     for h in df["hops"]:
         assert set(h["arg_flow"].keys()) == expected
+
+
+def test_route_entry_args_backfilled_from_handler_params() -> None:
+    """The ROUTE entry hop has no incoming CALLS edge, so trace() can't
+    populate its args. When the handler node carries DF0 ``metadata.params``,
+    those names backfill the ROUTE hop's args so URL-template params (e.g.
+    ``user_id`` in ``/api/users/{user_id}``) drive arg_flow propagation.
+
+    Without this fix, every URL-template-only handler (no body, no fetch
+    body_keys) would produce ``arg_flow == {}`` for every hop.
+    """
+    g: nx.MultiDiGraph = nx.MultiDiGraph()
+    # Handler node carrying DF0 params metadata — this is what the parser
+    # emits when it sees `def get_user(user_id: int)` on a real codebase.
+    g.add_node(
+        "n_handler",
+        kind=NodeKind.FUNCTION.value,
+        qualname="app.api.users.get_user",
+        file="app/api/users.py",
+        line_start=11,
+        metadata={
+            "role": "HANDLER",
+            "params": [
+                {"name": "user_id", "type": "int", "default": None},
+            ],
+        },
+    )
+    df = shape_hops_for_handler(
+        g, "app.api.users.get_user",
+        method="GET", path="/api/users/{user_id}",
+    )
+    assert len(df["hops"]) == 1
+    route = df["hops"][0]
+    assert route["kind"] == "ROUTE"
+    assert route["args"] == ["user_id"]
+    assert route["arg_flow"] == {"user_id": "user_id"}
+
+
+def test_route_entry_args_skip_self_and_cls() -> None:
+    """Method handlers' ``self`` / ``cls`` are dropped from the backfill."""
+    g: nx.MultiDiGraph = nx.MultiDiGraph()
+    g.add_node(
+        "n_handler",
+        kind=NodeKind.METHOD.value,
+        qualname="app.api.users.UserHandlers.get",
+        file="app/api/users.py",
+        line_start=20,
+        metadata={
+            "role": "HANDLER",
+            "params": [
+                {"name": "self", "type": None, "default": None},
+                {"name": "user_id", "type": "int", "default": None},
+            ],
+        },
+    )
+    df = shape_hops_for_handler(
+        g, "app.api.users.UserHandlers.get",
+        method="GET", path="/api/users/{user_id}",
+    )
+    assert df["hops"][0]["args"] == ["user_id"]
+
+
+def test_route_entry_backfill_does_not_override_existing_args() -> None:
+    """If trace() somehow populated ROUTE args (e.g. via FETCH_CALL prepend
+    plumbing), don't overwrite them."""
+    g = _build_graph(
+        handler_args=["user_id"],
+        service_args=["user_id"],
+        repo_args=["user_id"],
+        fetch_body_keys=["email"],
+    )
+    # The handler in _build_graph already has params via handler_args.
+    df = shape_hops_for_handler(
+        g, "app.api.users.get_user",
+        method="GET", path="/api/users/{user_id}",
+    )
+    # Starting keys come from FETCH_CALL body_keys=["email"], not the
+    # handler's user_id.
+    for h in df["hops"]:
+        assert "email" in h["arg_flow"]
