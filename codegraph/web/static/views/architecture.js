@@ -21,6 +21,106 @@
       ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   }
 
+  // ---------- DF4 / Phase 4: per-handler dataflow trace ----------
+
+  // Role → swimlane id + colour. Matches role palette in graph3d_transform.js
+  // (HANDLER amber, SERVICE blue, COMPONENT green, REPO purple).
+  const DF_ROLE_LANES = {
+    COMPONENT: { id: 'df-component', label: 'Component',  color: '#22c55e', icon: 'layout' },
+    HANDLER:   { id: 'df-handler',   label: 'Handler',    color: '#fbbf24', icon: 'cpu' },
+    SERVICE:   { id: 'df-service',   label: 'Service',    color: '#60a5fa', icon: 'cog' },
+    REPO:      { id: 'df-repo',      label: 'Repository', color: '#a78bfa', icon: 'database' },
+    DB:        { id: 'df-db',        label: 'Storage',    color: '#22d3ee', icon: 'hard-drive' },
+  };
+
+  // Map a hop to a lane id given its role/kind.
+  function hopLaneId(hop) {
+    if (!hop) return 'df-handler';
+    if (hop.kind === 'FETCH_CALL') return 'df-component';
+    if (hop.kind === 'READS_FROM' || hop.kind === 'WRITES_TO') return 'df-db';
+    if (hop.role && DF_ROLE_LANES[hop.role]) return DF_ROLE_LANES[hop.role].id;
+    if (hop.kind === 'ROUTE') return 'df-handler';
+    return 'df-service';
+  }
+
+  // Format args list as compact "(a, b)" string.
+  function formatHopArgs(hop) {
+    const args = (hop && hop.args) || [];
+    if (!args.length) return '';
+    return '(' + args.map(a => String(a)).join(', ') + ')';
+  }
+
+  // Short label for hop based on its kind + qualname.
+  function hopLabel(hop) {
+    const qn = hop.qualname || '';
+    const tail = qn.includes('::') ? qn.split('::').pop()
+               : qn.split('.').pop();
+    const argTxt = formatHopArgs(hop);
+    if (hop.kind === 'FETCH_CALL') return 'fetch ' + (tail || qn) + argTxt;
+    if (hop.kind === 'ROUTE')      return 'dispatch → ' + (tail || qn) + argTxt;
+    if (hop.kind === 'READS_FROM') return 'read ' + (tail || qn);
+    if (hop.kind === 'WRITES_TO')  return 'write ' + (tail || qn);
+    return (tail || qn) + argTxt;
+  }
+
+  // Build a Phase 4 segment: lanes + stages + meta from the handler's
+  // dataflow.hops. Returns { lanes, stages, meta } or null when no data.
+  // Pure function, suitable for unit testing.
+  function buildDataflowSegment(handler) {
+    const df = handler && handler.dataflow;
+    if (!df) {
+      return { lanes: [], stages: [], meta: { available: false, hopCount: 0, confidence: 0 } };
+    }
+    const hops = Array.isArray(df.hops) ? df.hops : [];
+    const confidence = typeof df.confidence === 'number' ? df.confidence : 0;
+    if (!hops.length) {
+      return { lanes: [], stages: [],
+        meta: { available: true, hopCount: 0, confidence, empty: true } };
+    }
+
+    // Collect needed lanes in encounter order, dedupe.
+    const lanes = [];
+    const seen = new Set();
+    function addLane(id) {
+      if (seen.has(id)) return;
+      seen.add(id);
+      const proto = Object.values(DF_ROLE_LANES).find(L => L.id === id)
+                 || DF_ROLE_LANES.SERVICE;
+      lanes.push({ ...proto, id });
+    }
+
+    // Always start chain from 'handler' lane (the upstream side of the first
+    // hop) so the sequence connects to Phase 3's mw → handler arrow.
+    const stages = [];
+    let prev = 'handler';
+    for (const hop of hops) {
+      const lane = hopLaneId(hop);
+      addLane(lane);
+      const label = hopLabel(hop);
+      const detail = (hop.file ? (hop.file + (hop.line ? ':' + hop.line : '')) : hop.qualname || '')
+        + (hop.role ? '  ·  role=' + hop.role : '')
+        + (hop.kind ? '  ·  kind=' + hop.kind : '');
+      stages.push({
+        from: prev, to: lane,
+        label, detail,
+        kind: 'data',
+        hop,
+      });
+      prev = lane;
+    }
+
+    return {
+      lanes, stages,
+      meta: {
+        available: true,
+        hopCount: hops.length,
+        confidence,
+        lowConfidence: confidence < 0.5,
+        empty: false,
+      },
+    };
+  }
+
   function renderArchitecture(host) {
     const arch = (window.state && window.state.data && window.state.data.architecture) || null;
     if (!arch || !arch.components || !arch.metrics) {
@@ -301,37 +401,51 @@
       'app');
 
     // ---- Phase 4: Project-specific data layer ----
-    if (caches.length) {
-      add('handler', 'cache',
-        'GET cached value',
-        `Handler checks ${caches[0].label} first to avoid hitting the DB. The lookup key is usually composed from request params — e.g. user:123:profile.`,
-        'data');
-      add('cache', 'handler',
-        'cache miss / hit',
-        `If cached, return immediately and skip the DB. If miss, fall through to DB and write-back to cache after.`,
-        'data');
-    }
-    if (dbs.length) {
-      add('handler', 'db',
-        `Query ${dbs[0].label}`,
-        `Handler issues a query through ${dbs[0].label}. Connection is reused from a pool. The DB plans the query, hits indexes, returns rows.`,
-        'data');
-      add('db', 'handler',
-        'rows / documents',
-        `Result set comes back as JS objects. Handler may shape them (filter fields, populate relations) before responding.`,
-        'data');
-    }
-    if (queues.length) {
-      add('handler', 'queue',
-        'Enqueue background job',
-        `Long-running work (sending email, generating report, calling slow third-party API) is pushed onto ${queues[0].label} so the response can return fast. A separate worker process picks it up.`,
-        'data');
-    }
-    if (externals.length) {
-      add('handler', 'ext',
-        `Call ${externals[0].label}`,
-        `Handler makes an outbound HTTP call. Each external call adds latency + failure modes — usually wrapped in a try/catch with timeout.`,
-        'data');
+    // Prefer real dataflow.hops when the backend HLD payload includes them
+    // (codegraph >= v0.3). Fall back to the generic infra-component animation
+    // otherwise so older builds still render something useful.
+    const dfSeg = buildDataflowSegment(handler);
+    let dataflowMeta = dfSeg.meta;
+    if (dfSeg.stages.length) {
+      // Wire DF lanes onto the swim lane list (avoid id collisions with the
+      // generic lanes by giving them df-* prefixes inside DF_ROLE_LANES).
+      dfSeg.lanes.forEach(L => lanes.push(L));
+      // Re-anchor the first hop's "from" to the existing 'handler' lane that
+      // Phase 3 already established. dfSeg.stages[0].from is already 'handler'.
+      dfSeg.stages.forEach(s => stages.push(s));
+    } else {
+      if (caches.length) {
+        add('handler', 'cache',
+          'GET cached value',
+          `Handler checks ${caches[0].label} first to avoid hitting the DB. The lookup key is usually composed from request params — e.g. user:123:profile.`,
+          'data');
+        add('cache', 'handler',
+          'cache miss / hit',
+          `If cached, return immediately and skip the DB. If miss, fall through to DB and write-back to cache after.`,
+          'data');
+      }
+      if (dbs.length) {
+        add('handler', 'db',
+          `Query ${dbs[0].label}`,
+          `Handler issues a query through ${dbs[0].label}. Connection is reused from a pool. The DB plans the query, hits indexes, returns rows.`,
+          'data');
+        add('db', 'handler',
+          'rows / documents',
+          `Result set comes back as JS objects. Handler may shape them (filter fields, populate relations) before responding.`,
+          'data');
+      }
+      if (queues.length) {
+        add('handler', 'queue',
+          'Enqueue background job',
+          `Long-running work (sending email, generating report, calling slow third-party API) is pushed onto ${queues[0].label} so the response can return fast. A separate worker process picks it up.`,
+          'data');
+      }
+      if (externals.length) {
+        add('handler', 'ext',
+          `Call ${externals[0].label}`,
+          `Handler makes an outbound HTTP call. Each external call adds latency + failure modes — usually wrapped in a try/catch with timeout.`,
+          'data');
+      }
     }
 
     // ---- Phase 5: response ----
@@ -352,12 +466,41 @@
       `The encrypted response travels back through TCP. Client decrypts, parses headers, hands the body to the app code. UI updates.`,
       'net');
 
-    return { lanes, stages };
+    return { lanes, stages, dataflowMeta };
+  }
+
+  // Tiny chip shown next to the method/path in the modal header. Communicates
+  // whether Phase 4 is rendering real DF4 data, the empty fallback, or a
+  // low-confidence trace.
+  function renderDataflowChip(meta) {
+    if (!meta || !meta.available) return '';
+    if (meta.empty) {
+      return `<div data-df-chip="empty"
+        class="mt-1 inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em]
+               px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-200">
+        <i data-lucide="alert-triangle" style="width:10px;height:10px"></i>
+        no trace data — run <code class="font-mono">codegraph build</code> first
+      </div>`;
+    }
+    if (meta.lowConfidence) {
+      return `<div data-df-chip="low-confidence"
+        class="mt-1 inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em]
+               px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-200">
+        <i data-lucide="alert-circle" style="width:10px;height:10px"></i>
+        low-confidence trace (${(meta.confidence * 100).toFixed(0)}%)
+      </div>`;
+    }
+    return `<div data-df-chip="ok"
+      class="mt-1 inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em]
+             px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-200">
+      <i data-lucide="git-branch" style="width:10px;height:10px"></i>
+      ${meta.hopCount} hop${meta.hopCount === 1 ? '' : 's'} · ${(meta.confidence * 100).toFixed(0)}%
+    </div>`;
   }
 
   function openLearnModal(handler, compById, components) {
     closeLearnModal();
-    const { lanes, stages } = buildLifecycleStages(handler, components);
+    const { lanes, stages, dataflowMeta } = buildLifecycleStages(handler, components);
 
     const VALID_MODES = ['pipeline', 'diagram', 'lanes'];
     let mode = 'pipeline';
@@ -385,6 +528,7 @@
                 <span class="font-mono text-brand-300">${escapeHtml(handler.method || '???')}</span>
                 <span class="font-mono text-ink-100 ml-2">${escapeHtml(handler.path || '')}</span>
               </div>
+              ${renderDataflowChip(dataflowMeta)}
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -712,13 +856,34 @@
     const sec = Math.floor(totalMs / 1000) % 60;
     const ms  = totalMs % 1000;
     const ts  = `18:42:${String(sec).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
-    row.innerHTML = `
-      <span class="col-num">${String(i + 1).padStart(2, '0')}</span>
-      <span class="col-time">${ts}</span>
-      <span class="col-tag" style="color:${color}">[${escapeHtml(stage.from)} → ${escapeHtml(stage.to)}]</span>
-      <span class="col-msg">${escapeHtml(stage.label)}</span>
-    `;
+    row.appendChild(buildLogCell('col-num', String(i + 1).padStart(2, '0')));
+    row.appendChild(buildLogCell('col-time', ts));
+    const tag = buildLogCell('col-tag', '[' + stage.from + ' → ' + stage.to + ']');
+    tag.style.color = color;
+    row.appendChild(tag);
+    const msg = buildLogCell('col-msg', stage.label);
+    const hop = stage.hop;
+    if (hop && hop.qualname) {
+      msg.dataset.hopQn = hop.qualname;
+      if (hop.file) msg.dataset.hopFile = hop.file;
+      if (hop.line) msg.dataset.hopLine = String(hop.line);
+      msg.style.cursor = 'pointer';
+      msg.title = (hop.file || hop.qualname) + (hop.line ? ':' + hop.line : '');
+      msg.addEventListener('click', () => {
+        if (typeof window !== 'undefined' && typeof window.jumpToQualname === 'function') {
+          window.jumpToQualname(hop.qualname);
+        }
+      });
+    }
+    row.appendChild(msg);
     return row;
+  }
+
+  function buildLogCell(cls, text) {
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = String(text);
+    return span;
   }
 
   function movePipelineDot(laneId, animate) {
@@ -797,8 +962,16 @@
       // Step number gutter
       svg += `<text x="14" y="${y + 4}" font-size="10" fill="#5b6b8c" font-family="Inter,sans-serif">${i + 1}</text>`;
 
-      // Faint baseline arrow (dimmed when inactive)
-      svg += `<g class="learn-arrow" id="learn-arrow-${i}" data-color="${color}" opacity="0.25">
+      // Faint baseline arrow (dimmed when inactive). For dataflow hops we
+      // attach data-hop-qn so the click handler can jumpToQualname().
+      const hop = s.hop;
+      const hopAttrs = hop && hop.qualname
+        ? ` data-hop-qn="${escapeHtml(hop.qualname)}"`
+          + ` data-hop-file="${escapeHtml(hop.file || '')}"`
+          + ` data-hop-line="${escapeHtml(String(hop.line || ''))}"`
+          + ` style="cursor:pointer"`
+        : '';
+      svg += `<g class="learn-arrow" id="learn-arrow-${i}" data-color="${color}" opacity="0.25"${hopAttrs}>
                 <line x1="${ax1}" y1="${y}" x2="${ax2}" y2="${y}"
                       stroke="${color}" stroke-width="2" marker-end="url(#learn-head-${i})"/>
                 <text x="${(ax1 + ax2) / 2}" y="${y - 8}" text-anchor="middle"
@@ -817,6 +990,16 @@
     svg += '<g id="learn-dot-host"></g>';
     svg += '</svg>';
     host.innerHTML = svg;
+
+    // Wire hop click → jumpToQualname for swimlane arrows.
+    host.querySelectorAll('.learn-arrow[data-hop-qn]').forEach(g => {
+      g.addEventListener('click', () => {
+        const qn = g.getAttribute('data-hop-qn');
+        if (qn && typeof window !== 'undefined' && typeof window.jumpToQualname === 'function') {
+          window.jumpToQualname(qn);
+        }
+      });
+    });
   }
 
   function highlightArrow(i, animate) {
@@ -1175,5 +1358,20 @@
 
 
   // Expose entry point so app.js can dispatch into us.
-  window.renderArchitectureView = renderArchitecture;
+  if (typeof window !== 'undefined') {
+    window.renderArchitectureView = renderArchitecture;
+  }
+
+  // CommonJS export for Node `--test` unit tests. Exposes only the pure
+  // helpers (no DOM dependency).
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      buildDataflowSegment,
+      hopLaneId,
+      hopLabel,
+      formatHopArgs,
+      DF_ROLE_LANES,
+      renderDataflowChip,
+    };
+  }
 })();
