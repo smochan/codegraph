@@ -181,18 +181,20 @@ Honest scope. These are on the roadmap, not on `main` yet.
 
 We pointed `codegraph` at its own source as the test case.
 
-- Dead-code findings on the self-graph went from **451 → 24+ → 15** as we
-  fixed the resolver and added decorator-aware entry-point detection. The
-  remaining 15 are intentional public-API surfaces, genuinely unwired
-  helpers, or framework callbacks that the static resolver can't see — all
-  documented in code.
-- We fixed **5+ categories** of resolver bugs along the way (per-name imports,
+- Dead-code findings on the self-graph went from **451 → 24+ → 15 → 0** as
+  we fixed the resolver, added decorator-aware entry-point detection, and
+  added a `# pragma: codegraph-public-api` exemption for intentional library
+  surface. Today the self-graph reports **0 dead-code findings** —
+  honestly, with the only "skips" being decorators, Protocols, and fixture
+  paths.
+- We fixed **6+ categories** of resolver bugs along the way (per-name imports,
   relative imports, same-file constructor calls, nested-function call attribution,
-  decorator-call edges, class-annotation `self.X.Y` chains, and fresh-instance
-  method calls).
-- The test suite is **487 tests passing** (484 Python + JS test files via
-  `node --test`). DF0 → DF4, the Architecture view, the Learn Mode modal,
-  the embeddings layer, and the PR-review CI all have regression coverage.
+  decorator-call edges, class-annotation `self.X.Y` chains, fresh-instance
+  method calls, and conditional `self.X` assignments via R3).
+- The test suite is **537 Python + 100 Node = 637 tests passing**, all
+  green. DF0 → DF4, the Architecture view + Learn Mode lifecycle modal,
+  argument-flow propagation, the embeddings layer, and the PR-review CI
+  all have regression coverage.
 - Cycles are now reported with qualnames, so we could actually triage them.
   Three are present today: a deliberate UI redraw loop in the dashboard
   (`hldRenderNav → jumpToQualname → drawFocusGraph`), a parser self-recursion
@@ -200,9 +202,9 @@ We pointed `codegraph` at its own source as the test case.
   static-resolver false positive — all documented in
   [`.planning/CYCLES_FOUND.md`](.planning/CYCLES_FOUND.md).
 
-Numbers on the self-graph at HEAD: **3178 nodes, 7229 edges** (CALLS=5012,
-DEFINED_IN=1286, IMPORTS=862, INHERITS=28, ROUTE=12, FETCH_CALL=27,
-READS_FROM=1, WRITES_TO=1).
+Numbers on the self-graph at HEAD: **3,320 nodes, 7,557 edges**
+(CALLS=5,245, DEFINED_IN=1,357, IMPORTS=886, INHERITS=28, ROUTE=12,
+FETCH_CALL=27, READS_FROM=1, WRITES_TO=1).
 
 ---
 
@@ -547,6 +549,19 @@ See [`.planning/MASTER_PLAN.md`](.planning/MASTER_PLAN.md) and
 - **PyPI publish + LinkedIn launch** — held until the v0.3 unified trace
   lands so the launch post can show the full end-to-end demo, not the
   fragmented one we have today.
+
+---
+
+## Project status & launch
+
+The 0.1.0 launch is **functionally complete** — all code, tests, dashboards,
+and CI are shipped on `main`. Three manual steps remain (record demo →
+PyPI publish → LinkedIn launch). See:
+
+- [`LAUNCH_CHECKLIST.md`](LAUNCH_CHECKLIST.md) — sequenced launch steps with exact commands.
+- [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) — storyboard for the launch video (45s landscape + 5s square loop).
+- [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) — one-page guide for running codegraph against your own repo.
+- [`.planning/SESSION_HANDOFF.md`](.planning/SESSION_HANDOFF.md) — the briefing doc for resuming work in a new session.
 
 ---
 

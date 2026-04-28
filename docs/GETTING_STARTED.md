@@ -1,126 +1,96 @@
-# Getting started on a fresh machine
+# Getting started
 
-This is the one-stop guide for cloning `codegraph` to a new computer and
-picking up exactly where we left off.
+One-page guide for cloning `codegraph`, getting it running, and pointing it
+at a repo. If anything is unclear, the README and `CONTRIBUTING.md` go
+deeper.
 
-## 1. Clone
+---
+
+## 1. Clone and install
 
 ```bash
 git clone https://github.com/smochan/codegraph.git
 cd codegraph
-```
 
-That's it — everything is on `main`. There are no submodules and no
-out-of-tree files. The state on GitHub is the source of truth.
-
-## 2. Set up the dev environment
-
-Requires Python **3.10, 3.11, or 3.12** (CI runs all three).
-
-```bash
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-This installs:
-- the `codegraph` CLI (editable, so edits to source apply immediately)
-- runtime deps: typer, networkx, tree-sitter, pyvis, mcp, pyyaml, …
-- dev deps: ruff, mypy, pytest, build, twine
-
-## 3. Verify everything works
+Optional: enable the embedding layer (`semantic_search` / `hybrid_search`
+MCP tools, `codegraph embed` CLI):
 
 ```bash
-ruff check .
-mypy --strict codegraph
-pytest -q                          # should report 130 passed
-codegraph --help                   # should list all subcommands
+pip install -e ".[embed]"
 ```
 
-## 4. Build the graph for this repo and explore it
+This pulls in `sentence-transformers` and `lancedb` (~150 MB). Skip if you
+don't need it — codegraph works fully without it.
+
+## 2. Run against your project
+
+From any repo's root:
 
 ```bash
-codegraph build
+codegraph init                # interactive setup (one-time)
+codegraph build --no-incremental
 codegraph analyze
-codegraph serve                    # opens http://127.0.0.1:8765
+codegraph serve               # web dashboard at http://127.0.0.1:8765
 ```
 
-`codegraph serve` boots the polished web dashboard with the HLD navigator,
-animated focus graph, theme toggle, and links into the pyvis explorers.
+The first build parses every file with tree-sitter; subsequent runs are
+incremental.
 
-## 5. Try the MCP server (optional)
+## 3. Try the cross-stack demo
 
 ```bash
-codegraph mcp serve --db .codegraph/graph.db
+codegraph build --no-incremental --root examples/cross-stack-demo
+codegraph analyze
+codegraph dataflow trace "GET /api/users/{user_id}"
 ```
 
-Or wire it into Claude Code (`~/.config/claude/mcp.json` or your client's
-equivalent):
+You should see a chain like:
 
-```json
-{
-  "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
-      "args": ["mcp", "serve", "--db", ".codegraph/graph.db"]
-    }
-  }
-}
+```
+Flow trace from: GET /api/users/{user_id}  (confidence: 1.00)
+
+  [backend] backend/api/routes/users.py:17  backend.api.routes.users.get_user  HANDLER
+              GET /api/users/{user_id}
+              args: (user_id)
+   ↓
+  [backend] backend/api/routes/users.py:10  backend.api.routes.users._get_service
+   ↓
+  [backend] backend/services/user_service.py:5  backend.services.user_service.UserService  SERVICE
 ```
 
-## 6. Try the PR review pipeline (optional)
+Or run `codegraph serve` and open the **Architecture** tab → click any
+endpoint → **Learn Mode** → Phase 4 shows the same chain visually with
+the `user_id` parameter highlighted as it travels through every hop.
 
-```bash
-codegraph baseline save            # snapshot current graph
-# ...make some changes / build again...
-codegraph build
-codegraph review --format md       # show diff + risk findings
-```
+## 4. Use with an AI client (Claude Code, Cursor, Codex, …)
 
-## Project layout
+Each MCP-compatible client reads codegraph the same way; only the config
+file format differs. See the README's
+[Use with MCP-compatible AI clients](../README.md#use-with-mcp-compatible-ai-clients)
+section for exact JSON / TOML per client.
 
-| Path | What lives there |
-|---|---|
-| `codegraph/cli.py` | All `typer` subcommands (entry point) |
-| `codegraph/graph/` | SQLite store + NetworkX adapter + builder |
-| `codegraph/parsers/` | tree-sitter language extractors (Python, TS, JS) |
-| `codegraph/resolve/` | cross-file CALLS / IMPORTS resolver |
-| `codegraph/analysis/` | metrics, cycles, hotspots, dead code, untested, blast radius |
-| `codegraph/review/` | PR review: differ, risk, rules, baseline, hook |
-| `codegraph/mcp_server/` | MCP stdio server (10 tools) |
-| `codegraph/viz/` | mermaid, HLD, pyvis, dashboard payload |
-| `codegraph/web/` | served dashboard (vanilla JS + Tailwind CDN + D3) |
-| `tests/` | pytest suite (130 tests) |
-| `docs/plan.md` | original roadmap |
-| `docs/HANDOFF.md` | per-phase implementation notes |
-| `CHANGELOG.md` | release notes for 0.1.0 |
+Once connected, you can ask:
 
-## Workflow tips
+> *"Trace what happens when a user clicks the button that fetches `/api/users/42`."*
+>
+> *"Which functions have the highest blast radius in the auth module?"*
+>
+> *"List the HANDLER nodes that don't have tests."*
+>
+> *"Are there any import cycles in this PR?"*
 
-- Always run `ruff check . && mypy --strict codegraph && pytest -q` before
-  committing — these are the same gates CI enforces.
-- `codegraph build` writes `.codegraph/graph.db` (gitignored). Re-run it
-  whenever you change source so the dashboard / MCP / review reflect reality.
-- `codegraph serve` rebuilds incrementally on click of the "Rebuild" button.
+## 5. Contribute
 
-## Releasing 0.1.0
+Read [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — covers the local pre-PR
+review script, what CI checks, commit / PR conventions, and the merge
+process. Branch protection on `main` means every change goes through a PR.
 
-The local `v0.1.0` annotated tag has already been created. To publish:
-
-```bash
-git push origin v0.1.0
-```
-
-This fires `.github/workflows/release.yml` which builds wheels, runs
-`twine check`, and creates a GitHub Release with `CHANGELOG.md` as the body.
-If you've added `PYPI_API_TOKEN` to the repo secrets, it will also publish
-to PyPI. Without the token it skips the publish step but still uploads the
-artifacts to the GitHub Release.
-
-## Known scope cuts
-
-- Phase 2 (extra language extractors: Go / Java / Rust / C# / Ruby / PHP)
-  is deferred. Adding one is mechanical — copy `codegraph/parsers/python.py`
-  and adjust the tree-sitter queries.
-- pyvis graphs use vis-network's own canvas; theme toggle is wired in but
-  the underlying layout engine doesn't theme as cleanly as the dashboard.
+The dogfood loop: every PR opened against `main` runs `codegraph review`
+on itself and posts the diff as a sticky comment. Run
+`./scripts/test-pr-review-locally.sh` before pushing to see the exact
+review locally.

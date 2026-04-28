@@ -37,3 +37,6 @@ env/
 # Local screenshot scratch files (visual smoke tests)
 three-d-*.png
 .claude/
+.planning/
+!.planning/SESSION_HANDOFF.md
+!.planning/PLAN_V0_3_UNIFIED_TRACE.md

@@ -15,6 +15,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Post-launch-sprint additions (still pre-release)
 
+#### v0.3 unified trace — Architecture view shows the real chain
+
+- **Per-handler `dataflow` field on the HLD payload** (PR #22). Each route
+  entry now carries a `dataflow.hops[]` array shaped to the v0.3 contract,
+  so the dashboard can render the actual frontend → backend → DB chain
+  without re-running analysis client-side.
+- **Phase 4 of the Learn Mode lifecycle modal renders real hops** (PR #23).
+  The previously-generic "project-specific data layer" phase now shows
+  the actual handler → service → repo → model chain across **sequence,
+  pipeline, and diagram** modes. Empty / low-confidence states render
+  gracefully with a "no trace data" panel.
+- **Argument-flow propagation — pick a parameter, watch it travel** (PRs #24,
+  #25). Per-hop `arg_flow: dict[str, str | None]` mapping starting keys to
+  their locally-renamed names. Frontend renders a chip-strip param picker
+  and animates the selected param along the swimlane (sequence) or the
+  bezier path (diagram, via SMIL `animateMotion`). Rename annotations
+  (`(was userId)`) surface where the local name diverges. Snake_case ↔
+  camelCase ↔ PascalCase all normalise to the same key.
+- **ROUTE entry hop args backfilled from handler params** (PR #26). The
+  trace walker can't supply args at the entry hop (no incoming CALLS edge),
+  so URL-template handlers (e.g. `/api/users/{user_id}`) used to produce
+  empty `arg_flow`. Backfilled from the handler node's DF0 `metadata.params`
+  (skipping `self` / `cls`). Closes the launch demo's hero shot.
+
+#### Cleanup + analyzer hardening
+
+- **Examples directory excluded from dead-code / untested analysis**
+  (PR #19) — `examples/cross-stack-demo` is documentation, not call-graph-
+  traceable code.
+- **Unused `_propagate_class_role_to_members` helper deleted** (PR #19).
+- **`# pragma: codegraph-public-api` analyzer support** (PR #21). Functions
+  and classes preceded by the pragma comment (Python `#` or TypeScript
+  `//` style, with optional `# codegraph: public-api` alias) are exempted
+  from `find_dead_code()`. Applied to all 15 known intentional public-API
+  methods (`EmbeddingStore` facade, `SQLiteGraphStore.upsert_node` /
+  `vacuum`, all `to_dict` / `as_dict` serializers, `_register.decorator`
+  closure). **Self-graph dead-code count: 15 → 0**, honestly.
+
+#### Docs & developer experience
+
+- **README refresh** (PR #20). 15 MCP tools listed; DF1–DF4 + Architecture
+  view documented in the headline feature list; "What it doesn't do yet"
+  rewritten to drop already-shipped items; numeric stats current.
+- **SESSION_HANDOFF.md** (PR #20) rewritten as a self-contained briefing
+  for the next session.
+- **`PLAN_V0_3_UNIFIED_TRACE.md`** (PR #20) — concrete spec for the unified
+  trace work; now marked **shipped** as of PRs #22–#26.
+
 #### Cross-stack data-flow tracing (DF0 → DF4)
 
 - **DF0 — function signatures + per-call-site arguments.** Python and

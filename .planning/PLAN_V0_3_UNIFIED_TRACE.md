@@ -1,10 +1,21 @@
 # PLAN — v0.3 Unified Trace
 
 **Sprint:** v0.3 unified trace
-**Owner:** TBA
-**Status:** Spec
+**Owner:** smochan
+**Status:** ✅ **SHIPPED** (2026-04-29) — see PRs #22, #23, #24, #25, #26
 **Estimated effort:** 5–7 days
+**Actual effort:** 1 day (parallel-agent execution)
 **Sibling docs:** [`PLAN_DATAFLOW.md`](./PLAN_DATAFLOW.md), [`SESSION_HANDOFF.md`](./SESSION_HANDOFF.md)
+
+> **What landed vs the plan:**
+> - ✅ Backend HLD per-handler `dataflow.hops[]` (PR #22)
+> - ✅ Frontend Phase 4 wired to real hops across sequence / pipeline / diagram (PR #23)
+> - ✅ Argument-flow propagation backend (PR #24)
+> - ✅ Argument-flow propagation frontend (chip picker + cross-hop highlight + SMIL travel dot) (PR #25)
+> - ✅ ROUTE entry hop args backfilled from handler params (PR #26 — gap fix)
+>
+> All 8 acceptance criteria from §6 met except #8 (demo recording) — that's
+> a manual step tracked in `LAUNCH_CHECKLIST.md`.
 
 ---
 
