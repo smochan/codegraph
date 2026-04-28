@@ -19,7 +19,6 @@ import networkx as nx
 from codegraph.analysis._common import _kind_str
 from codegraph.graph.schema import EdgeKind, NodeKind
 
-
 ComponentKind = str  # "CACHE" | "QUEUE" | "DB" | "BROKER" | "OBJECT_STORE" | "WEB_SERVER" | "HTTP_CLIENT" | "ORM" | "MESSAGING" | "SEARCH"
 
 
@@ -159,7 +158,7 @@ def _module_id_for_file(graph: nx.MultiDiGraph, file_path: str) -> str | None:
         if _kind_str(attrs.get("kind")) != NodeKind.MODULE.value:
             continue
         if str(attrs.get("file") or "") == file_path:
-            return nid
+            return str(nid)
     return None
 
 
@@ -216,10 +215,11 @@ def _resolve_handler_by_name(
             continue
         if str(attrs.get("name") or "") != name:
             continue
+        nid_str = str(nid)
         if str(attrs.get("file") or "") == near_file:
-            return nid
-        same_file = same_file or nid
-        other = other or nid
+            return nid_str
+        same_file = same_file or nid_str
+        other = other or nid_str
     return same_file or other
 
 
@@ -407,13 +407,13 @@ def detect_infrastructure(graph: nx.MultiDiGraph) -> dict[str, Any]:
     decorator_handlers = _collect_handlers(graph)
     express_handlers = _collect_express_handlers(graph)
     handlers = decorator_handlers + express_handlers
-    seen_handler_ids: set[str] = set()
+    seen_handler_keys: set[tuple[Any, ...]] = set()
     deduped: list[dict[str, Any]] = []
     for h in handlers:
         key = (h["method"], h["path"], h["file"], h["line"])
-        if key in seen_handler_ids:
+        if key in seen_handler_keys:
             continue
-        seen_handler_ids.add(key)
+        seen_handler_keys.add(key)
         bfs_root = h.pop("_bfs_from", None) or h["id"]
         h["components"] = _bfs_infra_for_handler(
             graph, bfs_root, file_to_components,
