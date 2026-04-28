@@ -14,6 +14,7 @@ from codegraph.analysis import (
     find_hotspots,
     find_untested,
 )
+from codegraph.analysis.infrastructure import detect_infrastructure
 from codegraph.viz._style import kind_str
 from codegraph.viz.diagrams import (
     build_matrix,
@@ -108,6 +109,7 @@ def build_dashboard_payload(
     flows = _flows_payload(cleaned, limit=flow_count)
     files = _file_stats(cleaned)
     hld = build_hld(cleaned)
+    architecture = detect_infrastructure(graph)
 
     return {
         "metrics": {
@@ -152,6 +154,7 @@ def build_dashboard_payload(
             "mermaid_layered": hld.mermaid_layered,
             "mermaid_context": hld.mermaid_context,
         },
+        "architecture": architecture,
     }
 
 

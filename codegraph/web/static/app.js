@@ -24,6 +24,7 @@ const VIEWS = [
   { section: 'Insights' },
   { id: 'overview',     label: 'Overview',     icon: 'layout-dashboard' },
   { id: 'hld',          label: 'HLD',          icon: 'layers' },
+  { id: 'architecture', label: 'Architecture', icon: 'cloud' },
   { id: 'flows',        label: 'Call flows',   icon: 'git-fork' },
   { section: 'Diagrams' },
   { id: 'matrix',       label: 'Matrix',       icon: 'grid-3x3' },
@@ -31,7 +32,7 @@ const VIEWS = [
   { id: 'treemap',      label: 'Treemap',      icon: 'square-stack' },
   { id: 'graph3d',      label: '3D Graph',     icon: 'atom' },
   { section: 'Browse' },
-  { id: 'architecture', label: 'Explorers',    icon: 'compass' },
+  { id: 'explorers',    label: 'Explorers',    icon: 'compass' },
   { id: 'files',        label: 'Files',        icon: 'folder-tree' },
 ];
 
@@ -153,7 +154,14 @@ const VIEW_RENDERERS = {
   sankey: renderSankey,
   treemap: renderTreemap,
   graph3d: renderGraph3dShim,
-  architecture: renderArchitecture,
+  architecture: (host) => {
+    if (typeof window.renderArchitectureView === 'function') {
+      window.renderArchitectureView(host);
+    } else {
+      host.innerHTML = '<div class="p-8 text-ink-200">Architecture view not loaded.</div>';
+    }
+  },
+  explorers: renderExplorers,
   files: renderFiles,
 };
 
@@ -793,7 +801,7 @@ function pyvisHref(path) {
   return path + '?theme=' + t;
 }
 
-function renderArchitecture(host) {
+function renderExplorers(host) {
   const tile = (href, title, desc, icon) => `
     <a href="${href}" target="_blank" rel="noopener" class="panel p-5 block hover:border-brand-500 transition group">
       <div class="flex items-start gap-3">
