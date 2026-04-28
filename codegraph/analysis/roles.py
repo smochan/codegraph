@@ -266,18 +266,6 @@ def _classify_component(
     return False
 
 
-def _propagate_class_role_to_members(
-    graph: nx.MultiDiGraph, class_id: str, role: Role
-) -> int:
-    count = 0
-    for member_id in _members_of_class(graph, class_id):
-        # Methods that are already classified at higher priority (HANDLER)
-        # keep their own role thanks to _set_role's priority check.
-        if _set_role(graph, member_id, role):
-            count += 1
-    return count
-
-
 def classify_roles(graph: nx.MultiDiGraph) -> int:
     """Walk the graph and stamp metadata['role'] on FUNCTION/METHOD/CLASS.
 
