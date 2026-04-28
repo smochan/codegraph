@@ -614,6 +614,16 @@ def shape_hops_for_handler(
                     h["path"] = path
                 break
 
+    # Per-hop arg_flow: every hop carries the same starting-key set, mapping
+    # each starting key to its locally-renamed name at this hop (or None).
+    starting_keys = _starting_keys_from_hops(hops_out)
+    for h in hops_out:
+        hop_args_raw = h.get("args") or []
+        hop_args = (
+            [str(a) for a in hop_args_raw] if isinstance(hop_args_raw, list) else []
+        )
+        h["arg_flow"] = _compute_arg_flow(starting_keys, hop_args)
+
     return {"hops": hops_out, "confidence": float(flow.confidence)}
 
 
@@ -631,6 +641,114 @@ def _node_role(graph: nx.MultiDiGraph, qualname: str) -> str | None:
                 return str(role)
         return None
     return None
+
+
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _normalise_arg_name(name: str) -> str:
+    """Normalise an argument name for cross-hop matching.
+
+    Rules (in order):
+
+    1. strip surrounding whitespace and quotes
+    2. lowercase
+    3. strip leading and trailing underscores
+    4. split on underscores and on camelCase boundaries
+    5. concatenate the resulting tokens
+
+    Examples::
+
+        userId       -> "userid"
+        user_id      -> "userid"
+        _user_id     -> "userid"
+        UserID       -> "userid"
+        userid       -> "userid"
+    """
+    if not name:
+        return ""
+    cleaned = name.strip().strip("'\"`")
+    if not cleaned:
+        return ""
+    cleaned = cleaned.strip("_")
+    if not cleaned:
+        return ""
+    # Split camelCase boundaries first, then split on underscores.
+    camel_split = _CAMEL_BOUNDARY_RE.sub("_", cleaned)
+    tokens = [t for t in camel_split.split("_") if t]
+    return "".join(tokens).lower()
+
+
+def _compute_arg_flow(
+    starting_keys: list[str], hop_args: list[str]
+) -> dict[str, str | None]:
+    """Map each starting key to the first hop arg with a matching normalised name.
+
+    Returns a dict keyed by every starting key (preserving the original key
+    spelling). Value is the local arg name at this hop, or ``None`` if no
+    match. The set of keys is identical for every hop in a chain so consumers
+    can render a stable column count.
+    """
+    out: dict[str, str | None] = {}
+    if not starting_keys:
+        return out
+    normalised_args: list[tuple[str, str]] = [
+        (a, _normalise_arg_name(a)) for a in hop_args
+    ]
+    for key in starting_keys:
+        nkey = _normalise_arg_name(key)
+        match: str | None = None
+        if nkey:
+            for original_arg, narg in normalised_args:
+                if narg and narg == nkey:
+                    match = original_arg
+                    break
+        out[key] = match
+    return out
+
+
+def _starting_keys_from_hops(hops: list[dict[str, Any]]) -> list[str]:
+    """Determine starting keys for arg-flow propagation.
+
+    Per the v0.3 stretch contract:
+
+    * If there is a FETCH_CALL hop, starting keys = its ``body_keys`` plus its
+      positional ``args`` (after stripping quotes), de-duplicated, preserving
+      first-seen order.
+    * Otherwise, starting keys = the first hop's (ROUTE) ``args``.
+    * If neither yields anything, return ``[]`` and ``arg_flow`` becomes
+      ``{}`` for every hop.
+    """
+    if not hops:
+        return []
+    fetch_hop: dict[str, Any] | None = None
+    for h in hops:
+        if h.get("kind") == "FETCH_CALL":
+            fetch_hop = h
+            break
+
+    raw: list[str] = []
+    if fetch_hop is not None:
+        body_keys = fetch_hop.get("body_keys") or []
+        if isinstance(body_keys, list):
+            raw.extend(str(k) for k in body_keys)
+        fetch_args = fetch_hop.get("args") or []
+        if isinstance(fetch_args, list):
+            raw.extend(str(a) for a in fetch_args)
+    else:
+        first_args = hops[0].get("args") or []
+        if isinstance(first_args, list):
+            raw.extend(str(a) for a in first_args)
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in raw:
+        cleaned = k.strip().strip("'\"`")
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+    return out
 
 
 def _classify_hop_kind(hop: FlowHop, index: int) -> str:
