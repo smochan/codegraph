@@ -359,6 +359,16 @@
     closeLearnModal();
     const { lanes, stages } = buildLifecycleStages(handler, components);
 
+    const VALID_MODES = ['pipeline', 'diagram', 'lanes'];
+    let mode = 'pipeline';
+    try {
+      const saved = localStorage.getItem('arch.lifecycleMode');
+      if (VALID_MODES.includes(saved)) mode = saved;
+    } catch (_) {}
+
+    ensurePipelineStyles();
+    ensureDiagramStyles();
+
     const overlay = document.createElement('div');
     overlay.id = 'learn-modal';
     overlay.className = 'fixed inset-0 z-[100] bg-ink-950/85 backdrop-blur-sm flex items-stretch';
@@ -378,6 +388,11 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
+            <div class="learn-mode-toggle flex rounded-md border border-ink-600/60 overflow-hidden mr-1" title="Cycle visualization (V)">
+              <button id="learn-mode-pipeline" class="learn-mode-btn">Pipeline</button>
+              <button id="learn-mode-diagram"  class="learn-mode-btn">Diagram</button>
+              <button id="learn-mode-lanes"    class="learn-mode-btn">Lanes</button>
+            </div>
             <button id="learn-prev" class="icon-btn" title="Previous step (←)"><i data-lucide="chevron-left"></i></button>
             <button id="learn-play" class="rounded-md bg-brand-600 hover:bg-brand-500 text-white px-3 py-1.5 text-sm font-medium flex items-center gap-1.5 transition">
               <i data-lucide="play" class="w-4 h-4"></i><span>Play</span>
@@ -399,18 +414,45 @@
             <div id="learn-stage-kind" class="text-[11px] uppercase tracking-[0.1em] mb-4"></div>
             <div id="learn-stage-detail" class="text-sm leading-relaxed text-ink-100"></div>
             <div class="text-[11px] text-ink-300 mt-6 pt-4 border-t border-ink-600/60 leading-relaxed">
-              <b class="text-ink-100">Keys:</b> ←/→ step, Space play/pause, Esc close.
+              <b class="text-ink-100">Keys:</b> ←/→ step, Space play/pause, V toggle view, Esc close.
             </div>
           </aside>
         </div>
       </div>`;
     document.body.appendChild(overlay);
 
-    drawLearnSequence(lanes, stages);
-
     let cur = 0;
     let playing = false;
     let timer = null;
+
+    function applyStep(i, animate) {
+      if      (mode === 'pipeline') pipelineSetStep(i, animate, lanes, stages);
+      else if (mode === 'diagram')  diagramSetStep(i, animate, lanes, stages);
+      else                          highlightArrow(i, animate);
+    }
+
+    function renderForMode() {
+      if      (mode === 'pipeline') drawPipeline(lanes, stages);
+      else if (mode === 'diagram')  drawDiagram(lanes, stages);
+      else                          drawLearnSequence(lanes, stages);
+      updateModeButtons();
+      applyStep(cur, false);
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function updateModeButtons() {
+      ['pipeline', 'diagram', 'lanes'].forEach(m => {
+        const el = document.getElementById('learn-mode-' + m);
+        if (el) el.classList.toggle('is-active', mode === m);
+      });
+    }
+
+    function switchMode(newMode) {
+      if (newMode === mode) return;
+      mode = newMode;
+      try { localStorage.setItem('arch.lifecycleMode', mode); } catch (_) {}
+      renderForMode();
+    }
 
     function setStep(i, opts) {
       cur = Math.max(0, Math.min(stages.length - 1, i));
@@ -425,7 +467,7 @@
                            s.kind === 'tls' ? '#fbbf24' :
                            s.kind === 'data' ? '#22d3ee' : '#a78bfa';
       document.getElementById('learn-stage-detail').textContent = s.detail;
-      highlightArrow(cur, opts && opts.animate);
+      applyStep(cur, opts && opts.animate);
     }
     function play() {
       if (cur >= stages.length - 1) cur = -1;
@@ -448,12 +490,16 @@
       timer = setTimeout(tick, dur);
     }
 
+    renderForMode();
     setStep(0, { animate: true });
     lucide.createIcons();
     document.getElementById('learn-play').onclick = () => playing ? pause() : play();
     document.getElementById('learn-prev').onclick = () => { pause(); setStep(cur - 1, { animate: true }); };
     document.getElementById('learn-next').onclick = () => { pause(); setStep(cur + 1, { animate: true }); };
     document.getElementById('learn-close').onclick = closeLearnModal;
+    document.getElementById('learn-mode-pipeline').onclick = () => switchMode('pipeline');
+    document.getElementById('learn-mode-diagram').onclick  = () => switchMode('diagram');
+    document.getElementById('learn-mode-lanes').onclick    = () => switchMode('lanes');
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLearnModal(); });
     document.addEventListener('keydown', learnKeyHandler);
 
@@ -466,6 +512,10 @@
       else if (e.key === 'ArrowLeft')  { pause(); setStep(cur - 1, { animate: true }); }
       else if (e.key === 'ArrowRight') { pause(); setStep(cur + 1, { animate: true }); }
       else if (e.key === ' ')      { e.preventDefault(); playing ? pause() : play(); }
+      else if (e.key === 'v' || e.key === 'V') {
+        const order = ['pipeline', 'diagram', 'lanes'];
+        switchMode(order[(order.indexOf(mode) + 1) % order.length]);
+      }
     }
 
     // Auto-play after a brief beat so user sees the first step.
@@ -475,6 +525,225 @@
   function closeLearnModal() {
     const m = document.getElementById('learn-modal');
     if (m) m.remove();
+  }
+
+  // ---------- Pipeline mode (horizontal strip + scrolling log) ----------
+
+  function ensurePipelineStyles() {
+    if (document.getElementById('arch-pipeline-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'arch-pipeline-styles';
+    style.textContent = `
+      .learn-mode-btn {
+        background: rgba(15,23,42,0.55);
+        color: #94a3b8;
+        padding: 6px 12px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        transition: background 0.15s, color 0.15s;
+      }
+      .learn-mode-btn:hover { background: rgba(99,102,241,0.18); color: #c7d2fe; }
+      .learn-mode-btn.is-active {
+        background: linear-gradient(135deg, #6366f1, #06b6d4);
+        color: #0b1020;
+      }
+
+      #learn-pipeline-host { display:flex; flex-direction:column; gap:18px; }
+
+      #pipe-strip {
+        position: relative;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 18px 16px 14px;
+        background: rgba(15,23,42,0.45);
+        border: 1px solid rgba(91,107,140,0.35);
+        border-radius: 14px;
+      }
+      .pipe-box {
+        --lane-color: #94a3b8;
+        display: flex; align-items: center; gap: 7px;
+        padding: 9px 13px; border-radius: 10px;
+        background: rgba(15,23,42,0.65);
+        border: 1.5px solid rgba(148,163,184,0.35);
+        color: #e2e8f0;
+        font-size: 12px; font-weight: 500;
+        opacity: 0.55;
+        transition: all 0.18s ease;
+        white-space: nowrap;
+      }
+      .pipe-box.is-past {
+        opacity: 0.85;
+        background: rgba(15,23,42,0.7);
+        border-color: var(--lane-color);
+      }
+      .pipe-box.is-active {
+        opacity: 1;
+        background: rgba(15,23,42,0.85);
+        border-color: var(--lane-color);
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.18),
+                    0 0 22px rgba(99,102,241,0.35);
+        transform: translateY(-1px);
+      }
+      .pipe-arrow {
+        color: rgba(148,163,184,0.55);
+        font-size: 16px;
+        user-select: none;
+      }
+      #pipe-dot {
+        position: absolute;
+        width: 11px; height: 11px;
+        border-radius: 50%;
+        background: #22d3ee;
+        box-shadow: 0 0 14px #22d3ee, 0 0 4px #fff;
+        pointer-events: none;
+        opacity: 0;
+        transition: left 600ms cubic-bezier(0.4,0,0.2,1),
+                    top 600ms cubic-bezier(0.4,0,0.2,1),
+                    opacity 0.2s linear;
+        z-index: 5;
+      }
+      #pipe-dot.is-on { opacity: 1; }
+
+      #pipe-log {
+        max-height: 360px;
+        overflow-y: auto;
+        padding: 12px 16px;
+        background: rgba(2,6,23,0.7);
+        border: 1px solid rgba(91,107,140,0.35);
+        border-radius: 12px;
+        font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.7;
+      }
+      .pipe-log-row {
+        display: grid;
+        grid-template-columns: 28px 90px auto 1fr;
+        gap: 10px;
+        padding: 1px 0;
+        animation: pipeLogIn 0.32s ease both;
+      }
+      .pipe-log-row .col-num   { color: #475569; }
+      .pipe-log-row .col-time  { color: #64748b; }
+      .pipe-log-row .col-tag   { font-weight: 500; white-space: nowrap; }
+      .pipe-log-row .col-msg   { color: #cbd5e1; }
+      .pipe-log-row.is-current .col-num,
+      .pipe-log-row.is-current .col-time { color: #94a3b8; }
+      .pipe-log-row.is-current .col-msg  { color: #f8fafc; font-weight: 500; }
+      @keyframes pipeLogIn {
+        from { opacity: 0; transform: translateY(4px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function drawPipeline(lanes /*, stages */) {
+    const host = document.getElementById('learn-svg-host');
+    if (!host) return;
+    let html = '<div id="learn-pipeline-host">';
+    html += '<div id="pipe-strip">';
+    lanes.forEach((L, i) => {
+      if (i > 0) html += '<div class="pipe-arrow">→</div>';
+      html += `<div class="pipe-box" data-lane="${escapeHtml(L.id)}" style="--lane-color:${L.color}; color:#e6ecf5;">
+        <i data-lucide="${escapeHtml(L.icon)}" style="width:14px;height:14px;color:${L.color};"></i>
+        <span>${escapeHtml(L.label)}</span>
+      </div>`;
+    });
+    html += '<div id="pipe-dot"></div>';
+    html += '</div>';
+    html += '<div id="pipe-log" aria-live="polite"></div>';
+    html += '</div>';
+    host.innerHTML = html;
+  }
+
+  function pipelineSetStep(i, animate, lanes, stages) {
+    const stripBoxes = document.querySelectorAll('#pipe-strip .pipe-box');
+    if (!stripBoxes.length) return;
+    const stage = stages[i];
+    if (!stage) return;
+
+    const visited = new Set();
+    for (let k = 0; k <= i; k++) {
+      visited.add(stages[k].from);
+      visited.add(stages[k].to);
+    }
+    stripBoxes.forEach(box => {
+      const lane = box.dataset.lane;
+      box.classList.remove('is-active', 'is-past');
+      if (lane === stage.from || lane === stage.to) box.classList.add('is-active');
+      else if (visited.has(lane)) box.classList.add('is-past');
+    });
+
+    const log = document.getElementById('pipe-log');
+    if (log) {
+      const have = new Map();
+      log.querySelectorAll('.pipe-log-row').forEach(r => {
+        have.set(parseInt(r.dataset.step, 10), r);
+      });
+      have.forEach((row, idx) => { if (idx > i) row.remove(); });
+      for (let k = 0; k <= i; k++) {
+        if (!have.has(k)) log.appendChild(buildLogRow(k, stages[k]));
+      }
+      log.querySelectorAll('.pipe-log-row').forEach(r => {
+        r.classList.toggle('is-current', parseInt(r.dataset.step, 10) === i);
+      });
+      // Pin newest line into view.
+      const last = log.querySelector(`.pipe-log-row[data-step="${i}"]`);
+      if (last) log.scrollTop = last.offsetTop - 24;
+    }
+
+    movePipelineDot(stage.to, animate);
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function buildLogRow(i, stage) {
+    const row = document.createElement('div');
+    row.className = 'pipe-log-row';
+    row.dataset.step = String(i);
+    const color = stage.kind === 'net' ? '#94a3b8' :
+                  stage.kind === 'tls' ? '#fbbf24' :
+                  stage.kind === 'data' ? '#22d3ee' : '#a78bfa';
+    // Cosmetic monotonic timestamp (not real time).
+    const totalMs = i * 23 + 12;
+    const sec = Math.floor(totalMs / 1000) % 60;
+    const ms  = totalMs % 1000;
+    const ts  = `18:42:${String(sec).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+    row.innerHTML = `
+      <span class="col-num">${String(i + 1).padStart(2, '0')}</span>
+      <span class="col-time">${ts}</span>
+      <span class="col-tag" style="color:${color}">[${escapeHtml(stage.from)} → ${escapeHtml(stage.to)}]</span>
+      <span class="col-msg">${escapeHtml(stage.label)}</span>
+    `;
+    return row;
+  }
+
+  function movePipelineDot(laneId, animate) {
+    const strip = document.getElementById('pipe-strip');
+    const dot   = document.getElementById('pipe-dot');
+    if (!strip || !dot) return;
+    const target = strip.querySelector(`.pipe-box[data-lane="${laneId}"]`);
+    if (!target) return;
+    const stripRect = strip.getBoundingClientRect();
+    const tRect     = target.getBoundingClientRect();
+    const left = tRect.left - stripRect.left + tRect.width / 2 - 5.5;
+    const top  = tRect.top  - stripRect.top  - 14;
+    if (!animate) {
+      const prev = dot.style.transition;
+      dot.style.transition = 'none';
+      dot.style.left = `${left}px`;
+      dot.style.top  = `${top}px`;
+      dot.classList.add('is-on');
+      // restore transition next frame
+      requestAnimationFrame(() => { dot.style.transition = prev || ''; });
+    } else {
+      dot.classList.add('is-on');
+      dot.style.left = `${left}px`;
+      dot.style.top  = `${top}px`;
+    }
   }
 
   // Render the lane diagram into #learn-svg-host. Returns nothing — arrows
@@ -609,6 +878,301 @@
         </div>
       </div>`).join('');
   }
+
+  // ---------- Diagram mode (ByteMonk-style system map + traveling packet) ----------
+
+  const DIAG_ROW = {
+    client: 0, net: 0, tls: 0,
+    server: 1, mw: 1, handler: 1,
+    cache: 2, db: 2, queue: 2, ext: 2,
+  };
+
+  function ensureDiagramStyles() {
+    if (document.getElementById('arch-diagram-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'arch-diagram-styles';
+    style.textContent = `
+      #diagram-host {
+        position: relative;
+        background:
+          radial-gradient(ellipse at top, rgba(99,102,241,0.07), transparent 60%),
+          rgba(2,6,23,0.55);
+        border: 1px solid rgba(91,107,140,0.35);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+      #diagram-svg { display: block; }
+      .diag-card {
+        --lane-color: #94a3b8;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        background: rgba(15,23,42,0.85);
+        border: 1.5px solid rgba(148,163,184,0.32);
+        border-radius: 14px;
+        padding: 10px 8px;
+        color: #e6ecf5;
+        font-size: 12px; font-weight: 500;
+        text-align: center;
+        transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, opacity 0.22s ease;
+        opacity: 0.65;
+        box-sizing: border-box;
+        z-index: 2;
+      }
+      .diag-card .diag-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px; height: 36px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--lane-color) 18%, rgba(15,23,42,0.6));
+        margin-bottom: 2px;
+      }
+      .diag-card .diag-label { line-height: 1.2; padding: 0 2px; }
+      .diag-card.is-visited {
+        opacity: 0.92;
+        border-color: var(--lane-color);
+      }
+      .diag-card.is-active {
+        opacity: 1;
+        border-color: var(--lane-color);
+        box-shadow:
+          0 0 0 3px rgba(34,211,238,0.22),
+          0 0 26px rgba(34,211,238,0.45);
+      }
+      .diag-card.is-pulse { animation: diagPulse 0.6s ease both; }
+      @keyframes diagPulse {
+        0%   { transform: scale(1); }
+        45%  { transform: scale(1.07); }
+        100% { transform: scale(1); }
+      }
+      .diag-badge {
+        position: absolute;
+        top: -8px; right: -8px;
+        min-width: 20px; height: 20px;
+        padding: 0 6px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #6366f1, #06b6d4);
+        color: #0b1020;
+        font-size: 11px; font-weight: 700;
+        display: flex; align-items: center; justify-content: center;
+        border: 2px solid #0b1020;
+        z-index: 3;
+      }
+      #diag-active-label {
+        position: absolute;
+        padding: 6px 10px;
+        background: rgba(2,6,23,0.92);
+        border: 1px solid rgba(34,211,238,0.6);
+        border-radius: 999px;
+        font-size: 11px; font-weight: 500;
+        color: #e6ecf5;
+        white-space: nowrap;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+        opacity: 0;
+        transition: opacity 0.2s ease, left 0.6s cubic-bezier(0.4,0,0.2,1), top 0.6s cubic-bezier(0.4,0,0.2,1);
+        z-index: 4;
+      }
+      #diag-active-label.is-on { opacity: 1; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function diagBezierPath(x1, y1, x2, y2) {
+    if (Math.abs(y1 - y2) < 30) {
+      // same row → arc upward to avoid overlapping cards
+      const mx = (x1 + x2) / 2;
+      const cy = y1 - 50;
+      return `M ${x1} ${y1} Q ${mx} ${cy} ${x2} ${y2}`;
+    }
+    const my = (y1 + y2) / 2;
+    return `M ${x1} ${y1} C ${x1} ${my} ${x2} ${my} ${x2} ${y2}`;
+  }
+
+  function drawDiagram(lanes, stages) {
+    const host = document.getElementById('learn-svg-host');
+    if (!host) return;
+    const W = Math.max(640, host.clientWidth || 920);
+    const cardW = 132, cardH = 84;
+    const ROW_Y = [80, 240, 400];
+    const H = ROW_Y[2] + cardH / 2 + 40;
+
+    const rows = [[], [], []];
+    lanes.forEach(L => {
+      const r = DIAG_ROW[L.id] != null ? DIAG_ROW[L.id] : 1;
+      rows[r].push(L);
+    });
+
+    const pos = new Map();
+    rows.forEach((rowLanes, r) => {
+      const n = rowLanes.length;
+      rowLanes.forEach((L, i) => {
+        const x = ((i + 1) / (n + 1)) * W;
+        pos.set(L.id, { x, y: ROW_Y[r] });
+      });
+    });
+
+    // Unique edges from real stage transitions.
+    const seen = new Set();
+    const edges = [];
+    stages.forEach(s => {
+      const k = s.from + '|' + s.to;
+      if (seen.has(k) || !pos.has(s.from) || !pos.has(s.to)) return;
+      seen.add(k);
+      edges.push({ from: s.from, to: s.to });
+    });
+
+    let html = `<div id="diagram-host" style="width:${W}px;height:${H}px;">`;
+    html += `<svg id="diagram-svg" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" style="position:absolute;inset:0;pointer-events:none;">`;
+    html += `<defs>
+      <filter id="diag-glow" x="-100%" y="-100%" width="300%" height="300%">
+        <feGaussianBlur stdDeviation="5"/>
+      </filter>
+    </defs>`;
+    html += '<g id="diagram-edges">';
+    edges.forEach(e => {
+      const a = pos.get(e.from), b = pos.get(e.to);
+      const d = diagBezierPath(a.x, a.y, b.x, b.y);
+      const id = `dge-${escapeHtml(e.from)}-${escapeHtml(e.to)}`;
+      html += `<path id="${id}" d="${d}" stroke="rgba(148,163,184,0.22)" stroke-width="1.5" fill="none"/>`;
+    });
+    html += '</g>';
+    html += '<circle id="diag-packet-glow" r="14" fill="#22d3ee" opacity="0" filter="url(#diag-glow)"/>';
+    html += '<circle id="diag-packet" r="6" fill="#22d3ee" stroke="#fff" stroke-width="1.5" opacity="0"/>';
+    html += '</svg>';
+
+    lanes.forEach(L => {
+      const p = pos.get(L.id);
+      if (!p) return;
+      const left = p.x - cardW / 2;
+      const top  = p.y - cardH / 2;
+      html += `
+        <div class="diag-card" data-lane="${escapeHtml(L.id)}"
+             style="position:absolute;left:${left}px;top:${top}px;width:${cardW}px;height:${cardH}px;--lane-color:${L.color};">
+          <span class="diag-badge" style="display:none">1</span>
+          <div class="diag-icon"><i data-lucide="${escapeHtml(L.icon)}" style="width:20px;height:20px;color:${L.color};"></i></div>
+          <div class="diag-label">${escapeHtml(L.label)}</div>
+        </div>`;
+    });
+    html += '<div id="diag-active-label"></div>';
+    html += '</div>';
+    host.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function diagramSetStep(i, animate, lanes, stages) {
+    const stage = stages[i];
+    if (!stage) return;
+    const cards = document.querySelectorAll('#diagram-host .diag-card');
+    if (!cards.length) return;
+
+    // First step number per lane (so we keep the entry order on the badge).
+    const visitNum = new Map();
+    for (let k = 0; k <= i; k++) {
+      const s = stages[k];
+      if (!visitNum.has(s.from)) visitNum.set(s.from, k + 1);
+      if (!visitNum.has(s.to))   visitNum.set(s.to,   k + 1);
+    }
+
+    cards.forEach(card => {
+      const lane = card.dataset.lane;
+      const isActive = (lane === stage.from || lane === stage.to);
+      const visited = visitNum.has(lane);
+      card.classList.remove('is-active', 'is-visited', 'is-pulse');
+      if (isActive) card.classList.add('is-active');
+      else if (visited) card.classList.add('is-visited');
+      const badge = card.querySelector('.diag-badge');
+      if (badge) {
+        if (visited) {
+          badge.style.display = '';
+          badge.textContent = String(visitNum.get(lane));
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+    });
+
+    // Edge highlighting.
+    document.querySelectorAll('#diagram-edges path').forEach(p => {
+      p.setAttribute('stroke', 'rgba(148,163,184,0.18)');
+      p.setAttribute('stroke-width', '1.5');
+    });
+    const edgeId = `dge-${stage.from}-${stage.to}`;
+    const activeEdge = document.getElementById(edgeId);
+    const kindColor = stage.kind === 'net' ? '#94a3b8' :
+                      stage.kind === 'tls' ? '#fbbf24' :
+                      stage.kind === 'data' ? '#22d3ee' : '#a78bfa';
+    if (activeEdge) {
+      activeEdge.setAttribute('stroke', kindColor);
+      activeEdge.setAttribute('stroke-width', '2.5');
+    }
+
+    animateDiagPacket(activeEdge, stage, animate, kindColor);
+  }
+
+  function animateDiagPacket(pathEl, stage, animate, color) {
+    const dot  = document.getElementById('diag-packet');
+    const glow = document.getElementById('diag-packet-glow');
+    const lab  = document.getElementById('diag-active-label');
+    if (!dot || !glow) return;
+
+    if (!pathEl) {
+      dot.setAttribute('opacity', '0');
+      glow.setAttribute('opacity', '0');
+      if (lab) lab.classList.remove('is-on');
+      return;
+    }
+    dot.setAttribute('fill', color);
+    glow.setAttribute('fill', color);
+
+    const len = pathEl.getTotalLength();
+    const dur = 700;
+
+    const setAt = (t) => {
+      const p = pathEl.getPointAtLength(len * t);
+      dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y);
+      glow.setAttribute('cx', p.x); glow.setAttribute('cy', p.y);
+      if (lab && t > 0.45 && t < 0.6) {
+        lab.style.left = p.x + 'px';
+        lab.style.top  = (p.y - 22) + 'px';
+      }
+    };
+
+    dot.setAttribute('opacity', '1');
+    glow.setAttribute('opacity', '0.55');
+    if (lab) {
+      lab.textContent = stage.label;
+      lab.classList.add('is-on');
+      const mid = pathEl.getPointAtLength(len * 0.5);
+      lab.style.left = mid.x + 'px';
+      lab.style.top  = (mid.y - 22) + 'px';
+    }
+
+    if (!animate) { setAt(1); return; }
+
+    const start = performance.now();
+    function step(now) {
+      const t = Math.min(1, (now - start) / dur);
+      const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      setAt(eased);
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        const target = document.querySelector(`.diag-card[data-lane="${stage.to}"]`);
+        if (target) {
+          target.classList.remove('is-pulse');
+          // restart the animation
+          void target.offsetWidth;
+          target.classList.add('is-pulse');
+        }
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
 
   // Expose entry point so app.js can dispatch into us.
   window.renderArchitectureView = renderArchitecture;
