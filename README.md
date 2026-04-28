@@ -9,9 +9,24 @@
 
 `codegraph` parses your repository with tree-sitter, stores a queryable graph of files /
 classes / functions / imports / calls / inheritance / tests in a single SQLite file, and
-exposes it through a CLI, a web dashboard with a 3D focus-mode flow tracer, and an
-MCP server — so you and your AI assistant always have an accurate, lightweight map of
-your codebase, no daemon required.
+exposes it through a CLI, a web dashboard with a 3D focus-mode flow tracer, an
+**Architecture view with a Learn Mode request-lifecycle modal**, and an MCP server — so
+you and your AI assistant always have an accurate, lightweight map of your codebase,
+no daemon required.
+
+**Highlights shipped on `main` (since the last README refresh):**
+
+- **Cross-stack data-flow tracing — DF1 → DF4 — is now in the box.** HTTP routes
+  (DF1), SQLAlchemy reads/writes (DF1), frontend `FETCH_CALL` edges (DF2), URL
+  stitching (DF3), and an end-to-end `codegraph dataflow trace` walker (DF4) —
+  available as a CLI subcommand and as the `dataflow_trace` MCP tool.
+- **Architecture view + Learn Mode lifecycle modal.** The web dashboard now
+  ships a project-aware Architecture view (handlers, services, repositories,
+  external infrastructure components) and a Learn Mode modal that animates the
+  full request lifecycle — TCP handshake → TLS → HTTP → data layer → response —
+  for any handler in the repo.
+- **15 MCP tools** (was 10), including the v0.3 embedding tools and the DF1 /
+  DF2 / DF4 trace tools.
 
 **Status:** 0.1.0 — pre-release / in-progress. Public PyPI publish is intentionally held
 until the launch sprint completes (see [Roadmap](#roadmap)). For now, install from source.
@@ -80,17 +95,45 @@ until the launch sprint completes (see [Roadmap](#roadmap)). For now, install fr
 ### MCP server
 
 - `codegraph mcp serve` — stdio-transport MCP server for Claude Code or any MCP client.
-- 14 curated tools: `find_symbol` (with role filter), `callers`, `callees`
+- 15 curated tools: `find_symbol` (with role filter), `callers`, `callees`
   (both surfacing args + role), `blast_radius`, `subgraph`, `dead_code`, `cycles`,
   `untested`, `hotspots`, `metrics`, `semantic_search`, `hybrid_search`
   (v0.3 embeddings), `dataflow_routes` (DF1 HTTP routes), `dataflow_fetches`
-  (DF2 frontend fetches).
+  (DF2 frontend fetches), and `dataflow_trace` (DF4 end-to-end trace
+  frontend → handler → service → repo → DB).
 - Returns small, focused subgraphs — avoids flooding context windows.
 
 ### CLI
 
 - `build`, `analyze`, `query`, `baseline`, `hook`, `mcp`, `serve`, `init`, `viz`,
   `explore`, `review`, `status`.
+
+### Architecture view + Learn Mode lifecycle modal
+
+- **Architecture dashboard tab.** Detects infrastructure components in the
+  repo (web framework, ORM / database, cache, message queue, external HTTP
+  clients) and groups them alongside the role-classified application layer
+  (HANDLER / SERVICE / REPO).
+- **Learn Mode modal.** Click a handler and walk through the full request
+  lifecycle as an animated sequence diagram or pipeline view: TCP handshake
+  → TLS → HTTP request → data layer → response. Every phase is a teaching
+  moment with collapsible explanatory copy.
+- **Pipeline + sequence diagrams.** Both modes share state and persist to
+  `localStorage` — open the modal next time and you land in the view you
+  used last.
+
+### Cross-stack tracing (DF3 → DF4)
+
+- **DF3 — URL stitcher (`match_route`).** Stitches frontend `FETCH_CALL`
+  URLs to backend `ROUTE` handlers with placeholder normalisation
+  (`/users/{id}` ↔ `${id}` ↔ `:id` ↔ numeric segments) and a body-key
+  overlap bonus when both sides agree on the request shape.
+- **DF4 — `codegraph dataflow trace`.** Walks the call graph + DF1 / DF2
+  cross-layer edges and emits an ordered `DataFlow` of hops from
+  frontend `FETCH_CALL` through the handler, service, and repository
+  layers to the SQL read / write target. Available as a CLI subcommand
+  (`codegraph dataflow trace "GET /api/users/{id}"`) and as the
+  `dataflow_trace` MCP tool.
 
 ### Cross-stack tracing (DF2)
 
@@ -118,24 +161,19 @@ until the launch sprint completes (see [Roadmap](#roadmap)). For now, install fr
 
 ## What it does NOT do (yet)
 
-Honest scope. These are on the roadmap, not in 0.1.0.
+Honest scope. These are on the roadmap, not on `main` yet.
 
-- **Type inference** (Mypy / Pyright integration) — DF0 captures *text* of params
-  and call arguments, not flowed values or inferred types. v0.3+.
-- **Cross-stack tracing** — frontend component → API endpoint → DB column,
-  rendered as one continuous path. The v0.2 wedge (DF1–DF4 in
-  [`.planning/PLAN_DATAFLOW.md`](.planning/PLAN_DATAFLOW.md)).
-- **Argument-level data flow through a call chain** — DF0 captures arguments at
-  each call site, but does not yet trace where a value flows. v0.2.
-- **Per-language resolver parity** — Python ships the full set of resolver fixes
+- **Argument-flow propagation across hops.** DF0 captures the *text* of each
+  call-site argument, and DF4 emits an ordered list of hops, but the value
+  identity of a single argument (e.g. `user_id`) is not yet traced from the
+  fetch body → route param → service arg → DB query. Planned for v0.3 (see
+  [`.planning/PLAN_V0_3_UNIFIED_TRACE.md`](.planning/PLAN_V0_3_UNIFIED_TRACE.md)).
+- **Type inference** (Mypy / Pyright integration). DF0 is text-only. v0.3+.
+- **Per-language resolver parity.** Python ships the full set of resolver fixes
   in 0.1.0. The TypeScript R2 patterns (path aliases, fresh-instance binding,
   decorator-call edges) are deferred to v0.1.2.
-- **Typer CLI symbols are not tagged `HANDLER`** — DF1.5 only classifies HTTP
+- **Typer CLI symbols are not tagged `HANDLER`.** DF1.5 only classifies HTTP
   framework decorators today. CLI-handler classification is a v0.1.x follow-up.
-- **Always-on sprite labels via `three-spritetext`** — labels currently render as
-  always-on HTML overlays (library-native hover plus always-visible name labels).
-  A separate worktree is shipping sprite-text labels concurrently; this README
-  reflects what is visible in the 3D view today, not the in-flight branch.
 
 ---
 
@@ -143,28 +181,28 @@ Honest scope. These are on the roadmap, not in 0.1.0.
 
 We pointed `codegraph` at its own source as the test case.
 
-- Dead-code findings on the self-graph went from **451 to 4** as we fixed the
-  resolver. The remaining 4 are intentional public-API surfaces or genuinely
-  unwired helpers, documented in code:
-  `analysis.roles._propagate_class_role_to_members`,
-  `graph.store_sqlite.SQLiteGraphStore.upsert_node`,
-  `graph.store_sqlite.SQLiteGraphStore.vacuum`, and
-  `mcp_server.server._register.decorator`.
+- Dead-code findings on the self-graph went from **451 → 24+ → 15** as we
+  fixed the resolver and added decorator-aware entry-point detection. The
+  remaining 15 are intentional public-API surfaces, genuinely unwired
+  helpers, or framework callbacks that the static resolver can't see — all
+  documented in code.
 - We fixed **5+ categories** of resolver bugs along the way (per-name imports,
   relative imports, same-file constructor calls, nested-function call attribution,
   decorator-call edges, class-annotation `self.X.Y` chains, and fresh-instance
   method calls).
-- The test suite is **273 passing Python tests** plus **55 Node tests** across
-  `tests/test_graph3d_focus.js`, `tests/test_graph3d_transform.js`, and
-  `tests/test_app_esc.js`.
+- The test suite is **487 tests passing** (484 Python + JS test files via
+  `node --test`). DF0 → DF4, the Architecture view, the Learn Mode modal,
+  the embeddings layer, and the PR-review CI all have regression coverage.
 - Cycles are now reported with qualnames, so we could actually triage them.
-  Three are present today: a deliberate UI redraw loop in the dashboard, a
-  parser self-recursion via `_visit_nested_defs` (intentional traversal), and an
-  MCP `_serve ↔ run` static-resolver false positive — all documented in
+  Three are present today: a deliberate UI redraw loop in the dashboard
+  (`hldRenderNav → jumpToQualname → drawFocusGraph`), a parser self-recursion
+  via `_visit_nested_defs` (intentional traversal), and an MCP `_serve ↔ run`
+  static-resolver false positive — all documented in
   [`.planning/CYCLES_FOUND.md`](.planning/CYCLES_FOUND.md).
 
-Numbers on the self-graph at HEAD: **2259 nodes, 4963 edges** (CALLS=3495,
-DEFINED_IN=814, IMPORTS=634, INHERITS=20).
+Numbers on the self-graph at HEAD: **3178 nodes, 7229 edges** (CALLS=5012,
+DEFINED_IN=1286, IMPORTS=862, INHERITS=28, ROUTE=12, FETCH_CALL=27,
+READS_FROM=1, WRITES_TO=1).
 
 ---
 
@@ -365,8 +403,9 @@ Inside any of these clients, you can ask things like:
 
 The available tools are: `find_symbol` (now with a `role` filter),
 `callers`, `callees`, `blast_radius`, `subgraph`, `dead_code`, `cycles`,
-`untested`, `hotspots`, `metrics`, plus v0.3's `semantic_search` and
-`hybrid_search`.
+`untested`, `hotspots`, `metrics`, v0.3's `semantic_search` and
+`hybrid_search`, plus the cross-stack tracing tools `dataflow_routes`,
+`dataflow_fetches`, and `dataflow_trace`.
 
 ### Hybrid retrieval (v0.3)
 
@@ -411,8 +450,8 @@ pip install -e ".[dev]"
 
 ruff check .                        # lint
 mypy --strict codegraph             # type-check
-pytest -q                           # 273 Python tests
-node --test tests/*.js              # 55 JS tests
+pytest -q                           # 484 Python tests + 3 skipped (487 total)
+node --test tests/*.js              # JS unit tests (graph3d focus, transform, ESC handling)
 ```
 
 ---
@@ -476,33 +515,38 @@ review" comment and passes — codegraph review activates from the next PR.
 See [`.planning/MASTER_PLAN.md`](.planning/MASTER_PLAN.md) and
 [`.planning/PLAN_DATAFLOW.md`](.planning/PLAN_DATAFLOW.md) for detail.
 
-- **v0.1.1** — always-on sprite-text labels in 3D view (in flight on a separate
-  worktree); dashboard screenshots; small UX follow-ups.
+**Already shipped on `main`:**
+
+- v0.1.1 — always-on labels in the 3D view, dashboard polish.
+- v0.2 — DF1 (FastAPI / Flask `ROUTE` + SQLAlchemy `READS_FROM` / `WRITES_TO`),
+  DF1.5 (role classification), DF2 (React `FETCH_CALL`), DF3 (URL stitcher),
+  DF4 (`codegraph dataflow trace` CLI + `dataflow_trace` MCP tool).
+- v0.3 embeddings — `codegraph embed` + `semantic_search` + `hybrid_search`.
+- Architecture view + Learn Mode lifecycle modal (PR #15).
+- PR-review CI (`codegraph review` on every PR, posts sticky comment / step
+  summary on fork PRs).
+
+**Pending:**
+
 - **v0.1.2** — TypeScript R2 resolver patterns (path aliases, fresh-instance
-  binding, decorator-call edges); CLI `HANDLER` classification for Typer/Click.
-- **v0.2** — cross-stack data-flow tracing: DF1 (FastAPI ROUTE + SQLAlchemy
-  READS_FROM/WRITES_TO), DF2 (React FETCH_CALL), DF3 (URL stitcher with
-  confidence scores), DF4 (`dataflow trace` CLI + MCP tool + dashboard Sankey).
-  See [`.planning/PLAN_DATAFLOW.md`](.planning/PLAN_DATAFLOW.md) and
-  [`.planning/PLAN_V0_2_PARAMETERS.md`](.planning/PLAN_V0_2_PARAMETERS.md).
-- **v0.3 — local embedding layer (shipped).** `codegraph embed` chunks the
-  graph at function/method/class boundaries, embeds with an open-weight model
-  (default: `nomic-ai/CodeRankEmbed`, Apache 2.0, ~140 MB, 768-dim, code-tuned),
-  and writes a LanceDB index to `.codegraph/embeddings.lance`. New MCP tools
-  `semantic_search(query, k)` and `hybrid_search(query, k, role=…, focus_qualname=…)`
-  blend embedding similarity with graph distance (`0.6 · cosine + 0.4 ·
-  1/(1+hops)`). End-to-end install stays pure-pip, no API keys, no Docker.
-  This closes the prose / semantic gap from the comparison above without
-  giving up structural correctness.
-- **v0.3+** — Mypy / Pyright type inference integration; more languages
-  (Rust, Go, C# via tree-sitter); benchmark publication
-  ([`.planning/RESEARCH_BENCHMARKS.md`](.planning/RESEARCH_BENCHMARKS.md)).
-- **Benchmark work (deferred until 0.1.0 lands publicly)** —
+  binding, decorator-call edges); CLI `HANDLER` classification for Typer / Click.
+- **v0.3 unified trace** — wire DF4's `DataFlow` output into the Architecture
+  view's Learn Mode Phase 4 (project-specific data layer) so clicking a handler
+  shows the *real* chain (handler → service → repo → SQL target) inside the
+  lifecycle modal. Stretch: argument-flow propagation, where `user_id` is
+  highlighted as it travels from fetch body → route param → service arg → DB
+  query. See [`.planning/PLAN_V0_3_UNIFIED_TRACE.md`](.planning/PLAN_V0_3_UNIFIED_TRACE.md).
+- **Type inference** — Mypy / Pyright integration. v0.3+.
+- **More languages** — Rust, Go, C# via tree-sitter. v0.4+.
+- **Benchmark publication** —
   [`.planning/RESEARCH_BENCHMARKS.md`](.planning/RESEARCH_BENCHMARKS.md) lays
   out a CrossCodeEval pre-flight (~$50, hours) and a SWE-bench Lite +
   Agentless run (~$400–900, 24–48h) targeting a +2 to +4 absolute resolve-rate
-  gain over the published RepoGraph result. Held until the public release
-  ships so the benchmark numbers ship attached to a real package.
+  gain over the published RepoGraph result. Held until PyPI publish so the
+  numbers ship attached to a real package.
+- **PyPI publish + LinkedIn launch** — held until the v0.3 unified trace
+  lands so the launch post can show the full end-to-end demo, not the
+  fragmented one we have today.
 
 ---
 
