@@ -604,15 +604,22 @@ def shape_hops_for_handler(
         hops_out.append(entry)
 
     # Stamp method/path onto the ROUTE hop — find it (might not be hop 0
-    # if FETCH_CALL was prepended).
-    if method or path:
-        for h in hops_out:
-            if h.get("kind") == "ROUTE":
-                if method:
-                    h["method"] = method
-                if path:
-                    h["path"] = path
-                break
+    # if FETCH_CALL was prepended). Also backfill the ROUTE hop's args from
+    # the handler's own DF0 params when args is empty: trace() can't supply
+    # args at the entry hop (no incoming CALLS edge), but the handler's
+    # signature IS the contract for path / query / body params, so it's the
+    # right starting-key source for arg_flow propagation.
+    handler_params = _handler_param_names_for_arg_flow(graph, handler_qn)
+    for h in hops_out:
+        if h.get("kind") != "ROUTE":
+            continue
+        if method:
+            h["method"] = method
+        if path:
+            h["path"] = path
+        if not h.get("args") and handler_params:
+            h["args"] = list(handler_params)
+        break
 
     # Per-hop arg_flow: every hop carries the same starting-key set, mapping
     # each starting key to its locally-renamed name at this hop (or None).
@@ -641,6 +648,39 @@ def _node_role(graph: nx.MultiDiGraph, qualname: str) -> str | None:
                 return str(role)
         return None
     return None
+
+
+def _handler_param_names_for_arg_flow(
+    graph: nx.MultiDiGraph, qualname: str
+) -> list[str]:
+    """Read handler param names from ``metadata.params`` for arg-flow seeding.
+
+    DF0 captures the function's signature on the node itself. The
+    :func:`trace` walker can't see this for the entry hop (no incoming
+    CALLS edge to read args off), so we read it from the node directly
+    when shaping the ROUTE hop. Skips ``self`` / ``cls``.
+    """
+    if not qualname:
+        return []
+    for _nid, attrs in graph.nodes(data=True):
+        if str(attrs.get("qualname") or "") != qualname:
+            continue
+        meta = attrs.get("metadata") or {}
+        if not isinstance(meta, dict):
+            return []
+        params = meta.get("params") or []
+        if not isinstance(params, list):
+            return []
+        out: list[str] = []
+        for p in params:
+            if not isinstance(p, dict):
+                continue
+            name = str(p.get("name") or "")
+            if not name or name in ("self", "cls"):
+                continue
+            out.append(name)
+        return out
+    return []
 
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
