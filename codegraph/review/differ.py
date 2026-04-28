@@ -108,8 +108,18 @@ def _edge_keys(
 def diff_graphs(old: nx.MultiDiGraph, new: nx.MultiDiGraph) -> GraphDiff:
     """Diff two graphs by ``(qualname, kind)`` node identity.
 
-    A node is *modified* when the same identity exists in both graphs but any of
-    ``file``, ``line_start``, or ``signature`` changed.
+    A node is *modified* when the same identity exists in both graphs but
+    its ``file`` or ``signature`` changed.
+
+    ``line_start`` is intentionally NOT a modification trigger: when a PR
+    edits the top of a file, every symbol below the edit shifts down by N
+    lines and would otherwise show up as "modified" even though their
+    actual signatures are identical. Pure line-shift noise was producing
+    50+ false-positive ``modified-signature`` findings on PRs that touched
+    high-traffic files (``app.js``, ``typescript.py``).
+
+    The ``line_start`` value is still captured on each ``NodeChange`` for
+    rendering — it just no longer triggers the change.
     """
     diff = GraphDiff()
 
@@ -131,12 +141,22 @@ def diff_graphs(old: nx.MultiDiGraph, new: nx.MultiDiGraph) -> GraphDiff:
             continue
         old_payload = old_idx[key]
         details: dict[str, Any] = {}
-        for field_name in ("file", "line_start", "signature"):
+        for field_name in ("file", "signature"):
             if old_payload[field_name] != new_payload[field_name]:
                 details[field_name] = {
                     "old": old_payload[field_name],
                     "new": new_payload[field_name],
                 }
+        # Record line drift in details for diagnostic output, but DON'T let
+        # it alone trigger "modified".
+        if (
+            old_payload["line_start"] != new_payload["line_start"]
+            and details
+        ):
+            details["line_start"] = {
+                "old": old_payload["line_start"],
+                "new": new_payload["line_start"],
+            }
         if details:
             diff.modified_nodes.append(
                 NodeChange(

@@ -98,3 +98,79 @@ def test_diff_total_property() -> None:
     )
     diff = diff_graphs(g1, g2)
     assert diff.total == 1
+
+
+def _add_func(
+    g: nx.MultiDiGraph,
+    qn: str,
+    *,
+    file: str = "pkg/foo.py",
+    line: int = 1,
+    signature: str | None = None,
+) -> None:
+    nid = f"node::{qn}"
+    g.add_node(
+        nid,
+        qualname=qn,
+        kind="FUNCTION",
+        file=file,
+        line_start=line,
+        signature=signature if signature is not None else f"{qn.split('.')[-1]}()",
+    )
+
+
+def test_pure_line_shift_is_NOT_modified() -> None:
+    """Regression test: a function whose only change is a line-number shift
+    (because the PR added lines elsewhere in the file) MUST NOT be flagged
+    as modified.
+
+    Before the fix this produced a false-positive ``modified-signature``
+    finding on every function in the file, blocking PR #15 with 50 noise
+    findings on a clean change.
+    """
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    # Same function, same file, same signature — only line moved 1 -> 8.
+    _add_func(old_g, "pkg.app.esc", file="app.js", line=1, signature="esc(s)")
+    _add_func(new_g, "pkg.app.esc", file="app.js", line=8, signature="esc(s)")
+    diff = diff_graphs(old_g, new_g)
+    assert diff.modified_nodes == [], (
+        f"line-only shift should NOT trigger modified, got: {diff.modified_nodes}"
+    )
+
+
+def test_real_signature_change_IS_modified() -> None:
+    """Real signature change (params changed) IS still flagged as modified."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_func(old_g, "pkg.foo", line=1, signature="foo(x)")
+    _add_func(new_g, "pkg.foo", line=1, signature="foo(x, y)")
+    diff = diff_graphs(old_g, new_g)
+    assert len(diff.modified_nodes) == 1
+    assert diff.modified_nodes[0].qualname == "pkg.foo"
+
+
+def test_file_move_IS_modified() -> None:
+    """Moving a function to a different file IS still flagged as modified
+    (might be a real refactor that callers haven't been updated for)."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_func(old_g, "pkg.foo", file="pkg/old.py", signature="foo()")
+    _add_func(new_g, "pkg.foo", file="pkg/new.py", signature="foo()")
+    diff = diff_graphs(old_g, new_g)
+    assert len(diff.modified_nodes) == 1
+
+
+def test_line_shift_AND_signature_change_records_both_in_details() -> None:
+    """When a real signature change AND a line shift happen together,
+    both deltas are recorded in details for the rule to inspect — but
+    line_start alone never triggers the modified state."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_func(old_g, "pkg.foo", line=1, signature="foo(x)")
+    _add_func(new_g, "pkg.foo", line=10, signature="foo(x, y)")
+    diff = diff_graphs(old_g, new_g)
+    assert len(diff.modified_nodes) == 1
+    details = diff.modified_nodes[0].details or {}
+    assert "signature" in details
+    assert "line_start" in details
