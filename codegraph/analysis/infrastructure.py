@@ -152,16 +152,6 @@ def _file_of(graph: nx.MultiDiGraph, node_id: str) -> str:
     return str(attrs.get("file") or "")
 
 
-def _module_id_for_file(graph: nx.MultiDiGraph, file_path: str) -> str | None:
-    """Best-effort: find the MODULE node that owns a given file path."""
-    for nid, attrs in graph.nodes(data=True):
-        if _kind_str(attrs.get("kind")) != NodeKind.MODULE.value:
-            continue
-        if str(attrs.get("file") or "") == file_path:
-            return str(nid)
-    return None
-
-
 def _component_id(kind: str, label: str) -> str:
     return f"infra:{kind}:{label}".lower().replace(" ", "_")
 
