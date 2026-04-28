@@ -58,6 +58,7 @@ class SQLiteGraphStore:
         )
         self._con.commit()
 
+    # pragma: codegraph-public-api
     def upsert_node(self, node: Node) -> None:
         self._con.execute(
             """INSERT OR REPLACE INTO nodes
@@ -223,6 +224,7 @@ class SQLiteGraphStore:
         ).fetchone()
         return str(row[0]) if row else None
 
+    # pragma: codegraph-public-api
     def vacuum(self) -> None:
         self._con.execute("VACUUM")
 
