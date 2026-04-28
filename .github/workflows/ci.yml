@@ -21,9 +21,95 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Lint
-        run: ruff check codegraph tests
-      - name: Type-check
-        run: mypy codegraph
-      - name: Test
-        run: pytest -q
+      - name: Lint (ruff)
+        # --output-format=github emits ::error file=...,line=...:: annotations
+        # so violations highlight inline on the PR's Files tab.
+        run: |
+          set -uo pipefail
+          ruff check codegraph tests --output-format=github 2>&1 | tee ruff.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo "## Lint (ruff) failed"
+              echo
+              echo "Fix locally:"
+              echo
+              echo '```bash'
+              echo "ruff check codegraph tests --fix"
+              echo "git add -u && git commit --amend --no-edit"
+              echo "git push --force-with-lease"
+              echo '```'
+              echo
+              echo "Top errors:"
+              echo '```'
+              grep -E ":[0-9]+:" ruff.log | head -10 || cat ruff.log | head -20
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$rc"
+          fi
+          echo "## Lint (ruff) passed" >> "$GITHUB_STEP_SUMMARY"
+      - name: Type-check (mypy --strict)
+        run: |
+          set -uo pipefail
+          mypy --strict codegraph 2>&1 | tee mypy.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            grep -E "^[^:]+:[0-9]+: (error|note):" mypy.log | while IFS= read -r line; do
+              file=$(echo "$line" | cut -d: -f1)
+              ln=$(echo "$line" | cut -d: -f2)
+              msg=$(echo "$line" | cut -d: -f4- | sed 's/^ *//')
+              echo "::error file=$file,line=$ln,title=mypy::$msg"
+            done
+            {
+              echo "## Type-check (mypy --strict) failed"
+              echo
+              echo "Fix locally:"
+              echo
+              echo '```bash'
+              echo "mypy --strict codegraph"
+              echo "git add -u && git commit --amend --no-edit"
+              echo "git push --force-with-lease"
+              echo '```'
+              echo
+              echo "Top errors:"
+              echo '```'
+              grep -E "^[^:]+:[0-9]+: (error|note):" mypy.log | head -10
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$rc"
+          fi
+          echo "## Type-check passed" >> "$GITHUB_STEP_SUMMARY"
+      - name: Test (pytest)
+        run: |
+          set -uo pipefail
+          pytest -q --tb=short -rf 2>&1 | tee pytest.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo "## Tests failed"
+              echo
+              echo "Fix locally:"
+              echo
+              echo '```bash'
+              echo "pytest -q --tb=short"
+              echo "pytest tests/test_x.py::test_name -vv"
+              echo '```'
+              echo
+              echo "Failed tests:"
+              echo '```'
+              grep -E "^FAILED " pytest.log | head -20 || true
+              echo '```'
+              echo
+              echo "Last error block:"
+              echo '```'
+              tail -40 pytest.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$rc"
+          fi
+          passed=$(grep -oE "[0-9]+ passed" pytest.log | tail -1 || echo "?")
+          {
+            echo "## Tests passed"
+            echo
+            echo "$passed"
+          } >> "$GITHUB_STEP_SUMMARY"
