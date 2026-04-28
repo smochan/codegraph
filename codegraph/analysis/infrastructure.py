@@ -199,17 +199,6 @@ _EXPRESS_VERBS: Final[frozenset[str]] = frozenset({
 })
 
 
-def _strip_string_literal(text: str) -> str | None:
-    """Return the inner content of a JS string literal, or None if not one."""
-    s = (text or "").strip()
-    if len(s) < 2:
-        return None
-    q = s[0]
-    if q in ('"', "'", "`") and s.endswith(q):
-        return s[1:-1]
-    return None
-
-
 def _resolve_handler_by_name(
     graph: nx.MultiDiGraph,
     name: str,
