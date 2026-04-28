@@ -121,6 +121,133 @@
     };
   }
 
+  // ---------- DF5 / Stretch: argument-flow propagation ----------
+
+  // Stable palette for the param picker. Index = position of the param key in
+  // the arg_flow object (insertion order). Same key in the same session
+  // renders with the same colour because key order is stable across renders.
+  const ARG_PALETTE = [
+    '#fbbf24', // amber
+    '#38bdf8', // sky
+    '#fb7185', // rose
+    '#a78bfa', // violet
+    '#a3e635', // lime
+  ];
+
+  function argColor(index) {
+    if (index == null || index < 0) return ARG_PALETTE[0];
+    return ARG_PALETTE[index % ARG_PALETTE.length];
+  }
+
+  function getArgFlowKeys(handler) {
+    const df = handler && handler.dataflow;
+    const hops = df && Array.isArray(df.hops) ? df.hops : [];
+    if (!hops.length) return [];
+    const af = hops[0].arg_flow;
+    if (!af || typeof af !== 'object') return [];
+    return Object.keys(af);
+  }
+
+  function hopArgLocalName(hop, selected) {
+    if (!hop || !selected) return null;
+    const af = hop.arg_flow;
+    if (!af || typeof af !== 'object') return null;
+    if (!Object.prototype.hasOwnProperty.call(af, selected)) return null;
+    return { local: af[selected] };
+  }
+
+  function renderArgPicker(keys, selected) {
+    if (!keys || !keys.length) return '';
+    const chips = keys.map((k, i) => {
+      const color = argColor(i);
+      const active = k === selected;
+      const cls = 'cg-arg-chip' + (active ? ' is-active' : '');
+      return `<button type="button" data-arg-key="${escapeHtml(k)}"
+        data-arg-index="${i}"
+        class="${cls}"
+        style="--arg-color:${color}; color:${color};"
+        aria-pressed="${active ? 'true' : 'false'}">
+          <span class="cg-arg-chip-dot" style="background:${color}"></span>
+          <span class="cg-arg-chip-label">${escapeHtml(k)}</span>
+        </button>`;
+    }).join('');
+    return `<div class="cg-arg-picker" data-arg-picker
+      role="group" aria-label="Trace argument across hops">
+        <span class="cg-arg-picker-hint">Trace argument:</span>
+        ${chips}
+      </div>`;
+  }
+
+  function argHighlightForStage(stage, selected, color) {
+    if (!stage || !selected) return null;
+    const hop = stage.hop;
+    if (!hop) return null;
+    const lookup = hopArgLocalName(hop, selected);
+    if (!lookup) return null;
+    if (lookup.local == null) return null;
+    return {
+      local: lookup.local,
+      isRename: lookup.local !== selected,
+      color,
+      selected,
+    };
+  }
+
+  // Sequence-mode SVG label fragment. Wraps the matched local name in a
+  // <tspan class="cg-arg-active"> with inline fill, and appends a muted
+  // "(was selected)" tspan when this hop renamed the param.
+  function renderSequenceLabelSvg(label, hl) {
+    const text = String(label == null ? '' : label);
+    if (!hl) return escapeHtml(text);
+    const re = new RegExp('\\b' + escapeRegex(hl.local) + '\\b');
+    const m = re.exec(text);
+    let body;
+    if (!m) {
+      body = escapeHtml(text)
+        + ` <tspan class="cg-arg-active" style="fill:${hl.color}">${escapeHtml(hl.local)}</tspan>`;
+    } else {
+      const before = text.slice(0, m.index);
+      const after  = text.slice(m.index + m[0].length);
+      body = escapeHtml(before)
+        + `<tspan class="cg-arg-active" style="fill:${hl.color}">${escapeHtml(hl.local)}</tspan>`
+        + escapeHtml(after);
+    }
+    if (hl.isRename) {
+      body += ` <tspan class="cg-arg-rename" style="fill:#94a3b8">(was ${escapeHtml(hl.selected)})</tspan>`;
+    }
+    return body;
+  }
+
+  function escapeRegex(s) {
+    return String(s == null ? '' : s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // Build a highlighted HTML fragment for a label, replacing the first
+  // occurrence of `local` (as a whole word) with a coloured span. If no
+  // textual match exists in the label, append a trailing badge so the
+  // selection is still visible. Used by pipeline-mode .col-msg.
+  function highlightLabelHtml(label, hl) {
+    const text = String(label == null ? '' : label);
+    if (!hl) return escapeHtml(text);
+    const re = new RegExp('\\b' + escapeRegex(hl.local) + '\\b');
+    const m = re.exec(text);
+    let html;
+    if (!m) {
+      html = escapeHtml(text)
+        + ` <span class="cg-arg-active" style="color:${hl.color}">${escapeHtml(hl.local)}</span>`;
+    } else {
+      const before = text.slice(0, m.index);
+      const after  = text.slice(m.index + m[0].length);
+      html = escapeHtml(before)
+        + `<span class="cg-arg-active" style="color:${hl.color}">${escapeHtml(hl.local)}</span>`
+        + escapeHtml(after);
+    }
+    if (hl.isRename) {
+      html += ` <span class="cg-arg-rename">(was ${escapeHtml(hl.selected)})</span>`;
+    }
+    return html;
+  }
+
   function renderArchitecture(host) {
     const arch = (window.state && window.state.data && window.state.data.architecture) || null;
     if (!arch || !arch.components || !arch.metrics) {
@@ -511,6 +638,15 @@
 
     ensurePipelineStyles();
     ensureDiagramStyles();
+    ensureArgFlowStyles();
+
+    // DF5 / arg-flow stretch: extract starting param keys + initial selection.
+    const argKeys = getArgFlowKeys(handler);
+    let selectedArg = argKeys.length ? argKeys[0] : null;
+    function selectedArgColor() {
+      const i = argKeys.indexOf(selectedArg);
+      return argColor(i >= 0 ? i : 0);
+    }
 
     const overlay = document.createElement('div');
     overlay.id = 'learn-modal';
@@ -548,6 +684,7 @@
 
         <div class="flex-1 grid grid-cols-1 lg:grid-cols-[1fr,360px] gap-0 min-h-0">
           <div class="overflow-auto p-6 bg-ink-900/40">
+            <div id="learn-arg-picker-host">${renderArgPicker(argKeys, selectedArg)}</div>
             <div id="learn-svg-host" class="rounded-xl border border-ink-600/60 bg-ink-800/50 p-4"></div>
           </div>
           <aside class="overflow-y-auto border-l border-ink-600/60 bg-ink-800/60 p-5">
@@ -569,19 +706,51 @@
     let playing = false;
     let timer = null;
 
+    function argCtx() {
+      return { selected: selectedArg, color: selectedArgColor() };
+    }
+
     function applyStep(i, animate) {
-      if      (mode === 'pipeline') pipelineSetStep(i, animate, lanes, stages);
-      else if (mode === 'diagram')  diagramSetStep(i, animate, lanes, stages);
+      const ax = argCtx();
+      if      (mode === 'pipeline') pipelineSetStep(i, animate, lanes, stages, ax);
+      else if (mode === 'diagram')  diagramSetStep(i, animate, lanes, stages, ax);
       else                          highlightArrow(i, animate);
     }
 
     function renderForMode() {
+      const ax = argCtx();
       if      (mode === 'pipeline') drawPipeline(lanes, stages);
-      else if (mode === 'diagram')  drawDiagram(lanes, stages);
-      else                          drawLearnSequence(lanes, stages);
+      else if (mode === 'diagram')  drawDiagram(lanes, stages, ax);
+      else                          drawLearnSequence(lanes, stages, ax);
       updateModeButtons();
       applyStep(cur, false);
+      wireArgPicker();
       if (window.lucide) lucide.createIcons();
+    }
+
+    function refreshArgPickerActive() {
+      const host = document.getElementById('learn-arg-picker-host');
+      if (!host) return;
+      host.querySelectorAll('.cg-arg-chip').forEach(btn => {
+        const k = btn.getAttribute('data-arg-key');
+        const active = k === selectedArg;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    }
+
+    function wireArgPicker() {
+      const host = document.getElementById('learn-arg-picker-host');
+      if (!host) return;
+      host.querySelectorAll('.cg-arg-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const k = btn.getAttribute('data-arg-key');
+          if (!k || k === selectedArg) return;
+          selectedArg = k;
+          refreshArgPickerActive();
+          renderForMode();
+        });
+      });
     }
 
     function updateModeButtons() {
@@ -804,7 +973,7 @@
     host.innerHTML = html;
   }
 
-  function pipelineSetStep(i, animate, lanes, stages) {
+  function pipelineSetStep(i, animate, lanes, stages, argCtx) {
     const stripBoxes = document.querySelectorAll('#pipe-strip .pipe-box');
     if (!stripBoxes.length) return;
     const stage = stages[i];
@@ -828,9 +997,10 @@
       log.querySelectorAll('.pipe-log-row').forEach(r => {
         have.set(parseInt(r.dataset.step, 10), r);
       });
-      have.forEach((row, idx) => { if (idx > i) row.remove(); });
+      // arg-flow may shift highlights between renders, so always rebuild rows.
+      have.forEach((row) => row.remove());
       for (let k = 0; k <= i; k++) {
-        if (!have.has(k)) log.appendChild(buildLogRow(k, stages[k]));
+        log.appendChild(buildLogRow(k, stages[k], argCtx));
       }
       log.querySelectorAll('.pipe-log-row').forEach(r => {
         r.classList.toggle('is-current', parseInt(r.dataset.step, 10) === i);
@@ -844,7 +1014,7 @@
     if (window.lucide) lucide.createIcons();
   }
 
-  function buildLogRow(i, stage) {
+  function buildLogRow(i, stage, argCtx) {
     const row = document.createElement('div');
     row.className = 'pipe-log-row';
     row.dataset.step = String(i);
@@ -861,7 +1031,16 @@
     const tag = buildLogCell('col-tag', '[' + stage.from + ' → ' + stage.to + ']');
     tag.style.color = color;
     row.appendChild(tag);
-    const msg = buildLogCell('col-msg', stage.label);
+    const hl = argCtx && argCtx.selected
+      ? argHighlightForStage(stage, argCtx.selected, argCtx.color)
+      : null;
+    const msg = document.createElement('span');
+    msg.className = 'col-msg';
+    if (hl) {
+      msg.innerHTML = highlightLabelHtml(stage.label, hl);
+    } else {
+      msg.textContent = String(stage.label);
+    }
     const hop = stage.hop;
     if (hop && hop.qualname) {
       msg.dataset.hopQn = hop.qualname;
@@ -913,7 +1092,7 @@
 
   // Render the lane diagram into #learn-svg-host. Returns nothing — arrows
   // are looked up by id during animation.
-  function drawLearnSequence(lanes, stages) {
+  function drawLearnSequence(lanes, stages, argCtx) {
     const host = document.getElementById('learn-svg-host');
     const W = Math.max(900, host.clientWidth || 900);
     const LANE_H_TOP = 70;
@@ -971,12 +1150,16 @@
           + ` data-hop-line="${escapeHtml(String(hop.line || ''))}"`
           + ` style="cursor:pointer"`
         : '';
+      const hl = argCtx && argCtx.selected
+        ? argHighlightForStage(s, argCtx.selected, argCtx.color)
+        : null;
+      const labelSvg = renderSequenceLabelSvg(s.label, hl);
       svg += `<g class="learn-arrow" id="learn-arrow-${i}" data-color="${color}" opacity="0.25"${hopAttrs}>
                 <line x1="${ax1}" y1="${y}" x2="${ax2}" y2="${y}"
                       stroke="${color}" stroke-width="2" marker-end="url(#learn-head-${i})"/>
                 <text x="${(ax1 + ax2) / 2}" y="${y - 8}" text-anchor="middle"
                       fill="#e6ecf5" font-size="11" font-family="Inter,sans-serif"
-                      font-weight="500">${escapeHtml(s.label)}</text>
+                      font-weight="500">${labelSvg}</text>
               </g>
               <defs>
                 <marker id="learn-head-${i}" viewBox="0 0 10 10" refX="9" refY="5"
@@ -1164,6 +1347,75 @@
     document.head.appendChild(style);
   }
 
+  function ensureArgFlowStyles() {
+    if (document.getElementById('arch-argflow-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'arch-argflow-styles';
+    style.textContent = `
+      .cg-arg-picker {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+        background: rgba(2,6,23,0.55);
+        border: 1px solid rgba(91,107,140,0.3);
+        border-radius: 12px;
+      }
+      .cg-arg-picker-hint {
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: #94a3b8;
+        margin-right: 4px;
+      }
+      .cg-arg-chip {
+        --arg-color: #94a3b8;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 11.5px;
+        font-weight: 600;
+        background: rgba(15,23,42,0.7);
+        border: 1.5px solid color-mix(in srgb, var(--arg-color) 35%, transparent);
+        border-radius: 999px;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s, transform 0.15s;
+      }
+      .cg-arg-chip:hover {
+        background: color-mix(in srgb, var(--arg-color) 14%, rgba(15,23,42,0.9));
+        border-color: var(--arg-color);
+      }
+      .cg-arg-chip.is-active {
+        background: color-mix(in srgb, var(--arg-color) 22%, rgba(15,23,42,0.9));
+        border-color: var(--arg-color);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--arg-color) 35%, transparent);
+        transform: translateY(-1px);
+      }
+      .cg-arg-chip-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+      }
+      .cg-arg-active {
+        font-weight: 700;
+        text-shadow: 0 0 8px currentColor;
+      }
+      .cg-arg-rename {
+        color: #94a3b8;
+        font-style: italic;
+        font-size: 0.92em;
+        margin-left: 2px;
+      }
+      .cg-arg-traveler {
+        filter: drop-shadow(0 0 4px currentColor);
+        opacity: 0.95;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   function diagBezierPath(x1, y1, x2, y2) {
     if (Math.abs(y1 - y2) < 30) {
       // same row → arc upward to avoid overlapping cards
@@ -1175,7 +1427,7 @@
     return `M ${x1} ${y1} C ${x1} ${my} ${x2} ${my} ${x2} ${y2}`;
   }
 
-  function drawDiagram(lanes, stages) {
+  function drawDiagram(lanes, stages, argCtx) {
     const host = document.getElementById('learn-svg-host');
     if (!host) return;
     const W = Math.max(640, host.clientWidth || 920);
@@ -1225,6 +1477,40 @@
     html += '</g>';
     html += '<circle id="diag-packet-glow" r="14" fill="#22d3ee" opacity="0" filter="url(#diag-glow)"/>';
     html += '<circle id="diag-packet" r="6" fill="#22d3ee" stroke="#fff" stroke-width="1.5" opacity="0"/>';
+
+    // Arg-flow travellers: a SMIL-only (CSS/SVG) loop of dots that ride the
+    // bezier paths between hops where the selected param is present. No JS
+    // animation loop required.
+    if (argCtx && argCtx.selected) {
+      const sel = argCtx.selected;
+      const color = argCtx.color;
+      const segments = [];
+      for (let k = 0; k < stages.length; k++) {
+        const s = stages[k];
+        if (!s.hop) continue;
+        const here = hopArgLocalName(s.hop, sel);
+        if (!here || here.local == null) continue;
+        const pathId = `dge-${s.from}-${s.to}`;
+        if (!pos.has(s.from) || !pos.has(s.to)) continue;
+        segments.push({ pathId, idx: segments.length });
+      }
+      const SEG_DUR = 0.9;       // seconds per segment
+      const cycle = Math.max(1, segments.length) * SEG_DUR + 0.6;
+      segments.forEach((seg) => {
+        const begin = (seg.idx * SEG_DUR).toFixed(2) + 's';
+        html += `<circle class="cg-arg-traveler" r="5"
+          fill="${color}" stroke="#fff" stroke-width="1.2"
+          data-arg-segment="${seg.idx}">
+          <animateMotion dur="${SEG_DUR}s"
+            begin="${begin};travel-cycle-${seg.idx}.end+${(cycle - SEG_DUR).toFixed(2)}s"
+            id="travel-cycle-${seg.idx}"
+            fill="freeze" rotate="auto">
+            <mpath xlink:href="#${seg.pathId}" href="#${seg.pathId}"/>
+          </animateMotion>
+        </circle>`;
+      });
+    }
+
     html += '</svg>';
 
     lanes.forEach(L => {
@@ -1246,7 +1532,7 @@
     if (window.lucide) lucide.createIcons();
   }
 
-  function diagramSetStep(i, animate, lanes, stages) {
+  function diagramSetStep(i, animate, lanes, stages, argCtx) {
     const stage = stages[i];
     if (!stage) return;
     const cards = document.querySelectorAll('#diagram-host .diag-card');
@@ -1372,6 +1658,14 @@
       formatHopArgs,
       DF_ROLE_LANES,
       renderDataflowChip,
+      // DF5 / arg-flow stretch
+      ARG_PALETTE,
+      argColor,
+      getArgFlowKeys,
+      hopArgLocalName,
+      renderArgPicker,
+      argHighlightForStage,
+      highlightLabelHtml,
     };
   }
 })();

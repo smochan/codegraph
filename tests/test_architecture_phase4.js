@@ -20,6 +20,13 @@ const {
   formatHopArgs,
   renderDataflowChip,
   DF_ROLE_LANES,
+  ARG_PALETTE,
+  argColor,
+  getArgFlowKeys,
+  hopArgLocalName,
+  renderArgPicker,
+  argHighlightForStage,
+  highlightLabelHtml,
 } = A;
 
 // ---- Fixture: a 5-hop dataflow payload matching the v0.3 contract --------
@@ -224,4 +231,191 @@ test('click-target metadata: each stage carries qualname for jumpToQualname', ()
     'app.models.User',
   ];
   assert.deepEqual(seg.stages.map(s => s.hop.qualname), expected);
+});
+
+// ---- DF5 / arg-flow stretch fixtures + tests --------------------------------
+
+// Mirrors the v0.3 stretch contract: per-hop arg_flow maps the starting
+// param key to the local name at that hop (or null when dropped).
+function argFlowHandler() {
+  return {
+    qualname: 'app.api.users.get_user',
+    method: 'GET',
+    path: '/api/users/{id}',
+    dataflow: {
+      confidence: 0.9,
+      hops: [
+        { kind: 'FETCH_CALL', qualname: 'src/UserCard.tsx::fetchUser',
+          file: 'src/UserCard.tsx', line: 42, args: ['userId', 'email'],
+          role: 'COMPONENT',
+          arg_flow: { userId: 'userId', email: 'email' } },
+        { kind: 'ROUTE', qualname: 'app.api.users.get_user',
+          file: 'app/api/users.py', line: 11, args: ['id'], role: 'HANDLER',
+          arg_flow: { userId: 'id', email: null } },
+        { kind: 'CALL', qualname: 'app.services.user.UserService.get',
+          file: 'app/services/user.py', line: 7, args: ['user_id'],
+          role: 'SERVICE',
+          arg_flow: { userId: 'user_id', email: null } },
+        { kind: 'READS_FROM', qualname: 'app.models.User',
+          file: 'app/models.py', line: 8, args: ['user_id'], role: null,
+          arg_flow: { userId: 'user_id', email: null } },
+      ],
+    },
+  };
+}
+
+function singleArgHandler() {
+  return {
+    qualname: 'h.x',
+    method: 'GET', path: '/x',
+    dataflow: {
+      confidence: 0.8,
+      hops: [
+        { kind: 'ROUTE', qualname: 'h.x', file: 'a.py', line: 1,
+          args: ['id'], role: 'HANDLER',
+          arg_flow: { id: 'id' } },
+        { kind: 'CALL', qualname: 'h.svc', file: 'a.py', line: 2,
+          args: ['pk'], role: 'SERVICE',
+          arg_flow: { id: 'pk' } },
+      ],
+    },
+  };
+}
+
+test('arg_flow with one key → picker has 1 chip, default-selected', () => {
+  const keys = getArgFlowKeys(singleArgHandler());
+  assert.deepEqual(keys, ['id']);
+  const html = renderArgPicker(keys, keys[0]);
+  const chipMatches = html.match(/data-arg-key=/g) || [];
+  assert.equal(chipMatches.length, 1);
+  assert.match(html, /data-arg-key="id"/);
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, /class="cg-arg-chip is-active"/);
+});
+
+test('arg_flow with multiple keys → picker has all of them, first selected', () => {
+  const keys = getArgFlowKeys(argFlowHandler());
+  assert.deepEqual(keys, ['userId', 'email']);
+  const html = renderArgPicker(keys, keys[0]);
+  const chipMatches = html.match(/data-arg-key=/g) || [];
+  assert.equal(chipMatches.length, 2);
+  assert.match(html, /data-arg-key="userId"[\s\S]*aria-pressed="true"/);
+  assert.match(html, /data-arg-key="email"[\s\S]*aria-pressed="false"/);
+});
+
+test('empty arg_flow → no picker rendered', () => {
+  const handler = {
+    dataflow: { confidence: 0.9, hops: [
+      { kind: 'ROUTE', qualname: 'h', file: 'a', line: 1, role: 'HANDLER',
+        args: [], arg_flow: {} },
+    ] },
+  };
+  assert.deepEqual(getArgFlowKeys(handler), []);
+  assert.equal(renderArgPicker([], null), '');
+  // Handler with arg_flow missing entirely also yields no picker.
+  const noField = { dataflow: { confidence: 0.5, hops: [
+    { kind: 'ROUTE', qualname: 'h', file: 'a', line: 1, args: [] },
+  ] } };
+  assert.deepEqual(getArgFlowKeys(noField), []);
+});
+
+test('selected param highlights at hops where arg_flow[selected] is non-null', () => {
+  const handler = argFlowHandler();
+  const seg = buildDataflowSegment(handler);
+  const color = argColor(0);
+  // userId is present at every hop in this fixture.
+  const stages = seg.stages;
+  const hits = stages
+    .map(s => argHighlightForStage(s, 'userId', color))
+    .filter(Boolean);
+  assert.equal(hits.length, 4);
+  // Every hit advertises the colour we passed in.
+  hits.forEach(h => assert.equal(h.color, color));
+});
+
+test('selected param hop with rename → rename annotation present', () => {
+  const handler = argFlowHandler();
+  const seg = buildDataflowSegment(handler);
+  // Hop 1 (ROUTE) renames userId → id.
+  const stage = seg.stages[1];
+  const hl = argHighlightForStage(stage, 'userId', '#fbbf24');
+  assert.ok(hl, 'highlight should fire at the renamed hop');
+  assert.equal(hl.local, 'id');
+  assert.equal(hl.isRename, true);
+  // Pipeline / sequence wrapping must surface the (was userId) annotation.
+  const html = highlightLabelHtml(stage.label, hl);
+  assert.match(html, /class="cg-arg-rename"/);
+  assert.match(html, /\(was userId\)/);
+  assert.match(html, /class="cg-arg-active"/);
+});
+
+test('arg_flow[selected]=null at a hop → no highlight, but hop still in stages', () => {
+  const handler = argFlowHandler();
+  const seg = buildDataflowSegment(handler);
+  // email is dropped at hops 1, 2, 3 (only present at hop 0).
+  const dropped = seg.stages.slice(1)
+    .map(s => argHighlightForStage(s, 'email', '#fb7185'));
+  dropped.forEach(h => assert.equal(h, null));
+  // Stage list itself is unchanged.
+  assert.equal(seg.stages.length, 4);
+});
+
+test('switching selection re-renders highlights with the new colour', () => {
+  const handler = argFlowHandler();
+  const seg = buildDataflowSegment(handler);
+  const stage = seg.stages[2]; // SERVICE hop, both keys live here? no - email dropped
+  // userId is live, email is dropped at this hop.
+  const c0 = argColor(0);
+  const c1 = argColor(1);
+  const hUser = argHighlightForStage(stage, 'userId', c0);
+  const hEmail = argHighlightForStage(stage, 'email', c1);
+  assert.ok(hUser);
+  assert.equal(hUser.color, c0);
+  assert.equal(hEmail, null);
+  // Pick a hop where both parameters exist (hop 0) to verify colour swap.
+  const stage0 = seg.stages[0];
+  const hUser0 = argHighlightForStage(stage0, 'userId', c0);
+  const hEmail0 = argHighlightForStage(stage0, 'email', c1);
+  assert.equal(hUser0.color, c0);
+  assert.equal(hEmail0.color, c1);
+  assert.notEqual(c0, c1);
+});
+
+test('colour assignment is stable: same param key gets the same colour across renders', () => {
+  const handler = argFlowHandler();
+  // Render 1
+  const keys1 = getArgFlowKeys(handler);
+  const colorMap1 = new Map(keys1.map((k, i) => [k, argColor(i)]));
+  // Render 2 (e.g. after switching modes / re-opening the modal)
+  const keys2 = getArgFlowKeys(handler);
+  const colorMap2 = new Map(keys2.map((k, i) => [k, argColor(i)]));
+  assert.deepEqual(keys1, keys2);
+  for (const k of keys1) {
+    assert.equal(colorMap1.get(k), colorMap2.get(k),
+      `param ${k} should keep the same colour across renders`);
+  }
+  // Palette is the documented 5-colour set.
+  assert.equal(ARG_PALETTE.length, 5);
+});
+
+test('hopArgLocalName distinguishes missing key, dropped param, and present', () => {
+  const hop = { arg_flow: { userId: 'user_id', email: null } };
+  assert.deepEqual(hopArgLocalName(hop, 'userId'), { local: 'user_id' });
+  assert.deepEqual(hopArgLocalName(hop, 'email'),  { local: null });
+  // Missing key is treated as "no info" → null lookup.
+  assert.equal(hopArgLocalName(hop, 'other'), null);
+  // Hop with no arg_flow at all also returns null.
+  assert.equal(hopArgLocalName({}, 'userId'), null);
+});
+
+test('highlightLabelHtml wraps the matched local name with cg-arg-active span', () => {
+  const hl = { local: 'user_id', color: '#fbbf24', isRename: true, selected: 'userId' };
+  const html = highlightLabelHtml('UserService.get(user_id)', hl);
+  assert.match(html, /<span class="cg-arg-active" style="color:#fbbf24">user_id<\/span>/);
+  assert.match(html, /\(was userId\)/);
+  // No-rename case omits the annotation.
+  const hl2 = { local: 'userId', color: '#38bdf8', isRename: false, selected: 'userId' };
+  const html2 = highlightLabelHtml('fetch fetchUser(userId)', hl2);
+  assert.doesNotMatch(html2, /\(was/);
+  assert.match(html2, /<span class="cg-arg-active"/);
 });
