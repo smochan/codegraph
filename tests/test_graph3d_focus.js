@@ -720,3 +720,128 @@ test('index.html imports three-spritetext from esm.sh as a module', () => {
     'three-spritetext must be pinned to 1.10.0 via esm.sh');
   assert.ok(/window\.SpriteText\s*=/.test(html));
 });
+
+// ---- Hide-tests filter -----------------------------------------------------
+//
+// The 3D view's "Hide tests" toggle drops nodes whose qualname or file
+// matches a test convention. Verifies the helper, then asserts the
+// filter is applied at buildFocusGraph and expandNode boundaries.
+
+const { isTestNode } = T;
+
+test('isTestNode: detects Python test conventions', () => {
+  assert.equal(isTestNode('tests.test_dataflow.test_route_entry', ''), true);
+  assert.equal(isTestNode('pkg.tests.helpers', ''), true);
+  assert.equal(isTestNode('foo.bar', 'tests/test_foo.py'), true);
+  assert.equal(isTestNode('foo.bar', 'pkg/test_baz.py'), true);
+  assert.equal(isTestNode('foo.bar', 'pkg/foo_test.py'), true);
+});
+
+test('isTestNode: detects JS/TS test conventions', () => {
+  assert.equal(isTestNode('foo.bar', 'src/foo.test.ts'), true);
+  assert.equal(isTestNode('foo.bar', 'src/foo.test.tsx'), true);
+  assert.equal(isTestNode('foo.bar', 'src/foo.spec.js'), true);
+  assert.equal(isTestNode('foo.bar', 'src/foo.spec.jsx'), true);
+});
+
+test('isTestNode: detects Go test conventions', () => {
+  assert.equal(isTestNode('foo.bar', 'pkg/foo_test.go'), true);
+});
+
+test('isTestNode: leaves real-code symbols alone', () => {
+  assert.equal(isTestNode('codegraph.viz.dashboard.build_dashboard_payload', 'codegraph/viz/dashboard.py'), false);
+  assert.equal(isTestNode('app.handlers.get_user', 'src/app/handlers.ts'), false);
+  // tightly-spelled but unrelated names ('contest', 'fastest', 'tester') don't trigger
+  assert.equal(isTestNode('app.contest.run', 'app/contest.py'), false);
+  assert.equal(isTestNode('app.fastest', 'app/fastest.py'), false);
+});
+
+test('isTestNode: empty inputs are not test nodes', () => {
+  assert.equal(isTestNode('', ''), false);
+  assert.equal(isTestNode(null, undefined), false);
+});
+
+test('hideTests: drops test_* ancestors of root in BFS', () => {
+  // 'm.target' has 1 prod caller and 2 test callers.
+  const hld = hldFrom([
+    ['m.target', ['m.real_caller', 'tests.test_target.test_a', 'tests.test_target.test_b'], []],
+    ['m.real_caller', [], ['m.target']],
+    ['tests.test_target.test_a', [], ['m.target']],
+    ['tests.test_target.test_b', [], ['m.target']],
+  ]);
+  const noFilter = buildFocusGraph(hld, 'm.target', 2, 'ancestors');
+  const filtered = buildFocusGraph(hld, 'm.target', 2, 'ancestors', { hideTests: true });
+  // Without filter: root + 3 callers
+  assert.equal(noFilter.nodes.length, 4);
+  // With filter: root + 1 prod caller (the 2 tests are dropped)
+  assert.equal(filtered.nodes.length, 2);
+  const ids = filtered.nodes.map(function (n) { return n.id; }).sort();
+  assert.deepEqual(ids, ['m.real_caller', 'm.target']);
+  // Edges: only the prod caller -> target survives
+  assert.equal(filtered.links.length, 1);
+  assert.equal(filtered.links[0].source, 'm.real_caller');
+  assert.equal(filtered.links[0].target, 'm.target');
+});
+
+test('hideTests: never filters the root itself', () => {
+  // Even if the user picks a test function as the focus, we still show it.
+  const hld = hldFrom([
+    ['tests.test_x.test_a', [], ['m.real_callee']],
+    ['m.real_callee', ['tests.test_x.test_a'], []],
+  ]);
+  const filtered = buildFocusGraph(
+    hld, 'tests.test_x.test_a', 2, 'descendants', { hideTests: true }
+  );
+  assert.equal(filtered.nodes.length, 2);
+  const ids = filtered.nodes.map(function (n) { return n.id; }).sort();
+  assert.deepEqual(ids, ['m.real_callee', 'tests.test_x.test_a']);
+});
+
+test('hideTests: drops test descendants too', () => {
+  // 'm.factory' calls one prod helper and one test helper.
+  const hld = hldFrom([
+    ['m.factory', [], ['m.helper', 'tests.test_factory.fixture']],
+    ['m.helper', ['m.factory'], []],
+    ['tests.test_factory.fixture', ['m.factory'], []],
+  ]);
+  const filtered = buildFocusGraph(
+    hld, 'm.factory', 2, 'descendants', { hideTests: true }
+  );
+  assert.equal(filtered.nodes.length, 2);
+  const ids = filtered.nodes.map(function (n) { return n.id; }).sort();
+  assert.deepEqual(ids, ['m.factory', 'm.helper']);
+  assert.equal(filtered.links.length, 1);
+});
+
+test('hideTests: makeFocusState honors opts and expandNode honors opts', () => {
+  const hld = hldFrom([
+    ['m.target', ['m.real_caller', 'tests.test_target.test_a'], ['m.helper']],
+    ['m.real_caller', [], ['m.target']],
+    ['tests.test_target.test_a', [], ['m.target']],
+    ['m.helper', ['m.target'], ['m.deep', 'tests.test_helper.test_x']],
+    ['m.deep', ['m.helper'], []],
+    ['tests.test_helper.test_x', ['m.helper'], []],
+  ]);
+  const state = makeFocusState(hld, 'm.target', 1, 'both', { hideTests: true });
+  // depth 1: root + helper (descendant) + real_caller (ancestor); test
+  // ancestor dropped.
+  const ids0 = Array.from(state.nodes.keys()).sort();
+  assert.deepEqual(ids0, ['m.helper', 'm.real_caller', 'm.target']);
+
+  // expandNode on m.helper with hideTests should NOT pull tests.test_helper.test_x in.
+  expandNode(state, hld, 'm.helper', { hideTests: true });
+  const idsAfter = Array.from(state.nodes.keys()).sort();
+  assert.ok(idsAfter.includes('m.deep'), 'real descendant should be present');
+  assert.ok(!idsAfter.includes('tests.test_helper.test_x'),
+    'test descendant should be filtered when hideTests=true');
+});
+
+test('hideTests: opts undefined preserves legacy behavior', () => {
+  // No opts means hideTests is implicitly off; tests are kept.
+  const hld = hldFrom([
+    ['m.target', ['tests.test_target.test_a'], []],
+    ['tests.test_target.test_a', [], ['m.target']],
+  ]);
+  const out = buildFocusGraph(hld, 'm.target', 2, 'ancestors');
+  assert.equal(out.nodes.length, 2);  // root + test caller
+});
