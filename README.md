@@ -48,7 +48,7 @@ Pick any function. See what calls it, what it calls, and what data flows through
 
 | Screenshot | Use case |
 |:---:|:---|
-| ![3d_focus](docs/images/3d_focus.png) | **3D focus view** — Pick `shape_hops_for_handler` (codegraph's own dataflow shaper), expand ancestors and descendants inline, collapse when done. External calls render as leaves; your code stays in the center. |
+| ![3d_focus](docs/images/3d_focus.png) | **3D focus view** — Pick any function and trace its real downstream call tree. Shown: `build_dashboard_payload` (the function that runs every time you `codegraph serve`) with its 15 direct callees — `find_dead_code`, `find_cycles`, `build_hld`, `find_hotspots`, `compute_metrics`, `detect_infrastructure`, and the rest of the analysis stack. Codegraph analyzing itself. |
 | ![architecture_view](docs/images/architecture_view.png) | **Architecture map** — See handlers grouped by role (HANDLER, SERVICE, COMPONENT, REPO), infrastructure components (DB, cache, queue), and their connections at a glance. (codegraph analyzing a sample repo: `GET /api/users/{user_id}` from `examples/cross-stack-demo`) |
 | ![arg_flow](docs/images/arg_flow.png) | **Argument flow trace** — Watch the `user_id` parameter rename and travel through handler → service → repository → SQL query with a timeline visualization. |
 
