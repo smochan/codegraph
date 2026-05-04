@@ -10,7 +10,18 @@ each box as you finish.
 
 ---
 
-## 1. Pre-flight smoke (~10 min)
+## 0. README rewrite + assets
+
+- [ ] Capture 3 dashboard screenshots via Playwright (3D focus / Architecture+LearnMode / Arg-flow)
+- [ ] Record hero video via Playwright
+- [ ] Render dead-code journey chart (`python3 scripts/render_deadcode_chart.py`)
+- [x] Generate architecture diagram SVG (DONE — already shipped at `docs/images/architecture.svg`)
+- [ ] Replace README.md with draft from `.planning/README_REWRITE/README_DRAFT.md`
+- [ ] Verify all links in new README resolve
+- [ ] Open PR for README rewrite, dogfood the PR review CI on it
+- [ ] Merge
+
+## 2. Pre-flight smoke (~10 min)
 
 ```bash
 git fetch origin && git pull origin main
@@ -38,7 +49,7 @@ rm -f .codegraph/graph.db
 
 If any step fails, stop and fix before proceeding.
 
-## 2. Record the launch demo (~2 hours)
+## 3. Record the launch demo (~2 hours)
 
 Storyboard: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md). Two outputs:
 
@@ -50,7 +61,7 @@ Tools: OBS for capture, Kdenlive (or DaVinci Resolve / iMovie) for trim,
 
 Save final files to `docs/launch-assets/` (gitignored — too large for the repo).
 
-## 3. Tag and PyPI publish (~30 min)
+## 4. Tag and PyPI publish (~30 min)
 
 > **Run `twine upload` MANUALLY first** to claim the `codegraph-py` name on PyPI before the automated workflow runs. After that, tag-push triggers `release.yml`.
 
@@ -91,7 +102,7 @@ The `release.yml` workflow will:
 - [ ] PyPI shows version 0.1.0
 - [ ] `pip install codegraph-py==0.1.0` works
 
-## 4. README badge update (~5 min)
+## 5. README badge update (~5 min)
 
 After the tag, update the status badge:
 
@@ -104,7 +115,7 @@ After the tag, update the status badge:
 
 - [ ] PR opened, merged
 
-## 5. LinkedIn launch (~30 min)
+## 6. LinkedIn launch (~30 min)
 
 Draft is ready in [`.planning/draft_linkedin.md`](.planning/draft_linkedin.md).
 Verify the metrics match `main` before posting.
@@ -119,7 +130,7 @@ Verify the metrics match `main` before posting.
 > the strategic note in earlier session research. Posting now risks
 > "isn't this GitNexus?" as the top comment.
 
-## 6. Post-launch (the same day)
+## 7. Post-launch (the same day)
 
 - [ ] Reply to every comment within 6 hours
 - [ ] If anyone files an issue, fix or label it within 24 hours

@@ -148,6 +148,7 @@ def _introduces_cycle(
     return new_total > old_total
 
 
+# pragma: codegraph-public-api
 def score_change(
     change: NodeChange | EdgeChange,
     *,
