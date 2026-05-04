@@ -27,6 +27,32 @@ from codegraph.viz.diagrams import (
 from codegraph.viz.hld import build_hld
 
 
+def _attach_handler_dataflow(
+    architecture: dict[str, Any], graph: nx.MultiDiGraph
+) -> None:
+    """Attach per-handler dataflow hops (with arg_flow) to architecture payload.
+
+    The architecture view's Learn Mode modal expects each handler to carry a
+    ``dataflow`` field containing the v0.3 hop chain. ``detect_infrastructure``
+    only emits the structural fields, so we enrich here from
+    :func:`shape_hops_for_handler`.
+    """
+    from codegraph.analysis.dataflow import shape_hops_for_handler
+
+    for h in architecture.get("handlers") or []:
+        qn = h.get("qualname") or ""
+        method = h.get("method") or ""
+        path = h.get("path") or ""
+        if not qn:
+            continue
+        try:
+            h["dataflow"] = shape_hops_for_handler(
+                graph, qn, method=method, path=path
+            )
+        except Exception:
+            continue
+
+
 def _hotspot_scores_by_file(graph: nx.MultiDiGraph) -> dict[str, int]:
     scores: dict[str, int] = {}
     for h in find_hotspots(graph, limit=10_000):
@@ -110,6 +136,7 @@ def build_dashboard_payload(
     files = _file_stats(cleaned)
     hld = build_hld(cleaned)
     architecture = detect_infrastructure(graph)
+    _attach_handler_dataflow(architecture, graph)
 
     return {
         "metrics": {
@@ -158,6 +185,7 @@ def build_dashboard_payload(
     }
 
 
+# pragma: codegraph-public-api
 def render_dashboard(
     graph: nx.MultiDiGraph,
     out_path: Path,
