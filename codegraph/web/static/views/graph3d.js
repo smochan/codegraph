@@ -26,7 +26,8 @@
   var demoCtl = null;
   var resizeObs = null;
   var currentHost = null;
-  var cameraFitDone = false;  // one-shot zoomToFit per focus change
+  var cameraFitDone = false;     // one-shot zoomToFit per focus change
+  var fitFallbackTimer = null;   // safety-net timer in case onEngineStop never fires
 
   var focus = null;             // { rootQn, depth, direction }
   var focusState = null;        // mutable graph state from makeFocusState
@@ -182,9 +183,23 @@
       instance = null;
     }
     if (resizeObs) { try { resizeObs.disconnect(); } catch (e) {} resizeObs = null; }
+    if (fitFallbackTimer) { clearTimeout(fitFallbackTimer); fitFallbackTimer = null; }
     cameraFitDone = false;
     clearSpriteCache();
     clearEdgeSpriteCache();
+  }
+
+  // Fit the camera to the cluster bounding box, exactly once per scene.
+  // Called from onEngineStop AND from a setTimeout fallback in bootScene
+  // — whichever fires first wins; the cameraFitDone latch keeps the other
+  // from re-zooming and confusing the user mid-interaction.
+  function fitCameraOnce() {
+    if (!instance || cameraFitDone) return;
+    cameraFitDone = true;
+    // Tight 20px padding fills the canvas without crowding labels.
+    // 60px (the library default-ish value) wastes most of the viewport for
+    // the small focused subgraphs this view renders.
+    try { instance.zoomToFit(800, 20); } catch (e) { /* ignore */ }
   }
 
   function fallbackHtml(msg) {
@@ -823,7 +838,18 @@
     var detailEl = host.querySelector('#g3d-detail');
 
     try {
-      instance = window.ForceGraph3D()(container)
+      instance = window.ForceGraph3D()(container);
+      // Debug surface: lets users (and Playwright recordings) poke at the
+      // live ForceGraph3D instance from devtools — read camera position,
+      // call zoomToFit manually, dump graphData. Read-only by convention.
+      if (typeof window !== 'undefined') window.__cgGraph3d = instance;
+      instance
+        // Cap simulation runtime so onEngineStop fires reliably ~3s after
+        // mount. The library default is 15000ms, which leaves the camera
+        // stuck at its initial distance for an awkwardly long time before
+        // the post-settle zoomToFit kicks in. 3000ms is plenty for the
+        // small focused subgraphs this view renders (typically <50 nodes).
+        .cooldownTime(3000)
         .backgroundColor(bgColor())
         .nodeRelSize(4)
         .nodeColor(function (n) { return n.color; })
@@ -876,15 +902,14 @@
           return true;
         })
         .onEngineStop(function () {
-          // Fired when the force simulation cools below alphaMin. Auto-fit
-          // the camera once per focus change so the cluster sits centered
-          // in the canvas instead of drifting bottom-right when callers
-          // outweigh callees (or vice-versa). One-shot guard: an expansion
-          // re-runs the simulation; we don't want to snap the camera on
-          // every minor adjustment after the user has settled in.
-          if (!instance || cameraFitDone) return;
-          cameraFitDone = true;
-          try { instance.zoomToFit(800, 60); } catch (e) { /* ignore */ }
+          // Fired when the force simulation cools below alphaMin (or hits
+          // the cooldownTime cap above). Auto-fit the camera once per
+          // focus change so the cluster sits centered in the canvas
+          // instead of drifting when callers outweigh callees (or
+          // vice-versa). One-shot guard: an expansion re-runs the
+          // simulation; we don't want to snap the camera on every minor
+          // adjustment after the user has settled in.
+          fitCameraOnce();
         })
         .onNodeHover(function (node) {
           container.style.cursor = node ? 'pointer' : 'grab';
@@ -927,6 +952,14 @@
         resizeObs.observe(container);
       }
       injectLegendOverlay(host);
+
+      // Belt-and-suspenders: schedule a one-shot zoomToFit at 3.5s so the
+      // camera centers on the cluster even if onEngineStop never fires
+      // (some browsers throttle requestAnimationFrame in background tabs;
+      // and the cooldownTime cap above is 3000ms, so 3500ms is a safe
+      // margin). cameraFitDone makes this idempotent — whichever fires
+      // first wins, the other becomes a no-op.
+      fitFallbackTimer = setTimeout(fitCameraOnce, 3500);
     } catch (e) {
       host.innerHTML = fallbackHtml('WebGL initialization failed: ' + (e && e.message || e));
       wireFallback(host);
