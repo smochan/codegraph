@@ -292,7 +292,37 @@ function isExternalQn(qn, index) {
   return !index.has(qn);
 }
 
-function buildFocusGraph(hld, rootQn, depth, direction) {
+// A node belongs to test code if its qualname or file matches a common
+// test convention. Drives the "Hide tests" toggle in the 3D view, since
+// most users want to see real-code call chains by default and only opt
+// into test fan-in when debugging coverage.
+//
+// Heuristics (intentionally conservative — false negatives over noise):
+//  - qualname starts with `tests.` or `test.`
+//  - qualname segment-bounded `tests` (e.g. `pkg.tests.foo`)
+//  - file path under a tests/ directory
+//  - filename matches Python (test_*.py, *_test.py), JS/TS (*.test.[jt]sx?,
+//    *.spec.[jt]sx?), or Go (*_test.go) test conventions
+var TEST_QN_RE = /(^|\.)(tests?)(\.|$)/i;
+var TEST_FILE_RE = new RegExp(
+  // tests/ directory anywhere
+  '(^|/)tests?/' +
+  // OR Python test_* / _test files
+  '|(^|/)test_[^/]+\\.py$|_test\\.py$' +
+  // OR JS/TS *.test.* / *.spec.*
+  '|\\.(test|spec)\\.[jt]sx?$' +
+  // OR Go *_test.go
+  '|_test\\.go$',
+  'i'
+);
+
+function isTestNode(qualname, file) {
+  if (qualname && TEST_QN_RE.test(String(qualname))) return true;
+  if (file && TEST_FILE_RE.test(String(file))) return true;
+  return false;
+}
+
+function buildFocusGraph(hld, rootQn, depth, direction, opts) {
   if (!rootQn) return { nodes: [], links: [] };
 
   var maxDepth = Number(depth);
@@ -300,9 +330,19 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
   if (maxDepth > 8) maxDepth = 8;
 
   var dir = direction || 'both';
+  var hideTests = !!(opts && opts.hideTests);
 
   var index = indexSymbols(hld);
   if (!index.has(rootQn)) return { nodes: [], links: [] };
+
+  // The root itself is never filtered: if the user explicitly searched
+  // for a test function, they want to see it.
+  function shouldSkipNeighbor(qn) {
+    if (!hideTests || qn === rootQn) return false;
+    var entry = index.get(qn);
+    var file = entry ? (entry.sym && entry.sym.file) || (entry.mod && entry.mod.file) || '' : '';
+    return isTestNode(qn, file);
+  }
 
   var nodes = new Map(); // qn -> node
   var links = [];
@@ -344,6 +384,7 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
         for (var j = 0; j < neighbors.length; j++) {
           var nb = neighbors[j];
           if (!nb) continue;
+          if (shouldSkipNeighbor(nb)) continue;
           var external = isExternalQn(nb, index);
           var argLabel = '';
           if (role === 'descendant') {
@@ -419,8 +460,8 @@ function buildFocusGraph(hld, rootQn, depth, direction) {
 // pure transforms over it so we can unit-test the expand/collapse logic
 // without touching the DOM.
 
-function makeFocusState(hld, rootQn, depth, direction) {
-  var graph = buildFocusGraph(hld, rootQn, depth, direction);
+function makeFocusState(hld, rootQn, depth, direction, opts) {
+  var graph = buildFocusGraph(hld, rootQn, depth, direction, opts);
   var nodes = new Map();
   var refcount = new Map();
   graph.nodes.forEach(function (n) {
@@ -458,7 +499,7 @@ function snapshotState(state) {
 // Expand: bring 1-hop neighbors of qn into the graph.
 // External neighbors render as terminal leaves; internals get a role
 // matching the relationship to qn (callers => ancestor, callees => descendant).
-function expandNode(state, hld, qn) {
+function expandNode(state, hld, qn, opts) {
   if (!state || !qn) return state;
   if (state.expansions.has(qn)) return state; // already expanded
   if (qn === state.rootQn) return state;
@@ -466,10 +507,18 @@ function expandNode(state, hld, qn) {
   var index = indexSymbols(hld);
   if (!index.has(qn)) return state;
 
+  var hideTests = !!(opts && opts.hideTests);
   var entry = index.get(qn);
   var sym = entry.sym;
   var addedNodes = new Set();
   var addedLinkKeys = new Set();
+
+  function shouldSkipNeighbor(neighborQn) {
+    if (!hideTests || neighborQn === state.rootQn) return false;
+    var nbEntry = index.get(neighborQn);
+    var file = nbEntry ? (nbEntry.sym && nbEntry.sym.file) || (nbEntry.mod && nbEntry.mod.file) || '' : '';
+    return isTestNode(neighborQn, file);
+  }
 
   function addLeaf(neighborQn, role, edgePair, argLabel) {
     if (!neighborQn) return;
@@ -510,12 +559,14 @@ function expandNode(state, hld, qn) {
   // own callee_args list pointing at qn.
   var ownCallArgs = callArgsFromSym(sym);
   (sym.callers || []).forEach(function (c) {
+    if (shouldSkipNeighbor(c)) return;
     var cEntry = index.get(c);
     var argLabel = '';
     if (cEntry) argLabel = callArgsFromSym(cEntry.sym)[qn] || '';
     addLeaf(c, 'ancestor', [c, qn], argLabel);
   });
   (sym.callees || []).forEach(function (c) {
+    if (shouldSkipNeighbor(c)) return;
     addLeaf(c, 'descendant', [qn, c], ownCallArgs[c] || '');
   });
 
@@ -897,6 +948,7 @@ if (typeof window !== 'undefined') {
     ROLE_ORDER: ROLE_ORDER,
     ROLE_PICKER_COLORS: ROLE_PICKER_COLORS,
     isExternalQn: isExternalQn,
+    isTestNode: isTestNode,
     indexSymbols: indexSymbols,
     kindColor: kindColor,
     edgeColor: edgeColor,
@@ -923,6 +975,7 @@ if (typeof module !== 'undefined' && module.exports) {
     ROLE_ORDER: ROLE_ORDER,
     ROLE_PICKER_COLORS: ROLE_PICKER_COLORS,
     isExternalQn: isExternalQn,
+    isTestNode: isTestNode,
     indexSymbols: indexSymbols,
     kindColor: kindColor,
     edgeColor: edgeColor,

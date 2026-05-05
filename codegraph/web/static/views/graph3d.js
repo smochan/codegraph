@@ -26,6 +26,7 @@
   var demoCtl = null;
   var resizeObs = null;
   var currentHost = null;
+  var cameraFitDone = false;  // one-shot zoomToFit per focus change
 
   var focus = null;             // { rootQn, depth, direction }
   var focusState = null;        // mutable graph state from makeFocusState
@@ -33,7 +34,30 @@
 
   var DEFAULT_DEPTH = 2;
   var DEFAULT_DIRECTION = 'both';
+  var DEFAULT_HIDE_TESTS = true;  // most users want to see real-code call chains first
   var MAX_HISTORY = 8;
+  var HIDE_TESTS_LS_KEY = 'cg.graph3d.hideTests';
+
+  // Whether to filter test_* symbols out of focused subgraphs. Persists
+  // to localStorage so the choice survives page reloads. Returns
+  // DEFAULT_HIDE_TESTS when localStorage is unavailable or the value
+  // hasn't been set yet.
+  function getHideTests() {
+    try {
+      var v = window.localStorage.getItem(HIDE_TESTS_LS_KEY);
+      if (v === '1') return true;
+      if (v === '0') return false;
+    } catch (e) { /* private mode etc. */ }
+    return DEFAULT_HIDE_TESTS;
+  }
+  function setHideTests(on) {
+    try {
+      window.localStorage.setItem(HIDE_TESTS_LS_KEY, on ? '1' : '0');
+    } catch (e) { /* ignore */ }
+  }
+  function focusOpts() {
+    return { hideTests: getHideTests() };
+  }
 
   // Hand-picked tour stops (top fan_in/fan_out symbols of the self-graph).
   var DEMO_STOPS = [
@@ -158,6 +182,7 @@
       instance = null;
     }
     if (resizeObs) { try { resizeObs.disconnect(); } catch (e) {} resizeObs = null; }
+    cameraFitDone = false;
     clearSpriteCache();
     clearEdgeSpriteCache();
   }
@@ -345,6 +370,15 @@
       '</div>',
       '<div class="g3d-controls-sep"></div>',
       '<div class="g3d-controls-group">',
+      '<button class="g3d-filter-btn', getHideTests() ? ' active' : '',
+        '" id="g3d-hide-tests-btn"',
+        ' title="Hide test_* / *.test.* / tests/ files from the graph"',
+        ' aria-pressed="', getHideTests() ? 'true' : 'false', '">',
+        'Hide tests',
+      '</button>',
+      '</div>',
+      '<div class="g3d-controls-sep"></div>',
+      '<div class="g3d-controls-group">',
       '<button class="g3d-filter-btn" id="g3d-demo-btn" title="Autoplay tour">Demo</button>',
       '<button class="g3d-filter-btn" id="g3d-reset-btn" title="Reset to picker">Reset to picker</button>',
       '<span class="g3d-controls-lbl ml-auto g3d-node-count">',
@@ -384,7 +418,9 @@
       depth: focus ? focus.depth : DEFAULT_DEPTH,
       direction: focus ? focus.direction : DEFAULT_DIRECTION,
     };
-    focusState = getTransform().makeFocusState(hld, qn, focus.depth, focus.direction);
+    focusState = getTransform().makeFocusState(
+      hld, qn, focus.depth, focus.direction, focusOpts()
+    );
     pushHistory(qn);
     renderFocusedView(host, hld);
   }
@@ -401,7 +437,7 @@
     if (T.isExpanded(focusState, qn)) {
       T.collapseNode(focusState, qn);
     } else {
-      T.expandNode(focusState, hld, qn);
+      T.expandNode(focusState, hld, qn, focusOpts());
     }
     refreshGraphData(host);
   }
@@ -633,7 +669,9 @@
 
     var T = getTransform();
     if (!focusState) {
-      focusState = T.makeFocusState(hld, focus.rootQn, focus.depth, focus.direction);
+      focusState = T.makeFocusState(
+        hld, focus.rootQn, focus.depth, focus.direction, focusOpts()
+      );
     }
     var data = T.snapshotState(focusState);
 
@@ -711,6 +749,21 @@
     if (resetBtn) resetBtn.addEventListener('click', function () { clearFocus(host, hld); });
     var demoBtn = host.querySelector('#g3d-demo-btn');
     if (demoBtn) demoBtn.addEventListener('click', function () { startDemoTour(host, hld); });
+    var hideBtn = host.querySelector('#g3d-hide-tests-btn');
+    if (hideBtn) hideBtn.addEventListener('click', function () {
+      // Flip the persisted preference, rebuild the focus subgraph from
+      // scratch (cheaper than diffing) so dropped/added nodes settle
+      // through the normal force layout instead of popping in mid-flight.
+      setHideTests(!getHideTests());
+      if (focus && focus.rootQn) {
+        focusState = getTransform().makeFocusState(
+          hld, focus.rootQn, focus.depth, focus.direction, focusOpts()
+        );
+        renderFocusedView(host, hld);
+      } else {
+        renderPickerView(host, hld);
+      }
+    });
     host.querySelectorAll('.g3d-crumb').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var qn = btn.dataset.qn;
@@ -821,6 +874,17 @@
             (s.z + e.z) / 2,
           );
           return true;
+        })
+        .onEngineStop(function () {
+          // Fired when the force simulation cools below alphaMin. Auto-fit
+          // the camera once per focus change so the cluster sits centered
+          // in the canvas instead of drifting bottom-right when callers
+          // outweigh callees (or vice-versa). One-shot guard: an expansion
+          // re-runs the simulation; we don't want to snap the camera on
+          // every minor adjustment after the user has settled in.
+          if (!instance || cameraFitDone) return;
+          cameraFitDone = true;
+          try { instance.zoomToFit(800, 60); } catch (e) { /* ignore */ }
         })
         .onNodeHover(function (node) {
           container.style.cursor = node ? 'pointer' : 'grab';
