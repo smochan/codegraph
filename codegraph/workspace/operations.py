@@ -16,7 +16,6 @@ from typing import Any
 
 from codegraph.workspace.config import WorkspaceConfig, WorkspaceRepo
 
-
 # ---------------------------------------------------------------------------
 # Repo health / state
 # ---------------------------------------------------------------------------

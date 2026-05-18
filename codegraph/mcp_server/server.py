@@ -772,7 +772,7 @@ def _handle_dataflow_trace(
     },
 )
 def _handle_workspace_state(
-    graph: nx.MultiDiGraph, args: dict[str, Any]  # noqa: ARG001 — workspace tools self-load
+    graph: nx.MultiDiGraph, args: dict[str, Any]
 ) -> Any:
     from codegraph.workspace.config import load_workspace, resolve_workspace_path
     from codegraph.workspace.operations import workspace_state
@@ -796,7 +796,7 @@ def _handle_workspace_state(
     },
 )
 def _handle_workspace_diff_since(
-    graph: nx.MultiDiGraph, args: dict[str, Any]  # noqa: ARG001
+    graph: nx.MultiDiGraph, args: dict[str, Any]
 ) -> Any:
     from codegraph.workspace.config import load_workspace, resolve_workspace_path
     from codegraph.workspace.operations import workspace_diff_since
@@ -824,7 +824,7 @@ def _handle_workspace_diff_since(
     },
 )
 def _handle_workspace_blast_radius(
-    graph: nx.MultiDiGraph, args: dict[str, Any]  # noqa: ARG001
+    graph: nx.MultiDiGraph, args: dict[str, Any]
 ) -> Any:
     from codegraph.workspace.config import load_workspace, resolve_workspace_path
     from codegraph.workspace.operations import workspace_blast_radius

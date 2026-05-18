@@ -1367,8 +1367,8 @@ def workspace_list() -> None:
     cfg = load_workspace(cfg_path)
     if not cfg.repos:
         console.print(
-            f"[yellow]No repositories registered yet.[/yellow] "
-            f"Run [bold]codegraph workspace add <path>[/bold]."
+            "[yellow]No repositories registered yet.[/yellow] "
+            "Run [bold]codegraph workspace add <path>[/bold]."
         )
         return
 
@@ -1393,8 +1393,8 @@ def workspace_status() -> None:
     cfg = load_workspace(resolve_workspace_path())
     if not cfg.repos:
         console.print(
-            f"[yellow]No repositories registered yet.[/yellow] "
-            f"Run [bold]codegraph workspace add <path>[/bold]."
+            "[yellow]No repositories registered yet.[/yellow] "
+            "Run [bold]codegraph workspace add <path>[/bold]."
         )
         return
 
@@ -1444,8 +1444,8 @@ def workspace_sync(
     cfg = load_workspace(resolve_workspace_path())
     if not cfg.repos:
         console.print(
-            f"[yellow]No repositories registered yet.[/yellow] "
-            f"Run [bold]codegraph workspace add <path>[/bold]."
+            "[yellow]No repositories registered yet.[/yellow] "
+            "Run [bold]codegraph workspace add <path>[/bold]."
         )
         return
 
@@ -1470,7 +1470,7 @@ def workspace_sync(
             continue
         try:
             repo_cfg = load_config(repo_path)
-        except Exception as exc:  # noqa: BLE001 — surface any config error
+        except Exception as exc:
             summary.append((r.display_name, f"config error: {exc}"))
             continue
         data_dir = repo_path / ".codegraph"
@@ -1480,7 +1480,7 @@ def workspace_sync(
         try:
             builder = GraphBuilder(repo_path, store, ignore=repo_cfg.ignore)
             stats = builder.build(incremental=incremental)
-        except Exception as exc:  # noqa: BLE001 — keep syncing other repos
+        except Exception as exc:
             store.close()
             summary.append((r.display_name, f"build failed: {exc}"))
             continue
