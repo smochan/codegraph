@@ -51,7 +51,8 @@ def test_init_refuses_overwrite_without_force(workspace_file: Path) -> None:
     runner.invoke(app, ["workspace", "init"])
     result = runner.invoke(app, ["workspace", "init"], catch_exceptions=False)
     assert result.exit_code == 1
-    assert "already exists" in result.stdout
+    # Normalize whitespace because Rich wraps long paths in narrow CI terminals
+    assert "already exists" in " ".join(result.stdout.split())
 
 
 def test_init_force_resets(workspace_file: Path, tmp_path: Path) -> None:
@@ -83,7 +84,8 @@ def test_add_validates_directory_exists(workspace_file: Path, tmp_path: Path) ->
         app, ["workspace", "add", str(fake)], catch_exceptions=False
     )
     assert result.exit_code == 1
-    assert "does not exist" in result.stdout
+    # Normalize whitespace because Rich wraps long paths in narrow CI terminals
+    assert "does not exist" in " ".join(result.stdout.split())
 
 
 def test_add_is_idempotent(workspace_file: Path, tmp_path: Path) -> None:
@@ -129,7 +131,7 @@ def test_list_shows_registered_repos(workspace_file: Path, tmp_path: Path) -> No
 def test_list_empty_workspace(workspace_file: Path) -> None:
     result = runner.invoke(app, ["workspace", "list"], catch_exceptions=False)
     assert result.exit_code == 0
-    assert "No repositories" in result.stdout
+    assert "No repositories" in " ".join(result.stdout.split())
 
 
 def test_status_shows_branch(workspace_file: Path, tmp_path: Path) -> None:
