@@ -31,11 +31,16 @@ dataflow_app = typer.Typer(
     help="Trace data flows across frontend / backend / db layers.",
     no_args_is_help=True,
 )
+workspace_app = typer.Typer(
+    help="Manage multi-repo workspaces (cross-repo state, diff, blast radius).",
+    no_args_is_help=True,
+)
 app.add_typer(query_app, name="query")
 app.add_typer(baseline_app, name="baseline")
 app.add_typer(hook_app, name="hook")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(dataflow_app, name="dataflow")
+app.add_typer(workspace_app, name="workspace")
 
 console = Console()
 
@@ -1263,6 +1268,237 @@ def mcp_serve(
         run(db_path=db_path, server_name=name)
     except KeyboardInterrupt:
         raise typer.Exit(0) from None
+
+
+@workspace_app.command("init")
+def workspace_init(
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Overwrite an existing workspace file."
+    ),
+) -> None:
+    """Create an empty workspace file at ``~/.codegraph/workspace.yml``."""
+    from codegraph.workspace.config import (
+        WorkspaceConfig,
+        load_workspace,
+        resolve_workspace_path,
+        save_workspace,
+    )
+
+    cfg_path = resolve_workspace_path()
+    if cfg_path.exists() and not force:
+        existing = load_workspace(cfg_path)
+        console.print(
+            f"[yellow]Workspace already exists at {cfg_path} "
+            f"({len(existing.repos)} repos). Use --force to reset.[/yellow]"
+        )
+        raise typer.Exit(1)
+    save_workspace(WorkspaceConfig(), cfg_path)
+    console.print(f"[green]✓[/green] initialized workspace at {cfg_path}")
+
+
+@workspace_app.command("add")
+def workspace_add(
+    repo: str = typer.Argument(..., help="Path to a repository to register."),
+    name: str | None = typer.Option(
+        None, "--name", help="Short label for the repo (default: directory name)."
+    ),
+) -> None:
+    """Register a repository in the workspace."""
+    from codegraph.workspace.config import (
+        WorkspaceRepo,
+        load_workspace,
+        resolve_workspace_path,
+        save_workspace,
+    )
+
+    repo_path = Path(repo).expanduser().resolve()
+    if not repo_path.exists():
+        console.print(f"[red]error:[/red] {repo_path} does not exist")
+        raise typer.Exit(1)
+    if not repo_path.is_dir():
+        console.print(f"[red]error:[/red] {repo_path} is not a directory")
+        raise typer.Exit(1)
+
+    cfg_path = resolve_workspace_path()
+    cfg = load_workspace(cfg_path)
+    if cfg.has_repo(repo_path):
+        console.print(f"[yellow]{repo_path} is already registered.[/yellow]")
+        raise typer.Exit(0)
+    cfg.repos.append(WorkspaceRepo(path=str(repo_path), name=name))
+    save_workspace(cfg, cfg_path)
+    label = name or repo_path.name
+    console.print(
+        f"[green]✓[/green] added [bold]{label}[/bold] → {repo_path} "
+        f"({len(cfg.repos)} repos total)"
+    )
+
+
+@workspace_app.command("remove")
+def workspace_remove(
+    repo: str = typer.Argument(..., help="Path to the repository to deregister."),
+) -> None:
+    """Remove a repository from the workspace."""
+    from codegraph.workspace.config import (
+        load_workspace,
+        resolve_workspace_path,
+        save_workspace,
+    )
+
+    repo_path = Path(repo).expanduser().resolve()
+    cfg_path = resolve_workspace_path()
+    cfg = load_workspace(cfg_path)
+    if not cfg.remove_repo(repo_path):
+        console.print(
+            f"[yellow]{repo_path} is not in the workspace.[/yellow]"
+        )
+        raise typer.Exit(1)
+    save_workspace(cfg, cfg_path)
+    console.print(
+        f"[green]✓[/green] removed {repo_path} ({len(cfg.repos)} repos left)"
+    )
+
+
+@workspace_app.command("list")
+def workspace_list() -> None:
+    """List all repositories registered in the workspace."""
+    from codegraph.workspace.config import load_workspace, resolve_workspace_path
+
+    cfg_path = resolve_workspace_path()
+    cfg = load_workspace(cfg_path)
+    if not cfg.repos:
+        console.print(
+            "[yellow]No repositories registered yet.[/yellow] "
+            "Run [bold]codegraph workspace add <path>[/bold]."
+        )
+        return
+
+    table = Table(title=f"workspace ({cfg_path})")
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Path")
+    table.add_column("Graph", justify="center")
+    for r in cfg.repos:
+        path = Path(r.path).expanduser()
+        has_graph = (path / ".codegraph" / "graph.db").exists()
+        graph_cell = "[green]✓[/green]" if has_graph else "[red]—[/red]"
+        table.add_row(r.display_name, str(path), graph_cell)
+    console.print(table)
+
+
+@workspace_app.command("status")
+def workspace_status() -> None:
+    """Show git + graph status for every registered repo."""
+    from codegraph.workspace.config import load_workspace, resolve_workspace_path
+    from codegraph.workspace.operations import workspace_state
+
+    cfg = load_workspace(resolve_workspace_path())
+    if not cfg.repos:
+        console.print(
+            "[yellow]No repositories registered yet.[/yellow] "
+            "Run [bold]codegraph workspace add <path>[/bold]."
+        )
+        return
+
+    state = workspace_state(cfg)
+    table = Table(title=f"workspace status ({state['workspace_size']} repos)")
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Branch")
+    table.add_column("Dirty", justify="right")
+    table.add_column("Last commit", overflow="fold")
+    table.add_column("Graph", justify="center")
+    table.add_column("Note", style="yellow")
+
+    for r in state["repos"]:
+        graph_cell = "[green]✓[/green]" if r["has_graph"] else "[red]—[/red]"
+        dirty = str(r["dirty_files"]) if r["dirty_files"] else "0"
+        branch = r["branch"] or "—"
+        last = r["last_commit"] or "—"
+        if last and len(last) > 60:
+            last = last[:57] + "..."
+        note = r["error"] or ""
+        table.add_row(
+            r["name"],
+            branch,
+            dirty,
+            last,
+            graph_cell,
+            note,
+        )
+    console.print(table)
+
+
+@workspace_app.command("sync")
+def workspace_sync(
+    incremental: bool = typer.Option(
+        True, help="Incremental rebuild when possible."
+    ),
+    only: str | None = typer.Option(
+        None, "--only", help="Sync just this repo (path or name)."
+    ),
+) -> None:
+    """Rebuild the graph for every registered repo (or just --only one)."""
+    from codegraph.config import load_config
+    from codegraph.graph.builder import GraphBuilder
+    from codegraph.graph.store_sqlite import SQLiteGraphStore
+    from codegraph.workspace.config import load_workspace, resolve_workspace_path
+
+    cfg = load_workspace(resolve_workspace_path())
+    if not cfg.repos:
+        console.print(
+            "[yellow]No repositories registered yet.[/yellow] "
+            "Run [bold]codegraph workspace add <path>[/bold]."
+        )
+        return
+
+    targets = list(cfg.repos)
+    if only:
+        only_resolved = str(Path(only).expanduser().resolve()) if "/" in only else None
+        targets = [
+            r
+            for r in cfg.repos
+            if r.display_name == only
+            or (only_resolved and str(Path(r.path).resolve()) == only_resolved)
+        ]
+        if not targets:
+            console.print(f"[red]error:[/red] no registered repo matches '{only}'")
+            raise typer.Exit(1)
+
+    summary: list[tuple[str, str]] = []
+    for r in targets:
+        repo_path = Path(r.path).expanduser()
+        if not repo_path.exists():
+            summary.append((r.display_name, "skipped (missing dir)"))
+            continue
+        try:
+            repo_cfg = load_config(repo_path)
+        except Exception as exc:
+            summary.append((r.display_name, f"config error: {exc}"))
+            continue
+        data_dir = repo_path / ".codegraph"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        db_path = data_dir / "graph.db"
+        store = SQLiteGraphStore(db_path)
+        try:
+            builder = GraphBuilder(repo_path, store, ignore=repo_cfg.ignore)
+            stats = builder.build(incremental=incremental)
+        except Exception as exc:
+            store.close()
+            summary.append((r.display_name, f"build failed: {exc}"))
+            continue
+        store.close()
+        summary.append(
+            (
+                r.display_name,
+                f"ok ({stats.files_parsed} files, {stats.nodes_added} nodes)",
+            )
+        )
+
+    table = Table(title=f"workspace sync ({len(targets)} repos)")
+    table.add_column("Repo", style="cyan")
+    table.add_column("Result")
+    for name, result in summary:
+        style = "green" if result.startswith("ok") else "yellow"
+        table.add_row(name, f"[{style}]{result}[/{style}]")
+    console.print(table)
 
 
 if __name__ == "__main__":
