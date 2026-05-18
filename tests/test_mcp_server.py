@@ -29,6 +29,10 @@ EXPECTED_TOOLS = {
     "dataflow_routes",
     "dataflow_fetches",
     "dataflow_trace",
+    # Workspace tools (multi-repo, self-load from ~/.codegraph/workspace.yml):
+    "workspace_state",
+    "workspace_diff_since",
+    "workspace_blast_radius",
 }
 
 

@@ -15,6 +15,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Post-launch-sprint additions (still pre-release)
 
+#### Cross-repo workspace mode — treat N repos as one mental unit
+
+Solo devs and small teams routinely switch between 3–10 repos a day. Until
+now `codegraph` was strictly single-repo — every command resolved against
+the `.codegraph/graph.db` in the current working directory. The new
+`codegraph workspace` subcommand group lets you register N repos once and
+then query them as a union.
+
+- **New CLI subcommands** (`codegraph/cli.py`):
+  - `codegraph workspace init` — create `~/.codegraph/workspace.yml`
+  - `codegraph workspace add <repo>` — register a repo (validates that the
+    path exists and is a directory; idempotent)
+  - `codegraph workspace remove <repo>` — deregister (the per-repo
+    `.codegraph/graph.db` is untouched, only the membership)
+  - `codegraph workspace list` — table of registered repos and whether
+    each has a built graph
+  - `codegraph workspace status` — per-repo git state: branch, dirty file
+    count, last commit subject + timestamp, graph freshness, error notes
+  - `codegraph workspace sync [--only <name>]` — rebuild the graph for
+    every registered repo (or just one)
+- **New module** at `codegraph/workspace/`:
+  - `config.py` — `WorkspaceConfig` Pydantic model + YAML load/save with
+    `CODEGRAPH_WORKSPACE_FILE` env-var override (useful for tests +
+    per-shell workspaces)
+  - `operations.py` — pure functions returning JSON-safe dicts so the CLI
+    and MCP server share one implementation
+- **3 new MCP tools** (`codegraph/mcp_server/server.py`):
+  - `workspace_state()` — git + graph state for every registered repo
+  - `workspace_diff_since(ref="main")` — cross-repo file changes since a
+    git ref; combines committed (`<ref>...HEAD`) and uncommitted (`HEAD`)
+  - `workspace_blast_radius(symbol, depth=None)` — unioned blast radius
+    across all repos; reuses the existing single-repo `blast_radius()` so
+    behaviour matches exactly per-repo
+- **Pollution prevention** — workspace MCP tools self-load their per-repo
+  graphs from the workspace config; the MCP `_call_tool` dispatch
+  bypasses the usual `_load_graph()` for `workspace_*` names so the
+  server doesn't materialize a stray `.codegraph/graph.db` in the cwd
+  when the user only calls workspace tools.
+- **Conflict handling** — when the same memory `id` exists on both sides
+  with different bodies at the same `updated_at`, the conflicting remote
+  copy is saved as `<id>.conflict-<timestamp>.md` next to the local
+  file for manual merging. Sync never silently clobbers.
+- **39 new tests** under `tests/test_workspace_{config,ops,cli,mcp}.py`
+  covering config round-trip, real-tmp git-repo state probes,
+  CliRunner-based CLI integration, and direct MCP handler invocation.
+  Full suite remains green at 576 passing (was 537).
+- **README updated** with a new "Cross-repo Workspace mode" collapsible
+  block under CLI subcommands; MCP tools table now lists 18 total (was 15).
+
 #### v0.3 unified trace — Architecture view shows the real chain
 
 - **Per-handler `dataflow` field on the HLD payload** (PR #22). Each route

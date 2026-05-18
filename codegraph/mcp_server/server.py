@@ -758,6 +758,85 @@ def _handle_dataflow_trace(
 
 
 # ---------------------------------------------------------------------------
+# Workspace tools — multi-repo, ignore the single-repo `graph` parameter.
+# Each handler loads its own graphs from the user-level workspace config.
+# ---------------------------------------------------------------------------
+
+
+@_register(
+    "workspace_state",
+    {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+)
+def _handle_workspace_state(
+    graph: nx.MultiDiGraph, args: dict[str, Any]  # noqa: ARG001 — workspace tools self-load
+) -> Any:
+    from codegraph.workspace.config import load_workspace, resolve_workspace_path
+    from codegraph.workspace.operations import workspace_state
+
+    cfg = load_workspace(resolve_workspace_path())
+    return workspace_state(cfg)
+
+
+@_register(
+    "workspace_diff_since",
+    {
+        "type": "object",
+        "properties": {
+            "ref": {
+                "type": "string",
+                "default": "main",
+                "description": "Git ref to diff against (default: main).",
+            },
+        },
+        "required": [],
+    },
+)
+def _handle_workspace_diff_since(
+    graph: nx.MultiDiGraph, args: dict[str, Any]  # noqa: ARG001
+) -> Any:
+    from codegraph.workspace.config import load_workspace, resolve_workspace_path
+    from codegraph.workspace.operations import workspace_diff_since
+
+    cfg = load_workspace(resolve_workspace_path())
+    ref = str(args.get("ref") or "main")
+    return workspace_diff_since(cfg, ref=ref)
+
+
+@_register(
+    "workspace_blast_radius",
+    {
+        "type": "object",
+        "properties": {
+            "symbol": {
+                "type": "string",
+                "description": "Qualname (or unambiguous substring) to look up across all repos.",
+            },
+            "depth": {
+                "type": "integer",
+                "description": "Optional max-hops; omit for full transitive radius.",
+            },
+        },
+        "required": ["symbol"],
+    },
+)
+def _handle_workspace_blast_radius(
+    graph: nx.MultiDiGraph, args: dict[str, Any]  # noqa: ARG001
+) -> Any:
+    from codegraph.workspace.config import load_workspace, resolve_workspace_path
+    from codegraph.workspace.operations import workspace_blast_radius
+
+    cfg = load_workspace(resolve_workspace_path())
+    symbol = str(args["symbol"])
+    depth_raw = args.get("depth")
+    depth = int(depth_raw) if depth_raw is not None else None
+    return workspace_blast_radius(cfg, symbol=symbol, depth=depth)
+
+
+# ---------------------------------------------------------------------------
 # MCP Server
 # ---------------------------------------------------------------------------
 
@@ -779,7 +858,14 @@ def _build_server(name: str) -> Any:  # returns mcp.server.Server
         if name not in tool_registry:
             raise ValueError(f"Unknown tool: {name}")
         handler_fn, _ = tool_registry[name]
-        graph = _load_graph(None)
+        # Workspace tools self-load their per-repo graphs from the user-level
+        # workspace config and don't need the cwd's graph. Skipping _load_graph
+        # avoids materializing an empty .codegraph/graph.db in the server's cwd
+        # for users who run `codegraph mcp serve` from arbitrary directories.
+        if name.startswith("workspace_"):
+            graph: nx.MultiDiGraph | None = None
+        else:
+            graph = _load_graph(None)
         result = handler_fn(graph, arguments)
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
@@ -806,6 +892,18 @@ def _tool_description(name: str) -> str:
         ),
         "dataflow_trace": (
             "Trace a data flow from entry through call graph + cross-layer edges (DF4)"
+        ),
+        "workspace_state": (
+            "Report git + graph state for every repo registered in the user's "
+            "codegraph workspace (~/.codegraph/workspace.yml)"
+        ),
+        "workspace_diff_since": (
+            "List files changed across every workspace repo since a given git ref "
+            "(default: main)"
+        ),
+        "workspace_blast_radius": (
+            "Compute blast radius for a symbol across every workspace repo "
+            "(unions the per-repo results)"
         ),
     }
     return descriptions.get(name, name)

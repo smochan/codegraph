@@ -316,7 +316,7 @@ codegraph hook uninstall
 ```bash
 codegraph mcp serve
 # Start MCP server (stdio transport) for Claude Code, Cursor, Windsurf.
-# Exposes 15 tools (find_symbol, callers, dead_code, dataflow_trace, etc.).
+# Exposes 18 tools (find_symbol, callers, dead_code, dataflow_trace, workspace_*, etc.).
 
 codegraph embed
 # Chunk repository, embed with nomic-ai/CodeRankEmbed, write .codegraph/embeddings.lance.
@@ -325,9 +325,47 @@ codegraph embed
 
 </details>
 
+<details>
+<summary><strong>Cross-repo Workspace mode</strong></summary>
+
+Register multiple repos as a single mental unit. Each repo still keeps its own
+`.codegraph/graph.db`; workspace operations open them in parallel and union the
+results. Useful when you context-switch across repos (frontend + backend,
+microservices, monorepo workspaces, etc.).
+
+```bash
+codegraph workspace init
+# Create ~/.codegraph/workspace.yml (the user-level workspace file).
+
+codegraph workspace add <repo-path>
+# Register a repository in the workspace. Path is resolved to absolute.
+# Optional: --name <label> for a short display name.
+
+codegraph workspace remove <repo-path>
+# Deregister a repository (does not touch its .codegraph/graph.db).
+
+codegraph workspace list
+# Show all registered repositories and whether each has a built graph.
+
+codegraph workspace status
+# Per-repo git state: branch, dirty file count, last commit, graph freshness.
+
+codegraph workspace sync [--only <name>]
+# Rebuild each registered repo's graph (or just one via --only).
+# Equivalent to running `codegraph build` in each repo.
+```
+
+Override the workspace file location via `CODEGRAPH_WORKSPACE_FILE` (useful for
+project-scoped workspaces, CI isolation, or testing).
+
+The same three operations are also exposed as MCP tools — see the MCP tools
+table below for `workspace_state`, `workspace_diff_since`, `workspace_blast_radius`.
+
+</details>
+
 ---
 
-## MCP tools (15 total)
+## MCP tools (18 total)
 
 | Tool | Input | Output | Use case |
 |------|-------|--------|----------|
@@ -346,8 +384,13 @@ codegraph embed
 | `dataflow_routes()` | None. | List of detected routes: {handler_qualname, method, path, framework}. | "What endpoints does the app expose?" |
 | `dataflow_fetches(handler_qualname=None)` | Optional filter by handler. | List of frontend fetches: {caller_qualname, method, url, body_keys}. | "Which handlers are called from the frontend?" |
 | `dataflow_trace(method_path)` | Route (e.g., "GET /api/users/{id}"). | Ordered list of hops: entry (route) → handler → service → repo → SQL with per-hop arg-flow mapping. | "Trace user_id from frontend to database." |
+| `workspace_state()` | None. | Per-registered-repo: branch, dirty file count, last commit, graph presence. Reads `~/.codegraph/workspace.yml`. | "What's the state of every repo I'm working on?" |
+| `workspace_diff_since(ref="main")` | Optional git ref (default `main`). | Per-repo list of files changed since `ref` (committed + working tree). | "What did I touch this week across all my repos?" |
+| `workspace_blast_radius(symbol, depth=None)` | Symbol qualname (or unambiguous substring); optional depth limit. | Per-repo blast radius unioned across the workspace. Each hit reports `target_qualname`, `node_count`, `file_count`. | "If I rename this function, what breaks across all my projects?" |
 
 **Embeddings:** `semantic_search` and `hybrid_search` require running `codegraph embed` first, which chunks the code and embeds with nomic-ai/CodeRankEmbed (Apache 2.0, ~140 MB). Vectors land in `.codegraph/embeddings.lance`. Everything runs locally — no API keys.
+
+**Workspace tools** (`workspace_state`, `workspace_diff_since`, `workspace_blast_radius`) read the user-level workspace file at `~/.codegraph/workspace.yml`. Configure it via `codegraph workspace init`, then `codegraph workspace add <repo-path>` for each repo you want included. The MCP tools then operate across all of them transparently — no extra flags from the MCP client side.
 
 ---
 
