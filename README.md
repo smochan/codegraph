@@ -17,6 +17,10 @@
 
 ---
 
+## Supported languages
+
+Python, TypeScript / TSX, JavaScript / JSX, **Go** (since v0.2). Tree-sitter under the hood — adding a new language is a parser module + fixture (~3 hours, see `codegraph/parsers/go.py` for the v1 template).
+
 ## At a glance
 
 **637 tests · 0 dead code · 3 cycles · 15 MCP tools — all on its own graph.**

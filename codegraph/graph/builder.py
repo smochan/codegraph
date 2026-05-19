@@ -12,6 +12,7 @@ from typing import Any
 import pathspec
 
 # Ensure extractors register themselves.
+import codegraph.parsers.go
 import codegraph.parsers.python
 import codegraph.parsers.typescript  # noqa: F401
 from codegraph.config import CodegraphConfig

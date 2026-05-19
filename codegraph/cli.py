@@ -161,6 +161,7 @@ def init(
         "python": [".py"],
         "typescript": [".ts", ".tsx"],
         "javascript": [".js", ".jsx", ".mjs", ".cjs"],
+        "go": [".go"],
     }
     detected: list[str] = []
     for lang, exts in lang_exts.items():
