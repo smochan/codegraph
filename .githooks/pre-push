@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — runs the same fast checks CI runs, locally, before
+# any push lands on the remote. Catches lint + test failures that would
+# otherwise eat a CI minute and need a follow-up commit.
+#
+# One-time setup per teammate:
+#     ./scripts/install-hooks.sh
+#
+# Skip in a pinch:  git push --no-verify   (use sparingly — main is protected
+# anyway, but CI will still run on the resulting PR.)
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Prefer the local venv so the hook runs the same Python/Ruff/Pytest versions
+# CI uses. Fall back to whatever is on PATH if there's no venv yet.
+if [ -x .venv/bin/ruff ]; then
+    RUFF=".venv/bin/ruff"
+    PY=".venv/bin/python"
+elif command -v ruff >/dev/null 2>&1; then
+    RUFF="ruff"
+    PY="python"
+else
+    echo "✗ ruff not found. Install dev deps:  pip install -e '.[dev]'"
+    exit 1
+fi
+
+echo "▸ ruff check codegraph tests..."
+"$RUFF" check codegraph tests
+
+echo "▸ pytest -q..."
+"$PY" -m pytest -q --tb=short
+
+echo "✓ pre-push checks passed"
