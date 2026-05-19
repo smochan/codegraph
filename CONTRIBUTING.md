@@ -204,7 +204,20 @@ ROUTE / FETCH_CALL / READS_FROM / WRITES_TO / role counts.
 
 ---
 
+## Contributor License Agreement (CLA)
+
+Before your first PR can be merged, you need to sign the
+**[Contributor License Agreement](CLA.md)**. The CLA grants the Maintainer
+the right to relicense the Project (including under commercial terms) while
+preserving your full rights to your own contribution.
+
+Signing is one click: the first time you open a PR, the
+[CLA Assistant bot](https://cla-assistant.io/) will comment with a link.
+Your signature covers all past and future contributions to this repo.
+
 ## License
 
-By contributing, you agree your contribution is licensed under the
-[MIT License](LICENSE) of the project.
+By contributing, you agree your contribution is distributed under the
+[MIT License](LICENSE) of the project, with the additional terms set out
+in the [CLA](CLA.md) (which preserves the Maintainer's ability to offer
+commercial licensing arrangements).

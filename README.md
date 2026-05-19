@@ -615,3 +615,15 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for local setup, CI checks, commit conv
 ## License
 
 [MIT](LICENSE) © mochan
+
+**Commercial support, deployments, and custom-licensed forks available** —
+contact smochan07@gmail.com. polycodegraph itself is and stays MIT; the
+contact line exists for teams who want enterprise support or specific
+license arrangements on top.
+
+## Contributing
+
+Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the local
+setup, CI expectations, and the one-click
+[Contributor License Agreement](CLA.md) you'll be asked to sign on your
+first PR.
