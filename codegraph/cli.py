@@ -773,7 +773,7 @@ def _render_sarif(findings: list[Finding]) -> str:
                 "tool": {
                     "driver": {
                         "name": "codegraph",
-                        "informationUri": "https://github.com/smochan/codegraph",
+                        "informationUri": "https://github.com/smochan/polycodegraph",
                         "rules": [
                             {"id": rid, "name": rid} for rid in rule_ids
                         ],

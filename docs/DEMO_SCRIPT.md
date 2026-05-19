@@ -62,7 +62,7 @@ The cut between graphs happens at 0:18. Pre-load both tabs before recording.
 | 0:26 – 0:30 | Cursor moves to the chip strip. Picker shows `user_id` as a single chip in amber. Click it. | "Now pick a parameter…" |
 | 0:30 – 0:35 | Phase 4 redraws with `user_id` highlighted at every hop where it appears. Animated dot travels along the bezier path from FETCH → ROUTE → SERVICE → REPO. | "…and watch it travel through every layer that uses it — even when names get renamed across boundaries." |
 | 0:35 – 0:40 | Cut to terminal: `codegraph dataflow trace "GET /api/users/{user_id}" --format markdown` produces the same chain. Then a Claude Code prompt: "What does the user_id parameter touch?" → response cites the trace inline. | "Same data in your terminal — and in your AI assistant via MCP. Your agent reasons over flow, not just files." |
-| 0:40 – 0:45 | End card: codegraph logo, `pip install codegraph-py`, GitHub URL. | "v0.1.0 just shipped. Open source. Link in comments." |
+| 0:40 – 0:45 | End card: codegraph logo, `pip install polycodegraph`, GitHub URL. | "v0.1.0 just shipped. Open source. Link in comments." |
 
 ---
 
@@ -117,7 +117,7 @@ Pick a parameter…
 Same data in your terminal — and in your AI assistant via MCP.
 
 00:40.000 --> 00:45.000
-v0.1.0 — open source. pip install codegraph-py.
+v0.1.0 — open source. pip install polycodegraph.
 ```
 
 ---

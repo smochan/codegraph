@@ -1,9 +1,9 @@
 # codegraph
 
-[![CI](https://github.com/smochan/codegraph/actions/workflows/ci.yml/badge.svg)](https://github.com/smochan/codegraph/actions/workflows/ci.yml)
+[![CI](https://github.com/smochan/polycodegraph/actions/workflows/ci.yml/badge.svg)](https://github.com/smochan/polycodegraph/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-0.1.0--pre-yellow.svg)](https://github.com/smochan/codegraph)
+[![Status](https://img.shields.io/badge/status-0.1.0--pre-yellow.svg)](https://github.com/smochan/polycodegraph)
 
 > Parse any repo into a queryable code graph. Trace calls, data flow, dead code, and blast radius — without a daemon.
 
@@ -27,7 +27,7 @@ Python, TypeScript / TSX, JavaScript / JSX, **Go** (since v0.2). Tree-sitter und
 
 ```bash
 # Install from source
-git clone https://github.com/smochan/codegraph.git && cd codegraph
+git clone https://github.com/smochan/polycodegraph.git && cd polycodegraph
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 

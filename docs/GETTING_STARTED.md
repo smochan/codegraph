@@ -9,8 +9,8 @@ deeper.
 ## 1. Clone and install
 
 ```bash
-git clone https://github.com/smochan/codegraph.git
-cd codegraph
+git clone https://github.com/smochan/polycodegraph.git
+cd polycodegraph
 
 python -m venv .venv
 source .venv/bin/activate

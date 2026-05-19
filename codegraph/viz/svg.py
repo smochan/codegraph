@@ -20,7 +20,7 @@ def _ensure_graphviz() -> Any:
     except ImportError as exc:
         raise GraphvizUnavailableError(
             "graphviz Python package not installed. "
-            "Install with: pip install codegraph-py[viz]"
+            "Install with: pip install polycodegraph[viz]"
         ) from exc
     if shutil.which("dot") is None:
         raise GraphvizUnavailableError(

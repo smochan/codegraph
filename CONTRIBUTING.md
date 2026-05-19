@@ -14,11 +14,11 @@ a PR against this file.
 
 ```bash
 # 1. Fork on GitHub, then clone your fork
-git clone https://github.com/<your-user>/codegraph.git
-cd codegraph
+git clone https://github.com/<your-user>/polycodegraph.git
+cd polycodegraph
 
 # 2. Add upstream so you can pull updates
-git remote add upstream https://github.com/smochan/codegraph.git
+git remote add upstream https://github.com/smochan/polycodegraph.git
 
 # 3. Set up the env (Python 3.10+)
 python -m venv .venv

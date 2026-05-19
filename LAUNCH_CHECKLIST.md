@@ -63,7 +63,7 @@ Save final files to `docs/launch-assets/` (gitignored — too large for the repo
 
 ## 4. Tag and PyPI publish (~30 min)
 
-> **Run `twine upload` MANUALLY first** to claim the `codegraph-py` name on PyPI before the automated workflow runs. After that, tag-push triggers `release.yml`.
+> **Run `twine upload` MANUALLY first** to claim the `polycodegraph` name on PyPI before the automated workflow runs. After that, tag-push triggers `release.yml`.
 
 ```bash
 # Build locally to confirm the wheel is clean
@@ -75,7 +75,7 @@ twine upload dist/*
 # enter PyPI credentials when prompted
 ```
 
-- [ ] `pip install codegraph-py` works in a fresh venv
+- [ ] `pip install polycodegraph` works in a fresh venv
 - [ ] `codegraph --help` runs after install
 
 Then enable the automated release pipeline:
@@ -100,7 +100,7 @@ The `release.yml` workflow will:
 
 - [ ] `gh release view v0.1.0` shows the release
 - [ ] PyPI shows version 0.1.0
-- [ ] `pip install codegraph-py==0.1.0` works
+- [ ] `pip install polycodegraph==0.1.0` works
 
 ## 5. README badge update (~5 min)
 
@@ -110,7 +110,7 @@ After the tag, update the status badge:
 # In README.md, replace
 # [![Status](https://img.shields.io/badge/status-0.1.0--pre-yellow.svg)](...)
 # with the live PyPI badge:
-# [![PyPI](https://img.shields.io/pypi/v/codegraph-py.svg)](https://pypi.org/project/codegraph-py/)
+# [![PyPI](https://img.shields.io/pypi/v/polycodegraph.svg)](https://pypi.org/project/polycodegraph/)
 ```
 
 - [ ] PR opened, merged
@@ -142,7 +142,7 @@ Verify the metrics match `main` before posting.
 
 ## What if something goes wrong?
 
-- **PyPI name is taken?** `codegraph-py` is reserved (verify via `pip search`
+- **PyPI name is taken?** `polycodegraph` is reserved (verify via `pip search`
   or open the URL). If unavailable, fall back to `codegraph-mcp` or
   `mochan-codegraph` and update `pyproject.toml` accordingly.
 - **`release.yml` fails on tag push?** Don't panic — the manual `twine

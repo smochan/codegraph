@@ -3,9 +3,9 @@ requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [project]
-name = "codegraph-py"
+name = "polycodegraph"
 version = "0.1.0"
-description = "Language-agnostic code graph builder, analyzer, PR risk reviewer, and MCP server for Claude Code."
+description = "Multi-language code graph builder, analyzer, PR risk reviewer, and MCP server. Supports Python, TypeScript, JavaScript, and Go."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -68,10 +68,10 @@ dev = [
 codegraph = "codegraph.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/smochan/codegraph"
-Repository = "https://github.com/smochan/codegraph"
-Issues = "https://github.com/smochan/codegraph/issues"
-Changelog = "https://github.com/smochan/codegraph/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/smochan/polycodegraph"
+Repository = "https://github.com/smochan/polycodegraph"
+Issues = "https://github.com/smochan/polycodegraph/issues"
+Changelog = "https://github.com/smochan/polycodegraph/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["codegraph"]
@@ -79,10 +79,10 @@ packages = ["codegraph"]
 [tool.hatch.build.targets.wheel.shared-data]
 
 [tool.hatch.build.targets.sdist]
+# Lean sdist: ship only what end users + downstream packagers actually need.
+# Tests, docs, and CI config live in the GitHub repo; clone for those.
 include = [
     "/codegraph",
-    "/tests",
-    "/docs",
     "/README.md",
     "/CHANGELOG.md",
     "/LICENSE",
