@@ -74,10 +74,19 @@ title.
 
 ## How to sign
 
-This repository uses **[CLA Assistant](https://cla-assistant.io/)** to
-automate signature collection. The first time you open a pull request, a bot
-will comment with a one-click link to sign electronically. Your signature
-covers all of your past and future Contributions to this repository.
+This repository uses a self-hosted CLA Assistant workflow (no third-party
+service required). The first time you open a pull request:
+
+1. A bot will comment on your PR with this CLA's text and a sign phrase.
+2. Reply to the PR with exactly:
+
+   > I have read the CLA Document and I hereby sign the CLA
+
+3. The bot records your GitHub username + commit SHA in the
+   `cla-signatures` branch of this repo (`signatures/v1/cla.json`).
+4. The CLA status check turns green; your PR is mergeable.
+
+Your signature covers this and all future Contributions to this repository.
 
 If you have any questions about the CLA before signing, open an issue or
 contact the Maintainer at smochan07@gmail.com.

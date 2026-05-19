@@ -211,9 +211,13 @@ Before your first PR can be merged, you need to sign the
 the right to relicense the Project (including under commercial terms) while
 preserving your full rights to your own contribution.
 
-Signing is one click: the first time you open a PR, the
-[CLA Assistant bot](https://cla-assistant.io/) will comment with a link.
-Your signature covers all past and future contributions to this repo.
+Signing is a one-line PR comment: the first time you open a PR, a bot
+comments with the CLA text and a sign phrase. Reply with:
+
+> I have read the CLA Document and I hereby sign the CLA
+
+Your signature is stored in the `cla-signatures` branch of this repo and
+covers all past and future contributions.
 
 ## License
 

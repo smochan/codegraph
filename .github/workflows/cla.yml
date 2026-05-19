@@ -1,0 +1,50 @@
+name: CLA
+
+# Self-hosted CLA signature collection — no third-party GitHub App required.
+# Signatures persist in the `cla-signatures` branch of this same repo as
+# `signatures/v1/cla.json`. New contributors get a bot comment on their first
+# PR with a one-line phrase to reply with; existing signers pass silently.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  CLAssistant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "CLA Assistant"
+        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: 'signatures/v1/cla.json'
+          path-to-document: 'https://github.com/smochan/polycodegraph/blob/main/CLA.md'
+          branch: 'cla-signatures'
+          # Repo owner is auto-allowlisted so I'm not asked to sign my own CLA.
+          # dependabot[bot] is allowlisted so its PRs don't get gated.
+          allowlist: smochan,dependabot[bot],github-actions[bot]
+          # Phrasing for first-time contributors:
+          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+          custom-notsigned-prcomment: |
+            Thanks for your contribution! Before this PR can be merged, please
+            read and sign our [Contributor License Agreement](https://github.com/smochan/polycodegraph/blob/main/CLA.md).
+
+            **To sign**, reply to this PR with exactly:
+
+            > I have read the CLA Document and I hereby sign the CLA
+
+            Your signature covers this PR and any future contributions to this
+            repository. Once you've replied, this check will turn green and
+            the PR can be merged.
+          custom-allsigned-prcomment: |
+            All contributors have signed the CLA — thank you!
