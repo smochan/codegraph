@@ -41,3 +41,4 @@ three-d-*.png
 !.planning/SESSION_HANDOFF.md
 !.planning/PLAN_V0_3_UNIFIED_TRACE.md
 .codegraph.yml
+uv.lock
