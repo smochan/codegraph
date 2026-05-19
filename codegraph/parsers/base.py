@@ -44,6 +44,9 @@ def _get_language(language: str) -> tree_sitter.Language:
     elif language in ("javascript", "jsx"):
         import tree_sitter_javascript
         return tree_sitter.Language(tree_sitter_javascript.language())
+    elif language == "go":
+        import tree_sitter_go
+        return tree_sitter.Language(tree_sitter_go.language())
     else:
         raise ValueError(f"Unsupported language: {language}")
 

@@ -15,6 +15,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Post-launch-sprint additions (still pre-release)
 
+#### Go language support — `.go` files parse + analyze cleanly
+
+The Go ecosystem is the single biggest community pull outside Python/JS,
+and a code graph that spans services + tooling + libraries was the
+obvious next move. v1 of the Go extractor lives at
+`codegraph/parsers/go.py` and produces the same node/edge shape as the
+Python and TypeScript parsers, so every existing tool (`analyze`,
+`workspace_blast_radius`, MCP queries) works on Go code immediately.
+
+- **New module** `codegraph/parsers/go.py` — tree-sitter Go grammar via
+  `tree-sitter-go>=0.23` (added to `pyproject.toml`).
+- **Node kinds emitted**: `MODULE` (one per `.go` file, qualname = the
+  `package X` name so files in the same package share an addressable
+  namespace), `FUNCTION` (top-level `func`), `METHOD` (qualname
+  `module.ReceiverType.Name`, with receiver + pointer-ness in metadata),
+  `CLASS` (the closest analog to Go's `type X struct {...}` and
+  `type X interface {...}`), `TEST` (`*_test.go` files).
+- **Edge kinds emitted**: `DEFINED_IN`, `IMPORTS` (per-import-path,
+  preserves aliases as metadata), `CALLS` (bare names like `Foo`,
+  dotted-package like `fmt.Println`, receiver-method like `g.Greet`),
+  `INHERITS` (Go composition — embedded fields in a struct become
+  `INHERITS` edges to the embedded type).
+- **Registry hookup**: `builder.py` imports `codegraph.parsers.go` at
+  module load so the `@register_extractor` decorator fires. `init`'s
+  language-detection map now includes `go: [".go"]`.
+- **Smoke test against `spf13/cobra`**: 36 files parsed, 715 Go nodes
+  (427 functions + 168 methods + 17 structs/interfaces + 17 test files
+  + 19 modules), 2541 CALLS edges, 190 IMPORTS, 0 errors, 0.25s.
+- **19 new parser tests** at `tests/test_go_parser.py` covering every
+  emitted node/edge shape plus edge cases (empty file, missing file,
+  test-file detection, aliased imports, pointer receivers).
+
+Limitations the parser is honest about up front:
+
+- Generic type parameters land as text in metadata; not in qualnames.
+- Interface satisfaction (does `*Foo` implement `Bar`?) is not detected
+  by the parser — that needs a whole-package pass and belongs in the
+  resolver layer, not the extractor.
+- `init()` and `main()` get no special treatment yet.
+
 #### Cross-repo workspace mode — treat N repos as one mental unit
 
 Solo devs and small teams routinely switch between 3–10 repos a day. Until
