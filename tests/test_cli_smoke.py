@@ -18,6 +18,18 @@ def test_version_flag() -> None:
     assert __version__ in result.stdout
 
 
+def test_version_matches_package_metadata() -> None:
+    """Regression: __version__ must auto-sync with pyproject via importlib.metadata.
+
+    Catches the failure mode where someone re-hardcodes the version string and
+    it drifts from the actual published wheel — which is exactly what bit us
+    pre-0.1.0rc2 (codegraph.__version__ was "0.0.1" while the published wheel
+    was "0.1.0rc1").
+    """
+    from importlib.metadata import version as _pkg_version
+    assert __version__ == _pkg_version("polycodegraph")
+
+
 def test_help_lists_subcommands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
