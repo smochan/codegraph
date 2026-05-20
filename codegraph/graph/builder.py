@@ -24,14 +24,14 @@ from codegraph.parsers.python import PythonExtractor
 logger = logging.getLogger(__name__)
 
 _BUILTIN_IGNORES = [
-    ".git", ".venv", "venv", "node_modules", ".codegraph",
+    ".git", ".venv", ".venvs", "venv", "node_modules", ".codegraph",
     "dist", "build", "__pycache__", ".next", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", ".tox", ".eggs", "*.egg-info",
     ".DS_Store", "*.pyc", "*.pyo",
 ]
 
 _IGNORE_DIRS: set[str] = {
-    ".git", ".venv", "venv", "node_modules", ".codegraph",
+    ".git", ".venv", ".venvs", "venv", "node_modules", ".codegraph",
     "dist", "build", "__pycache__", ".next", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", ".tox",
 }

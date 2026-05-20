@@ -1,0 +1,12 @@
+# Per-run artifacts are large and reproducible from raw.jsonl + repos.yaml.
+results/*/
+!results/.keep
+
+# Cached LLM responses (reproducible from prompt hashes, but heavy).
+.llm_cache/
+
+# Shallow-cloned target repos.
+repos_cache/
+
+# Per-tool isolated venvs. Re-create with `codegraph bench setup`.
+.venvs/

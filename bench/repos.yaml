@@ -1,0 +1,45 @@
+# Target repos for the benchmark.
+# Each entry pins commit ranges so runs are deterministic.
+# `path` is optional: if present, the repo is treated as already cloned at that path.
+# Otherwise, the harness shallow-clones `url` into bench/results/<run-id>/repos/<name>/.
+
+repos:
+  - name: codegraph-self
+    # Dogfood smoke-test: run the bench against polycodegraph's own git history.
+    path: .
+    language: python
+    commits:
+      # HEAD-relative; resolved at runtime by `git rev-parse`.
+      - HEAD
+
+  # --- Real OSS targets (uncomment + pin SHAs before first public run) ---
+  #
+  # - name: fastapi
+  #   url: https://github.com/tiangolo/fastapi
+  #   language: python
+  #   pr_range: { from: "2026-01-01", to: "2026-05-01" }
+  #   max_prs: 50
+  #
+  # - name: nestjs
+  #   url: https://github.com/nestjs/nest
+  #   language: typescript
+  #   pr_range: { from: "2026-01-01", to: "2026-05-01" }
+  #   max_prs: 50
+  #
+  # - name: cobra
+  #   url: https://github.com/spf13/cobra
+  #   language: go
+  #   pr_range: { from: "2026-01-01", to: "2026-05-01" }
+  #   max_prs: 30
+  #
+  # - name: nextjs
+  #   url: https://github.com/vercel/next.js
+  #   language: typescript
+  #   pr_range: { from: "2026-03-01", to: "2026-05-01" }
+  #   max_prs: 30
+  #
+  # - name: django
+  #   url: https://github.com/django/django
+  #   language: python
+  #   pr_range: { from: "2026-01-01", to: "2026-05-01" }
+  #   max_prs: 50

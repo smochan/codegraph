@@ -35,12 +35,88 @@ workspace_app = typer.Typer(
     help="Manage multi-repo workspaces (cross-repo state, diff, blast radius).",
     no_args_is_help=True,
 )
+bench_app = typer.Typer(
+    help="Run the polycodegraph benchmark harness against other code-graph tools.",
+    no_args_is_help=True,
+)
 app.add_typer(query_app, name="query")
 app.add_typer(baseline_app, name="baseline")
 app.add_typer(hook_app, name="hook")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(dataflow_app, name="dataflow")
 app.add_typer(workspace_app, name="workspace")
+app.add_typer(bench_app, name="bench")
+
+
+@bench_app.command("run")
+def bench_run(
+    config: str = typer.Option(
+        "bench/repos.yaml", "--config", help="Path to repos.yaml."
+    ),
+    only: str | None = typer.Option(
+        None, "--only", help="Comma-separated tool names to include (defaults: all)."
+    ),
+    run_id: str | None = typer.Option(
+        None, "--run-id", help="Reuse a run-id to write into an existing results dir."
+    ),
+    pass_: str = typer.Option(
+        "A", "--pass", help="Which benchmark pass to execute (A=review, B=reproduce).",
+    ),
+) -> None:
+    """Run a benchmark pass and write results to bench/results/<run-id>/."""
+    from bench.harness import run_pass_a
+
+    workspace_root = Path.cwd()
+    cfg_path = (workspace_root / config).resolve()
+    if not cfg_path.exists():
+        console.print(f"[red]Config not found: {cfg_path}[/red]")
+        raise typer.Exit(2)
+
+    tools = [t.strip() for t in only.split(",")] if only else None
+    if pass_.upper() != "A":
+        console.print(
+            "[yellow]Only Pass A is wired in v1. Pass B is a v2 follow-up.[/yellow]"
+        )
+        raise typer.Exit(2)
+
+    run_dir = run_pass_a(
+        workspace_root=workspace_root,
+        repos_config=cfg_path,
+        only_tools=tools,
+        run_id=run_id,
+    )
+    console.print(f"[green]✓[/green] results written to {run_dir}")
+
+
+@bench_app.command("query")
+def bench_query(
+    config: str = typer.Option(
+        "bench/queries.yaml", "--config", help="Path to queries.yaml."
+    ),
+    only: str | None = typer.Option(
+        None, "--only", help="Comma-separated tool names (default: all with query support).",
+    ),
+    run_id: str | None = typer.Option(
+        None, "--run-id", help="Reuse a run-id to write into an existing results dir."
+    ),
+) -> None:
+    """Run Pass Q (query benchmark): question -> tool -> answer; report correctness/latency/tokens."""
+    from bench.query_harness import run_pass_q
+
+    workspace_root = Path.cwd()
+    cfg_path = (workspace_root / config).resolve()
+    if not cfg_path.exists():
+        console.print(f"[red]Config not found: {cfg_path}[/red]")
+        raise typer.Exit(2)
+
+    tools = [t.strip() for t in only.split(",")] if only else None
+    run_dir = run_pass_q(
+        workspace_root=workspace_root,
+        queries_config=cfg_path,
+        only_tools=tools,
+        run_id=run_id,
+    )
+    console.print(f"[green]✓[/green] Pass-Q results written to {run_dir}")
 
 console = Console()
 
