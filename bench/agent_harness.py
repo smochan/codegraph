@@ -186,10 +186,13 @@ async def _run_one(
                     "output_preview": payload[:200],
                     "is_error": is_error,
                 })
+                # Anthropic rejects empty `content` strings — substitute a placeholder
+                # so the agent loop survives MCP servers that return no content blocks.
+                content = payload[:50_000] or "(tool returned no content)"
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": payload[:50_000],
+                    "content": content,
                     "is_error": is_error,
                 })
             messages.append({"role": "user", "content": tool_results})

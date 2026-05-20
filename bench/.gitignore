@@ -10,3 +10,7 @@ repos_cache/
 
 # Per-tool isolated venvs. Re-create with `codegraph bench setup`.
 .venvs/
+
+# Per-run raw results are gitignored at the repo root .gitignore.
+# But the rolling "latest" snapshot at bench/RESULTS_*_LATEST.md is checked in
+# so the headline numbers travel with the branch.
