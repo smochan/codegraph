@@ -118,6 +118,52 @@ def bench_query(
     )
     console.print(f"[green]✓[/green] Pass-Q results written to {run_dir}")
 
+
+@bench_app.command("agent")
+def bench_agent(
+    configs: str = typer.Option(
+        "bench/configurations.yaml", "--configs", help="Path to configurations.yaml.",
+    ),
+    queries: str = typer.Option(
+        "bench/queries.yaml", "--queries", help="Path to queries.yaml.",
+    ),
+    only: str | None = typer.Option(
+        None, "--only", help="Comma-separated configuration names (default: all).",
+    ),
+    only_queries: str | None = typer.Option(
+        None, "--only-queries", help="Comma-separated query IDs (default: all).",
+    ),
+    model: str = typer.Option(
+        "claude-sonnet-4-6", "--model", help="Anthropic model id."
+    ),
+    run_id: str | None = typer.Option(
+        None, "--run-id", help="Reuse a run-id to write into an existing results dir."
+    ),
+) -> None:
+    """Claude-Code-style agent benchmark: same host LLM, varying MCP tool surface."""
+    from bench.agent_harness import run_agent_bench
+
+    workspace_root = Path.cwd()
+    cfg_path = (workspace_root / configs).resolve()
+    q_path = (workspace_root / queries).resolve()
+    for p, label in [(cfg_path, "configurations"), (q_path, "queries")]:
+        if not p.exists():
+            console.print(f"[red]{label} config not found: {p}[/red]")
+            raise typer.Exit(2)
+
+    selected_configs = [c.strip() for c in only.split(",")] if only else None
+    selected_queries = [q.strip() for q in only_queries.split(",")] if only_queries else None
+    run_dir = run_agent_bench(
+        workspace_root=workspace_root,
+        configurations_path=cfg_path,
+        queries_path=q_path,
+        only_configs=selected_configs,
+        only_queries=selected_queries,
+        model=model,
+        run_id=run_id,
+    )
+    console.print(f"[green]✓[/green] agent benchmark written to {run_dir}")
+
 console = Console()
 
 _DATA_DIR_STATE: dict[str, Path | None] = {"value": None}

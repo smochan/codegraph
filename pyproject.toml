@@ -59,6 +59,7 @@ embed = [
 bench = [
     "anthropic>=0.40",
     "httpx>=0.27",
+    "mcp>=1.0",          # MCP stdio client for the Claude-Code-style harness
 ]
 dev = [
     "pytest>=8.0",
