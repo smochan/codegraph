@@ -28,8 +28,21 @@ configurations:
         args: ["serve"]
         cwd_is_target_repo: true
 
+  # graphify removed from agent bench: its MCP server corrupts its stdio JSON-RPC
+  # stream with banner/log output mid-call, which trips anyio's cancel scope on
+  # cleanup. Connect + list_tools work; actual tool calls do not. Tracked
+  # separately. Pass Q (bench query) still includes graphify successfully.
+
+  better-code-review-graph:
+    description: "Claude + better-code-review-graph MCP server (6 composite tools)."
+    servers:
+      - name: better-crg
+        command: bench/.venvs/better-code-review-graph/bin/better-code-review-graph
+        args: []
+        cwd_is_target_repo: true
+
   both:
-    description: "Claude with both graph MCPs registered concurrently."
+    description: "Claude with polycodegraph + code-review-graph MCPs registered concurrently."
     servers:
       - name: polycodegraph
         command: .venv/bin/codegraph

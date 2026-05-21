@@ -99,11 +99,31 @@ Screenshot the headline table from `bench/RESULTS_AGENT_LATEST.md`. Cropping rec
 
 ---
 
+## Where the tokens actually go (the "why 960 vs 77k" answer)
+
+A common follow-up: *"Baseline used 960 tokens total and polycodegraph used 77k? Doesn't that mean polycodegraph is wasteful?"*
+
+No — baseline is so low *because Claude has nothing to read*. It just guesses from training and ships ~96 tokens per query. polycodegraph's ~7,700 tokens per query break down as:
+
+| Where the input tokens go | per query | why |
+|---|---:|---|
+| Question + system prompt | ~80 | same as baseline |
+| 18 MCP tool schemas sent in context | ~3,000 | Claude needs to know what tools exist |
+| Tool *results* (graph data returned) | ~4,500 | the actual answer material |
+| Other | ~120 | |
+
+code-review-graph's ~22k per query: 30 tool schemas pre-burn ~6k just *advertising* tools, then ~14k come back from verbose tool responses, then Claude needs more turns because the first result wasn't focused enough. **3× more tokens than polycodegraph, 7× lower correctness.** That's the real comparison.
+
 ## Caveats to acknowledge in comments if asked
 
-- 10 questions, 2 repos. Not a paper. Designed to be extended via `bench/queries.yaml`.
-- code-review-graph crashed on 2 of 10 queries (Anthropic 400 on edge-cased tool output); those weren't counted as failures-by-incorrectness, just dropped from cost+token totals.
-- Better-code-review-graph, GitNexus, JudiniLabs not in the agent bench because of MCP-host-wrapper / license / staleness reasons documented in `bench/runners/`.
+- 10 questions, 2 repos. Not a paper — designed to be extended via `bench/queries.yaml`. PRs welcome.
+- Tools in the agent bench: **baseline · polycodegraph · code-review-graph.** Tools excluded with reasons:
+  - **graphify** — its MCP server corrupts its stdio JSON-RPC stream with banner/log output mid-call (anyio cancel-scope trip on cleanup). Pass Q bench includes it; agent bench doesn't.
+  - **better-code-review-graph** — wired and working, but Anthropic spend cap hit before we could run the full 10×2 grid.
+  - **GitNexus** — PolyForm Noncommercial license; not benchmarked from this MIT project.
+  - **JudiniLabs/mcp-code-graph** — thin client to the hosted CodeGPT service, different category.
+  - **RepoMapper** — no MCP server, just a static-map CLI.
+- code-review-graph crashed on 2 of 10 queries (Anthropic 400 on edge-cased tool output); those are *failures*, not silently dropped — see `bench/agent_raw_latest.jsonl`.
 
 ---
 

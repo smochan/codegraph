@@ -121,6 +121,43 @@ async def _run_one(
     question = _question_for(spec)
     started = asyncio.get_event_loop().time()
 
+    try:
+        await _run_one_inner(
+            client=client, model=model, server_specs=server_specs,
+            spec=spec, question=question, result=result,
+        )
+    except RuntimeError as exc:
+        # anyio's stdio_client cancel-scope cleanup can fire on a different task
+        # than where it was entered when the MCP server is slow to shut down.
+        # We've already populated `result` by this point — preserve the work.
+        if "cancel scope" not in str(exc).lower():
+            raise
+
+    result.latency_seconds = round(asyncio.get_event_loop().time() - started, 3)
+    prices = PRICE_PER_MTOK_USD.get(model, {"in": 0.0, "out": 0.0})
+    result.cost_usd = round(
+        result.tokens_in / 1_000_000 * prices["in"]
+        + result.tokens_out / 1_000_000 * prices["out"],
+        5,
+    )
+    haystack = result.final_answer + "\n" + "\n".join(
+        tc.get("output_preview", "") for tc in result.tool_calls
+    )
+    items = [tc["name"] for tc in result.tool_calls]
+    result.correct = matches(spec, items, haystack)
+    return result
+
+
+async def _run_one_inner(
+    *,
+    client: Anthropic,
+    model: str,
+    server_specs: list[McpServerSpec],
+    spec: QuerySpec,
+    question: str,
+    result: AgentResult,
+) -> None:
+    """Inner agent loop (split out so we can isolate stdio_client cleanup quirks)."""
     async with AsyncExitStack() as stack:
         sessions: list[McpSession] = []
         for s in server_specs:
@@ -199,22 +236,6 @@ async def _run_one(
         else:
             result.failed = True
             result.failure_reason = f"hit MAX_AGENT_TURNS ({MAX_AGENT_TURNS})"
-
-    result.latency_seconds = round(asyncio.get_event_loop().time() - started, 3)
-    prices = PRICE_PER_MTOK_USD.get(model, {"in": 0.0, "out": 0.0})
-    result.cost_usd = round(
-        result.tokens_in / 1_000_000 * prices["in"]
-        + result.tokens_out / 1_000_000 * prices["out"],
-        5,
-    )
-
-    # Correctness: check final_answer (and tool call previews) against expected.
-    haystack = result.final_answer + "\n" + "\n".join(
-        tc.get("output_preview", "") for tc in result.tool_calls
-    )
-    items = [tc["name"] for tc in result.tool_calls]
-    result.correct = matches(spec, items, haystack)
-    return result
 
 
 def run_agent_bench(
