@@ -9,6 +9,7 @@ Built on the official `mcp` Python SDK's stdio_client + ClientSession.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,7 +50,7 @@ class McpSession:
         self._session: ClientSession | None = None
         self._tools: list[McpTool] = []
 
-    async def __aenter__(self) -> "McpSession":
+    async def __aenter__(self) -> McpSession:
         self._stack = AsyncExitStack()
         await self._stack.__aenter__()
         params = StdioServerParameters(
@@ -124,3 +125,99 @@ def find_session(sessions: list[McpSession], qualified_name: str) -> tuple[McpSe
 def run_async(coro):
     """Convenience: run an async function from sync code."""
     return asyncio.run(coro)
+
+
+# ---------------------------------------------------------------------------
+# Multi-session orchestration
+# ---------------------------------------------------------------------------
+#
+# Using AsyncExitStack to manage N McpSessions causes anyio cancel-scope
+# crashes ("entered in different task than exited") because each session opens
+# its own internal task group via stdio_client. AsyncExitStack closes them in
+# reverse order from a different task than each was entered in.
+#
+# Fix: recurse with nested `async with` blocks so every session's enter/exit
+# happens in the same lexical scope and the same task. Slightly uglier, much
+# more robust.
+
+
+async def with_sessions(
+    specs: list[McpServerSpec],
+    body: Callable[[list[LiveSession]], Awaitable[Any]],
+) -> Any:
+    """Open all `specs` as MCP sessions, then call `body` with a flat list of
+    live sessions. Closes everything in reverse order when `body` returns or raises.
+    """
+    return await _open_recursive(specs, [], body)
+
+
+@dataclass
+class LiveSession:
+    """An already-initialized MCP session with cached tool list."""
+    spec: McpServerSpec
+    session: ClientSession
+    tools: list[McpTool]
+
+    async def call(self, tool_name: str, arguments: dict[str, Any]) -> str:
+        result = await self.session.call_tool(tool_name, arguments)
+        parts: list[str] = []
+        for block in result.content:
+            if hasattr(block, "text"):
+                parts.append(block.text)
+            else:
+                parts.append(str(block))
+        return "\n".join(parts)
+
+
+async def _open_recursive(
+    remaining: list[McpServerSpec],
+    opened: list[LiveSession],
+    body: Callable[[list[LiveSession]], Awaitable[Any]],
+) -> Any:
+    if not remaining:
+        return await body(opened)
+    spec, *rest = remaining
+    params = StdioServerParameters(
+        command=spec.command,
+        args=spec.args,
+        cwd=str(spec.cwd) if spec.cwd else None,
+        env=spec.env,
+    )
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        listed = await session.list_tools()
+        tools = [
+            McpTool(
+                server=spec.name,
+                name=t.name,
+                description=t.description or "",
+                input_schema=t.inputSchema or {"type": "object", "properties": {}},
+            )
+            for t in listed.tools
+        ]
+        live = LiveSession(spec=spec, session=session, tools=tools)
+        return await _open_recursive(rest, [*opened, live], body)
+
+
+def live_to_anthropic_tools(sessions: list[LiveSession]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for s in sessions:
+        for t in s.tools:
+            out.append({
+                "name": t.qualified_name(),
+                "description": t.description[:1024],
+                "input_schema": t.input_schema,
+            })
+    return out
+
+
+def find_live_session(
+    sessions: list[LiveSession], qualified_name: str,
+) -> tuple[LiveSession, str] | None:
+    if "__" not in qualified_name:
+        return None
+    server, tool_name = qualified_name.split("__", 1)
+    for s in sessions:
+        if s.spec.name == server:
+            return s, tool_name
+    return None

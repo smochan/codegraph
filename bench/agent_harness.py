@@ -15,20 +15,20 @@ import asyncio
 import json
 import os
 from collections.abc import Iterable
-from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
 
 import yaml
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 
 from bench.mcp_client import (
+    LiveSession,
     McpServerSpec,
-    McpSession,
-    find_session,
-    to_anthropic_tools,
+    find_live_session,
+    live_to_anthropic_tools,
+    with_sessions,
 )
 from bench.query_harness import _load_queries
 from bench.query_types import QuerySpec, matches
@@ -89,23 +89,42 @@ def _expand_server_specs(cfg_entry: dict, repo_path: Path, workspace_root: Path)
     out: list[McpServerSpec] = []
     for s in cfg_entry.get("servers", []):
         cwd = repo_path if s.get("cwd_is_target_repo") else workspace_root
-        # Make `command` absolute (resolve relative to workspace_root, not cwd).
+        # Make `command` absolute relative to workspace_root.
+        # IMPORTANT: use .absolute() not .resolve() — `.venv/bin/python` is a
+        # symlink to the system Python; resolving it loses the venv context so
+        # the spawned Python doesn't find the venv's site-packages.
         cmd_path = Path(s["command"])
         if not cmd_path.is_absolute():
-            cmd_path = (workspace_root / cmd_path).resolve()
+            cmd_path = (workspace_root / cmd_path).absolute()
+        # Inherit env + add PYTHONPATH=<workspace> so `python -m bench.runners.X`
+        # imports the bench package regardless of cwd. Also set VIRTUAL_ENV so
+        # Python recognises our .venv when stdio_client spawns it — without this
+        # asyncio resolves the .venv/bin/python symlink to the homebrew base and
+        # Python loads the wrong site-packages.
+        # Only set env when this server actually needs it (filetools), so we
+        # don't perturb other MCPs that already work via their own activations.
+        env: dict[str, str] | None = None
+        if "bench.runners" in " ".join(s.get("args", [])):
+            env = dict(os.environ)
+            env["PYTHONPATH"] = (
+                f"{workspace_root}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
+            )
+            venv_dir = workspace_root / ".venv"
+            if venv_dir.exists():
+                env["VIRTUAL_ENV"] = str(venv_dir)
         out.append(McpServerSpec(
             name=s["name"],
             command=str(cmd_path),
             args=s.get("args", []),
             cwd=cwd,
-            env=None,
+            env=env,
         ))
     return out
 
 
 async def _run_one(
     *,
-    client: Anthropic,
+    client: AsyncAnthropic,
     model: str,
     config_name: str,
     server_specs: list[McpServerSpec],
@@ -150,21 +169,19 @@ async def _run_one(
 
 async def _run_one_inner(
     *,
-    client: Anthropic,
+    client: AsyncAnthropic,
     model: str,
     server_specs: list[McpServerSpec],
     spec: QuerySpec,
     question: str,
     result: AgentResult,
 ) -> None:
-    """Inner agent loop (split out so we can isolate stdio_client cleanup quirks)."""
-    async with AsyncExitStack() as stack:
-        sessions: list[McpSession] = []
-        for s in server_specs:
-            sess = await stack.enter_async_context(McpSession(s))
-            sessions.append(sess)
-        tools = to_anthropic_tools(sessions)
-
+    """Inner agent loop. Uses with_sessions() to nest MCP server contexts
+    recursively (each enter/exit in the same lexical scope) — works around
+    the anyio cancel-scope crash that AsyncExitStack triggers with N sessions.
+    """
+    async def body(sessions: list[LiveSession]) -> None:
+        tools = live_to_anthropic_tools(sessions)
         messages = [{"role": "user", "content": question}]
         for turn in range(MAX_AGENT_TURNS):
             result.turns = turn + 1
@@ -182,39 +199,32 @@ async def _run_one_inner(
             if tools:
                 create_kwargs["tools"] = tools
 
-            response = await asyncio.to_thread(client.messages.create, **create_kwargs)
+            response = await client.messages.create(**create_kwargs)
             result.tokens_in += response.usage.input_tokens
             result.tokens_out += response.usage.output_tokens
-
-            # Stash the assistant's reply.
             messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason != "tool_use":
-                # Done. Collapse text blocks into final_answer.
-                final = []
-                for block in response.content:
-                    if getattr(block, "type", "") == "text":
-                        final.append(block.text)
+                final = [b.text for b in response.content if getattr(b, "type", "") == "text"]
                 result.final_answer = "\n".join(final)
-                break
+                return
 
-            # Tool-use turn: route each tool_use block to the right MCP.
             tool_results = []
             for block in response.content:
                 if getattr(block, "type", "") != "tool_use":
                     continue
                 qualified = block.name
                 args = block.input or {}
-                routed = find_session(sessions, qualified)
+                routed = find_live_session(sessions, qualified)
                 if routed is None:
                     payload = f"error: no MCP server exposes tool {qualified!r}"
                     is_error = True
                 else:
-                    session, real_name = routed
+                    live, real_name = routed
                     try:
-                        payload = await session.call(real_name, args)
+                        payload = await live.call(real_name, args)
                         is_error = False
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         payload = f"tool call failed: {exc!r}"
                         is_error = True
                 result.tool_calls.append({
@@ -223,8 +233,6 @@ async def _run_one_inner(
                     "output_preview": payload[:200],
                     "is_error": is_error,
                 })
-                # Anthropic rejects empty `content` strings — substitute a placeholder
-                # so the agent loop survives MCP servers that return no content blocks.
                 content = payload[:50_000] or "(tool returned no content)"
                 tool_results.append({
                     "type": "tool_result",
@@ -236,6 +244,8 @@ async def _run_one_inner(
         else:
             result.failed = True
             result.failure_reason = f"hit MAX_AGENT_TURNS ({MAX_AGENT_TURNS})"
+
+    await with_sessions(server_specs, body)
 
 
 def run_agent_bench(
@@ -254,7 +264,7 @@ def run_agent_bench(
             "ANTHROPIC_API_KEY missing. Add it to ~/.config/secrets/keys.env, "
             "then run `seedenv .` from the codegraph repo."
         )
-    client = Anthropic(api_key=api_key)
+    client = AsyncAnthropic(api_key=api_key)
 
     cfg = yaml.safe_load(configurations_path.read_text())["configurations"]
     selected_configs = list(only_configs) if only_configs else list(cfg)
@@ -285,7 +295,7 @@ def run_agent_bench(
                         spec=spec,
                         repo_path=repo_path,
                     ))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     result = AgentResult(
                         config=config_name, query_id=spec.id, repo_name=repo_name,
                         failed=True, failure_reason=f"crashed: {exc!r}",
