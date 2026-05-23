@@ -38,6 +38,8 @@ Claude+grep is the most correct (it just dumps whole files into the context). po
 
 Honest about what's *not* shipping yet: type inference, async-await visualization, git-history mining, full single-value argument propagation across hops. Listed in the README's Limitations section.
 
+**Languages today:** Python, TypeScript / JavaScript / TSX / JSX, Go. **Roadmap:** Java, Rust, C# (v0.3); Ruby, PHP later. Adding a language is a ~3-hour tree-sitter parser file — PRs welcome.
+
 `pip install polycodegraph` · MIT · works with Claude Code, Cursor, Windsurf
 Repo + reproducible benchmark harness: github.com/smochan/polycodegraph
 

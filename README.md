@@ -25,6 +25,18 @@ codegraph serve               # web dashboard at http://127.0.0.1:8765
 
 That's it. Three commands and you have a queryable graph, a 3D dashboard, and an MCP server your IDE can talk to.
 
+### Languages + frameworks (today)
+
+|  | Today (v0.1.0) | Roadmap |
+|---|---|---|
+| **Languages** | Python · TypeScript · JavaScript · TSX / JSX · Go | Java, Rust, C# (v0.3); Ruby, PHP later |
+| **HTTP frameworks** | FastAPI · Flask · aiohttp · Express · NestJS | Spring Boot, Django views, ASP.NET, Rails (alongside their language) |
+| **ORMs / DBs** | SQLAlchemy · Prisma (partial) | Django ORM, GORM, Diesel, ActiveRecord (alongside their language) |
+| **Frontend fetch** | `fetch` · axios · SWR · React Query · generic `apiClient.*` | RTK Query, Apollo |
+| **24 framework decorators** | FastAPI · Flask · aiohttp · Celery · pytest · MCP · Click · Typer · Django · SQLAlchemy · NestJS · … | Spring annotations, .NET attributes |
+
+Adding a new language is a single tree-sitter parser module + fixture file (~3 hours — see `codegraph/parsers/go.py` for the v1 template). PRs welcome.
+
 ---
 
 ## The MOAT — one graph, everything on top
