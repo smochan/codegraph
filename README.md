@@ -17,10 +17,10 @@
 ## Quick start
 
 ```bash
-pip install polycodegraph
-codegraph init       # detect languages, configure MCP
-codegraph build      # parse repo → .codegraph/graph.db
-codegraph serve      # web dashboard at http://127.0.0.1:8765
+pip install polycodegraph     # the PyPI distribution name
+codegraph init                # the CLI binary + Python module + MCP server are all `codegraph` (see footnote ↓)
+codegraph build               # parse repo → .codegraph/graph.db
+codegraph serve               # web dashboard at http://127.0.0.1:8765
 ```
 
 That's it. Three commands and you have a queryable graph, a 3D dashboard, and an MCP server your IDE can talk to.
@@ -86,29 +86,35 @@ One SQLite file. No daemon. No network. Travels with your git branch.
 
 ---
 
-## Benchmark — same Claude, varying MCP
+## Benchmark — same Claude, varying graph MCP
 
-Three configurations. Same Claude Sonnet 4.6. Same 10 questions across two real codebases (polycodegraph itself + FastAPI). Only the registered MCP server changes.
+Four configurations. Same Claude Sonnet 4.6. Same 10 questions across two real codebases (polycodegraph itself + FastAPI). **All four configs include Claude's native grep + file-reading tools** — what every dev gets out of the box in Claude Code or Cursor. The only thing that changes is whether a graph MCP is *also* registered alongside.
 
 ### codegraph-self
 
-| Configuration | Correct | Avg tool-calls | Tokens in | Cost (USD) |
+| Configuration | Correct | Tokens in | Cost (USD) | Avg latency (s) |
 |---|---:|----:|----:|----:|
-| `baseline` (Claude alone) | 0 / 5 | 0 | 480 | $0.07 |
-| `+ code-review-graph` MCP | 0 / 5 | 3 | 144,422 | $0.47 |
-| `+ polycodegraph` MCP | **4 / 5** | 1.4 | 36,639 | $0.15 |
+| `claude+grep` (no graph MCP) | 5 / 5 | 264,756 | $0.92 | 102 |
+| `+ code-review-graph` MCP | 2 / 5 | 118,674 | $0.39 | 56 |
+| `+ graphify` MCP | 3 / 5 | 99,233 | $0.31 | 83 |
+| `+ polycodegraph` MCP | **4 / 5** | **43,705** | **$0.18** | **22** |
 
 ### fastapi
 
-| Configuration | Correct | Avg tool-calls | Tokens in | Cost (USD) |
+| Configuration | Correct | Tokens in | Cost (USD) | Avg latency (s) |
 |---|---:|----:|----:|----:|
-| `baseline` (Claude alone) | 1 / 5 | 0 | 476 | $0.08 |
-| `+ code-review-graph` MCP | 1 / 5 | 1.3 | 78,069 | $0.26 |
-| `+ polycodegraph` MCP | **3 / 5** | 1.6 | 40,953 | $0.18 |
+| `claude+grep` (no graph MCP) | 3 / 5 | 71,833 | $0.25 | 54 |
+| `+ code-review-graph` MCP | 1 / 5 | 84,082 | $0.29 | 42 |
+| `+ graphify` MCP | 2 / 5 | 55,287 | $0.19 | 46 |
+| `+ polycodegraph` MCP | **3 / 5** | **46,347** | **$0.19** | **18** |
 
-Same model, same questions: **polycodegraph is 7× more correct than Claude with no tools, and 7× more correct than the competitor MCP at less than half the cost.** Code-review-graph's 30 verbose tool schemas pre-burn ~30k tokens of context before the first useful call.
+The honest read across both repos:
 
-Reproduce: `codegraph bench agent --only baseline,polycodegraph,code-review-graph`. Raw per-run JSONL in [`bench/agent_raw_latest.jsonl`](bench/agent_raw_latest.jsonl). Full methodology in [`bench/README.md`](bench/README.md).
+- **`claude+grep` alone is the most correct (8/10)** — Claude can answer most codebase questions by grepping and reading whole files. But it pays the price: **336k tokens, $1.17, 78s avg latency.**
+- **`+ polycodegraph` matches that within one question (7/10) at *3× lower cost and 4× lower latency* (90k tokens, $0.37, 20s).** Because polycodegraph returns small focused subgraphs (~20-50 tokens per call) instead of grep-dumping whole files into Claude's context.
+- **The other graph MCPs are strictly worse than just grepping.** code-review-graph: 3/10 at $0.68. graphify: 5/10 at $0.50. They add tool overhead without paying off in correctness.
+
+Reproduce: `codegraph bench agent --only claude+grep,claude+grep+polycodegraph,claude+grep+code-review-graph,claude+grep+graphify`. Raw per-run JSONL in [`bench/agent_raw_latest.jsonl`](bench/agent_raw_latest.jsonl). Full methodology in [`bench/README.md`](bench/README.md).
 
 ---
 
@@ -200,6 +206,7 @@ What polycodegraph *doesn't* do yet. Listed here so the benchmark and README cla
 | **0.1.0** | **Shipping on PyPI today** | Parsing (Python, TS/JS, Go), DF0–DF4 tracing, 3D dashboard + Architecture + Learn Mode, decorator-aware dead code, cycles, role classification, **local embeddings** (semantic + hybrid search), 18 MCP tools, PR-review CI, cross-repo workspace mode. |
 | 0.1.2 | Planned | TypeScript R2 resolver patterns (path aliases, fresh-instance binding, decorator edges); CLI HANDLER classification for Typer / Click. |
 | 0.3 | Planned | Type inference (Mypy/Pyright); full single-value arg-flow propagation; docstring-driven analysis hints; multi-param highlighting; more languages (Rust, Java, C#). |
+| 0.2 | Planned | Rename CLI binary `codegraph` → `polycodegraph`; keep `codegraph` as a deprecated alias for one release. |
 | 0.4 | Planned | Async / await visualization; error-path branches; auth-middleware phase; cross-process traces; git-history semantics. |
 
 ---
@@ -417,6 +424,12 @@ node --test tests/*.js          # 100 Node tests
 ```
 
 CI checks are defined in `.github/workflows/ci.yml`. New to the repo? Start with [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md). For commit conventions and PR process, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+---
+
+## A note on the names
+
+This project is installed from PyPI as `polycodegraph` because the bare name `codegraph` was already taken when v0.1.0 shipped. Everything else — the Python package you import, the CLI binary you run, and the MCP server key you register — is `codegraph`, the original project name. We're planning to unify on `polycodegraph` everywhere in v0.2 (CLI rename with a `codegraph` alias for one release). For now: two names, one tool.
 
 ---
 

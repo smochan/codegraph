@@ -5,6 +5,75 @@
 
 ---
 
+## Version F — pain-first narrative (RECOMMENDED, 2026-05-23)
+
+Author's voice. Story arc: pain → why current tools fall short → the insight → all the features that fall out for free → benchmark proof. Numbers in `<NUMBERS_TBD>` are filled in from `bench/RESULTS_AGENT_LATEST.md` once the 4-config run completes.
+
+---
+
+Claude Code and Cursor are great — until your codebase gets big. Then they grep, and grep, and grep some more, trying to figure out where anything is.
+
+A handful of OSS tools (code-review-graph, graphify, GitNexus) saw this and started building code graphs to give the AI better project context. Good idea. But most of them stopped there — a graph for retrieval, and that's it.
+
+My take: if you've gone to the trouble of building a graph of the whole repo, why stop at retrieval?
+
+With the right graph you can also:
+• flag dead code that's actually dead (decorator-aware, 24 frameworks — no false positives on FastAPI handlers)
+• trace a single parameter from a `fetch()` in your React frontend, through the FastAPI handler, into the SQLAlchemy query, with rename annotations at every hop
+• compute the blast radius of changing any function before you change it
+• PR-review by graph-diffing the branch against `main`
+• hand the entire query surface to your AI assistant as 18 MCP tools
+• visualise the architecture in a 3D dashboard and animate the request lifecycle in a Learn Mode modal
+
+But none of that works if the graph is mediocre. So I rebuilt the graph from the ground up — Python, TypeScript, JavaScript, Go — with techniques the other graph tools skipped: per-name + relative + decorator-aware import resolution, call-site argument capture (DF0), HTTP route detection (DF1), role classification HANDLER/SERVICE/COMPONENT/REPO (DF1.5), frontend fetch extraction (DF2), URL stitching across the stack (DF3), and end-to-end dataflow tracing (DF4).
+
+I benchmarked it. Same Claude Sonnet, same 10 questions across two real codebases (polycodegraph itself + FastAPI). All four configs have Claude's native grep + file-reading tools. The only thing that changes is whether a graph MCP is *also* registered:
+
+→ Claude + grep alone:                                 8/10 correct,  337k tokens, $1.17,  78s avg
+→ Claude + grep + code-review-graph MCP:               3/10 correct,  203k tokens, $0.68,  49s avg
+→ Claude + grep + graphify MCP:                        5/10 correct,  155k tokens, $0.50,  65s avg
+→ Claude + grep + polycodegraph MCP:                   7/10 correct,   90k tokens, $0.37,  20s avg
+
+Claude+grep is the most correct (it just dumps whole files into the context). polycodegraph gets to within one question of that **at 3× lower cost and 4× lower latency** — because it returns small focused subgraphs (~20-50 tokens per call) instead of file dumps. The other graph MCPs are strictly worse than just letting Claude grep — they add tool overhead without payoff.
+
+Honest about what's *not* shipping yet: type inference, async-await visualization, git-history mining, full single-value argument propagation across hops. Listed in the README's Limitations section.
+
+`pip install polycodegraph` · MIT · works with Claude Code, Cursor, Windsurf
+Repo + reproducible benchmark harness: github.com/smochan/polycodegraph
+
+#mcp #claudecode #cursor #ai #developertools
+
+---
+
+### What to attach
+
+- **Image:** `docs/images/hero_benchmark.png` (regenerated after the bench lands — 4 rows instead of 3)
+- **Video:** `docs/images/df4_trace.gif` (capture per `docs/RECORDING_GUIDE.md`)
+
+### Why this version, not A/B/C/D/E
+
+- **Hook is a feeling, not a number.** "Claude is great until your codebase gets big" — every reader who uses Claude Code has felt this. Numbers convince; feelings hook.
+- **Competitor positioning is fair, not antagonistic.** "Good idea. But most of them stopped there." Acknowledges they were on the right track, then justifies why we went further. No throwing shade.
+- **The feature list earns its place.** Each bullet is a real capability with a one-line proof of *why* it exists (because the graph is already there). This is the README's MOAT section retold in narrative voice.
+- **"DF0/1/1.5/2/3/4" lands as competence.** Listing the actual technique names tells the technical reader you didn't half-build this. The post above only uses the names; the README has the deep-dive.
+- **Benchmark is the closer, not the opener.** Numbers are proof of the thesis already established by the story.
+
+### Variant if the post needs to be shorter (~600 chars for "see-more" tightness)
+
+Claude Code is great — until your codebase gets big. Then it greps, and greps, and greps.
+
+Code-graph tools (code-review-graph, graphify) tried to solve this with a graph for retrieval. Most stopped there.
+
+I built polycodegraph because once you have the graph, you can do *everything* with it — dead code (decorator-aware), blast radius, end-to-end argument tracing fetch→SQL, PR-review by graph-diff, 18 MCP tools, 3D dashboard.
+
+Same Claude, same 10 questions, two real repos. polycodegraph: 7/10 at **3× lower cost and 4× lower latency than letting Claude grep**.
+
+pip install polycodegraph · github.com/smochan/polycodegraph
+
+#mcp #claudecode #cursor
+
+---
+
 ## Version E — sourced from the new README (RECOMMENDED, 2026-05-23)
 
 Lead with the "I was wrong" hook (still the strongest opener), then surface the MOAT framing
