@@ -93,8 +93,8 @@ One SQLite file. No daemon. No network. Travels with your git branch.
 |:---:|:---|
 | ![3d_focus](docs/images/3d_focus.png) | **3D focus view** — Pick any function, trace its real downstream call tree, expand or collapse ancestors and descendants inline. Shown: `build_dashboard_payload` with its 15 direct callees — `find_dead_code`, `find_cycles`, `build_hld`, `find_hotspots`, `compute_metrics`, and the rest of the analysis stack. |
 | ![architecture_view](docs/images/architecture_view.png) | **Architecture map** — Handlers grouped by role (HANDLER, SERVICE, COMPONENT, REPO), infrastructure components (DB, cache, queue), and their connections at a glance. Click a handler → Learn Mode opens a request-lifecycle modal: TCP → TLS → HTTP → query → response. |
-| ![arg_flow](docs/images/arg_flow.png) | **DF4 cross-stack trace** — `codegraph dataflow trace "GET /api/users/{user_id}"` walks the graph from a frontend fetch through the handler, service, and repository to the SQL query, with **rename annotations at every hop** (`userId → user_id → id`). |
-| _coming soon_ | **MCP tools in Claude Code** — Ask Claude *"trace `Depends` through FastAPI"* and watch it call `dataflow_trace` instead of grepping. Each tool returns a small focused subgraph (~20-50 tokens) so context windows stay clean. |
+| ![DF4 trace](docs/images/df4_trace.gif) | **DF4 cross-stack trace** — Click any handler in the Architecture view and Learn Mode animates the full request lifecycle: DNS → TCP → TLS → HTTP → middleware → handler → service → SQL → 200 OK. The `user_id` parameter is highlighted at every hop with rename annotations (`userId → user_id → id`). One graph query, no log dive. |
+| ![MCP card](docs/images/mcp_output_card.png) | **MCP tools your AI assistant calls directly** — A real `find_symbol("get_user")` response from polycodegraph's MCP server. Three results in ~50 tokens, role-classified as HANDLER vs SERVICE, no file reads required. Drop this in alongside Claude Code's grep and the assistant stops dumping whole files into its context window — see the benchmark below. |
 
 ---
 
@@ -142,8 +142,17 @@ codegraph build
 
 ### Register as an MCP server
 
+`codegraph init` writes a project-level `.mcp.json` in the repo — **Claude Code and Cursor auto-pick that up** as soon as you open the project. For other clients you currently need to add the server to their global config manually (v0.2 will do this for you).
+
 ```jsonc
-// Claude Code  →  ~/.claude.json
+// Claude Code (global)  →  ~/.claude.json
+// Cursor (global)       →  ~/.cursor/mcp.json   (or .cursor/mcp.json per workspace)
+// Windsurf              →  ~/.windsurf/mcp.json
+// OpenAI Codex CLI      →  ~/.codex/mcp.json
+// GitHub Copilot CLI    →  ~/.config/copilot/mcp.json
+// Zed                   →  ~/.config/zed/settings.json under "context_servers"
+// Continue              →  ~/.continue/config.json under "experimental.modelContextProtocolServers"
+
 {
   "mcpServers": {
     "codegraph": {
@@ -152,13 +161,9 @@ codegraph build
     }
   }
 }
-
-// Cursor  →  ~/.cursor/mcp.json  (or .cursor/mcp.json per workspace)
-{ "mcpServers": { "codegraph": { "command": "codegraph", "args": ["mcp", "serve"] } } }
-
-// Windsurf  →  ~/.windsurf/mcp.json
-{ "mcpServers": { "codegraph": { "command": "codegraph", "args": ["mcp", "serve"] } } }
 ```
+
+The same five-line JSON snippet works for every client — only the file path changes.
 
 Then ask your assistant questions like:
 
@@ -218,7 +223,7 @@ What polycodegraph *doesn't* do yet. Listed here so the benchmark and README cla
 | **0.1.0** | **Shipping on PyPI today** | Parsing (Python, TS/JS, Go), DF0–DF4 tracing, 3D dashboard + Architecture + Learn Mode, decorator-aware dead code, cycles, role classification, **local embeddings** (semantic + hybrid search), 18 MCP tools, PR-review CI, cross-repo workspace mode. |
 | 0.1.2 | Planned | TypeScript R2 resolver patterns (path aliases, fresh-instance binding, decorator edges); CLI HANDLER classification for Typer / Click. |
 | 0.3 | Planned | Type inference (Mypy/Pyright); full single-value arg-flow propagation; docstring-driven analysis hints; multi-param highlighting; more languages (Rust, Java, C#). |
-| 0.2 | Planned | Rename CLI binary `codegraph` → `polycodegraph`; keep `codegraph` as a deprecated alias for one release. |
+| 0.2 | Planned | Rename CLI binary `codegraph` → `polycodegraph` (keep `codegraph` as a deprecated alias for one release); `codegraph init` writes to *every* detected client's global MCP config (Claude Code / Cursor / Windsurf / Codex / Copilot / Zed / Continue), not just the project-level `.mcp.json`. |
 | 0.4 | Planned | Async / await visualization; error-path branches; auth-middleware phase; cross-process traces; git-history semantics. |
 
 ---
