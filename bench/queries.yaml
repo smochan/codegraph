@@ -1,0 +1,74 @@
+# Pass Q: query benchmark ground truth.
+#
+# Each query targets a repo and has a hand-curated expected answer.
+# `expected_contains`: a tool's answer is correct if every listed substring
+# appears somewhere in the raw response. We allow extras — we're measuring
+# "did the tool find the right thing", not "did it return only that thing".
+
+repos:
+  codegraph-self:
+    path: .
+    queries:
+      - id: find_symbol_basic
+        kind: find_symbol
+        target: blast_radius
+        expected_contains:
+          - codegraph/analysis/blast_radius.py
+        notes: "Find a known function by name. Easiest possible query."
+
+      - id: callers_simple
+        kind: callers
+        target: default_data_dir
+        expected_contains:
+          - codegraph.cli._get_data_dir
+        notes: "Walk one hop of callers. README mentions this relationship."
+
+      - id: subgraph_dashboard
+        kind: subgraph
+        target: build_dashboard_payload
+        expected_contains:
+          - find_dead_code
+          - find_cycles
+        notes: "README claims 15 direct callees of build_dashboard_payload. Two of them are enough proof."
+
+      - id: untested_listing
+        kind: untested
+        expected_count_at_least: 10
+        notes: "Tool should produce a non-empty list of untested symbols."
+
+      - id: cycles_listing
+        kind: cycles
+        expected_count_at_least: 1
+        notes: "README documents 3 known cycles — at least one must surface."
+
+  fastapi:
+    path: bench/repos_cache/fastapi
+    queries:
+      - id: find_symbol_depends
+        kind: find_symbol
+        target: Depends
+        expected_contains:
+          - fastapi/param_functions.py
+        notes: "Depends is the canonical FastAPI symbol — every FastAPI user knows it."
+
+      - id: callers_get_dependant
+        kind: callers
+        target: get_dependant
+        expected_count_at_least: 1
+        notes: "get_dependant is the core dependency-resolution function. Should have multiple in-repo callers."
+
+      - id: subgraph_solve_deps
+        kind: subgraph
+        target: solve_dependencies
+        expected_count_at_least: 3
+        notes: "solve_dependencies orchestrates request resolution — its neighborhood is meaningful."
+
+      - id: untested_listing
+        kind: untested
+        expected_count_at_least: 5
+        notes: "FastAPI is well-tested but no codebase is 100% covered. Tool should find some."
+
+      - id: cycles_listing
+        kind: cycles
+        expected_count_at_least: 0
+        notes: "FastAPI may or may not have cycles — just verifying the tool runs the analysis."

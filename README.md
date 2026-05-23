@@ -1,86 +1,66 @@
-# codegraph
+# polycodegraph
 
 [![CI](https://github.com/smochan/polycodegraph/actions/workflows/ci.yml/badge.svg)](https://github.com/smochan/polycodegraph/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/polycodegraph.svg)](https://pypi.org/project/polycodegraph/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-0.1.0--pre-yellow.svg)](https://github.com/smochan/polycodegraph)
+[![MCP](https://img.shields.io/badge/MCP-18%20tools-2a9d8f.svg)](#mcp-tools-18-total)
 
-> Parse any repo into a queryable code graph. Trace calls, data flow, dead code, and blast radius — without a daemon.
+> Parse any repo into a queryable code graph. Trace one parameter from a frontend fetch through every layer to the SQL query. Powers Claude Code, Cursor, and Windsurf via MCP — so your AI assistant reads focused context instead of the entire codebase.
 
----
+![hero benchmark](docs/images/hero_benchmark.png)
 
-## Hero Video
-
-![hero](docs/images/hero.gif)
-
-*Watch as a single parameter travels from frontend fetch, through the backend handler and service layers, all the way to the database query — with rename annotations at each hop.*
+*Same Claude Sonnet 4.6. Same 10 questions about two real repos (codegraph itself + FastAPI). Only the registered MCP server changes. Reproduce with `codegraph bench agent`, raw data in [`bench/RESULTS_AGENT_LATEST.md`](bench/RESULTS_AGENT_LATEST.md).*
 
 ---
 
-## Supported languages
-
-Python, TypeScript / TSX, JavaScript / JSX, **Go** (since v0.2). Tree-sitter under the hood — adding a new language is a parser module + fixture (~3 hours, see `codegraph/parsers/go.py` for the v1 template).
-
-## At a glance
-
-**637 tests · 0 dead code · 3 cycles · 15 MCP tools — all on its own graph.**
+## Quick start
 
 ```bash
-# Install from source
-git clone https://github.com/smochan/polycodegraph.git && cd polycodegraph
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-# Build your graph
-codegraph init
-codegraph build
-
-# Explore locally
-codegraph serve          # http://127.0.0.1:8765
-codegraph analyze        # dead code, cycles, untested functions
+pip install polycodegraph     # the PyPI distribution name
+codegraph init                # the CLI binary + Python module + MCP server are all `codegraph` (see footnote ↓)
+codegraph build               # parse repo → .codegraph/graph.db
+codegraph serve               # web dashboard at http://127.0.0.1:8765
 ```
 
----
+That's it. Three commands and you have a queryable graph, a 3D dashboard, and an MCP server your IDE can talk to.
 
-## The pitch
+### Languages + frameworks (today)
 
-Pick any function. See what calls it, what it calls, and what data flows through it. Works in your terminal, in a browser, or as an MCP tool inside Claude Code, Cursor, and Windsurf — so your AI assistant reads focused context instead of the entire codebase.
+|  | Today (v0.1.0) | Roadmap |
+|---|---|---|
+| **Languages** | Python · TypeScript · JavaScript · TSX / JSX · Go | Java, Rust, C# (v0.3); Ruby, PHP later |
+| **HTTP frameworks** | FastAPI · Flask · aiohttp · Express · NestJS | Spring Boot, Django views, ASP.NET, Rails (alongside their language) |
+| **ORMs / DBs** | SQLAlchemy · Prisma (partial) | Django ORM, GORM, Diesel, ActiveRecord (alongside their language) |
+| **Frontend fetch** | `fetch` · axios · SWR · React Query · generic `apiClient.*` | RTK Query, Apollo |
+| **24 framework decorators** | FastAPI · Flask · aiohttp · Celery · pytest · MCP · Click · Typer · Django · SQLAlchemy · NestJS · … | Spring annotations, .NET attributes |
 
----
-
-## What you get
-
-| Screenshot | Use case |
-|:---:|:---|
-| ![3d_focus](docs/images/3d_focus.png) | **3D focus view** — Pick any function and trace its real downstream call tree. Shown: `build_dashboard_payload` (the function that runs every time you `codegraph serve`) with its 15 direct callees — `find_dead_code`, `find_cycles`, `build_hld`, `find_hotspots`, `compute_metrics`, `detect_infrastructure`, and the rest of the analysis stack. Codegraph analyzing itself. |
-| ![architecture_view](docs/images/architecture_view.png) | **Architecture map** — See handlers grouped by role (HANDLER, SERVICE, COMPONENT, REPO), infrastructure components (DB, cache, queue), and their connections at a glance. (codegraph analyzing a sample repo: `GET /api/users/{user_id}` from `examples/cross-stack-demo`) |
-| ![arg_flow](docs/images/arg_flow.png) | **Argument flow trace** — Watch the `user_id` parameter rename and travel through handler → service → repository → SQL query with a timeline visualization. |
+Adding a new language is a single tree-sitter parser module + fixture file (~3 hours — see `codegraph/parsers/go.py` for the v1 template). PRs welcome.
 
 ---
 
-## Why codegraph
+## The MOAT — one graph, everything on top
 
-- **Dead code, not false positives.** Recognizes 24 framework decorators (FastAPI, Flask, Celery, pytest, Click, MCP, Django, SQLAlchemy, etc.) so framework-registered handlers are never flagged as unused. We trust codegraph on our own code. Self-reported 451 dead-code findings dropped to 15, then to **0** after PR #21. [See the journey →](docs/images/deadcode_journey.png)
+polycodegraph has exactly one opinion: **build the right graph, and every interesting feature falls out for free.**
 
-- **See the real architecture.** Functions classified as HANDLER, SERVICE, COMPONENT, or REPOSITORY so you know what layer you're in without reading docs.
+The inputs that feed the graph go beyond imports and call edges. polycodegraph reads tree-sitter parses for **Python, TypeScript, JavaScript, and Go**; captures **every call-site's arguments as text**; recognizes **24 framework decorators** so FastAPI / Flask / Celery / pytest / Click / MCP / Django / SQLAlchemy handlers are never confused with dead code; detects **routes** (`@app.get("/x")`) and **frontend fetches** (`fetch`, `axios`, `useSWR`, `useQuery`); and **stitches URLs across the stack** (`/{id} ↔ ${id} ↔ :id`) so it can trace a fetch all the way to its handler.
 
-- **Argument-level flow capture.** Every call site's arguments are recorded (text-only, no type inference), so when you trace from frontend to database, you see *which* parameter changed names and where.
+The outputs that come *for free* once the graph is right:
 
-- **One SQLite file. No daemon.** Graph lives in `.codegraph/graph.db` alongside your repo. Works offline, committed to git, travels with a branch.
+![MOAT](docs/images/moat.png)
+
+Decorator-aware dead code, role classification (HANDLER / SERVICE / COMPONENT / REPO), blast radius, cycles, untested-function detection, an end-to-end cross-stack trace with rename annotations, a 3D focus-mode dashboard, a Learn Mode lifecycle modal, local embeddings for semantic + hybrid search, an 18-tool MCP server, and a PR-review CI that graph-diffs the branch against `main`.
+
+One SQLite file. No daemon. No network. Travels with your git branch.
 
 ---
 
 ## How it works
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
-  <img alt="codegraph architecture" src="docs/images/architecture-light.svg">
-</picture>
-
-```
+```text
   ┌─────────────────────────────────────────────────────┐
   │  tree-sitter parsing                                │
-  │  (Python, TS/JS, TSX, JSX)                          │
+  │  (Python, TS/JS, TSX, JSX, Go)                      │
   └─────────────────────────────────────────────────────┘
                         ↓
   ┌─────────────────────────────────────────────────────┐
@@ -100,71 +80,109 @@ Pick any function. See what calls it, what it calls, and what data flows through
   └─────────────────────────────────────────────────────┘
                    ↙            ↓            ↘
             CLI tools       Web dashboard      MCP server
-         (graph, roles,    (3D focus view,  (15 tools for
+         (graph, roles,    (3D focus view,  (18 tools for
          cycles, dead      architecture,     Claude Code,
          code, untested)   learn mode)       Cursor, etc.)
 ```
 
-**Parsing:** tree-sitter walks your files, emits nodes (FILE, CLASS, FUNCTION, IMPORTED_NAME) and edges (CALLS, IMPORTS, DEFINED_IN, INHERITS).
+---
 
-**Resolution:** Recognizes import patterns (per-name, relative, star), follows local definitions across files, tracks decorator stacks, and assigns function roles (HANDLER, SERVICE, COMPONENT, REPO) based on framework patterns.
+## What you can do
 
-**Surfaces:** Three layers — CLI for scripts and CI, web dashboard for interactive exploration, MCP server so your AI assistant can ask "what changed?" or "trace this argument" without reading 500 files.
+| Screenshot | Use case |
+|:---:|:---|
+| ![3d_focus](docs/images/3d_focus.png) | **3D focus view** — Pick any function, trace its real downstream call tree, expand or collapse ancestors and descendants inline. Shown: `build_dashboard_payload` with its 15 direct callees — `find_dead_code`, `find_cycles`, `build_hld`, `find_hotspots`, `compute_metrics`, and the rest of the analysis stack. |
+| ![architecture_view](docs/images/architecture_view.png) | **Architecture map** — Handlers grouped by role (HANDLER, SERVICE, COMPONENT, REPO), infrastructure components (DB, cache, queue), and their connections at a glance. Click a handler → Learn Mode opens a request-lifecycle modal: TCP → TLS → HTTP → query → response. |
+| ![arg_flow](docs/images/arg_flow.png) | **DF4 cross-stack trace** — `codegraph dataflow trace "GET /api/users/{user_id}"` walks the graph from a frontend fetch through the handler, service, and repository to the SQL query, with **rename annotations at every hop** (`userId → user_id → id`). |
+| _coming soon_ | **MCP tools in Claude Code** — Ask Claude *"trace `Depends` through FastAPI"* and watch it call `dataflow_trace` instead of grepping. Each tool returns a small focused subgraph (~20-50 tokens) so context windows stay clean. |
 
 ---
 
-## Use with Claude Code, Cursor, Windsurf
+## Benchmark — same Claude, varying graph MCP
 
-Register codegraph as an MCP server:
+Four configurations. Same Claude Sonnet 4.6. Same 10 questions across two real codebases (polycodegraph itself + FastAPI). **All four configs include Claude's native grep + file-reading tools** — what every dev gets out of the box in Claude Code or Cursor. The only thing that changes is whether a graph MCP is *also* registered alongside.
+
+### codegraph-self
+
+| Configuration | Correct | Tokens in | Cost (USD) | Avg latency (s) |
+|---|---:|----:|----:|----:|
+| `claude+grep` (no graph MCP) | 5 / 5 | 264,756 | $0.92 | 102 |
+| `+ code-review-graph` MCP | 2 / 5 | 118,674 | $0.39 | 56 |
+| `+ graphify` MCP | 3 / 5 | 99,233 | $0.31 | 83 |
+| `+ polycodegraph` MCP | **4 / 5** | **43,705** | **$0.18** | **22** |
+
+### fastapi
+
+| Configuration | Correct | Tokens in | Cost (USD) | Avg latency (s) |
+|---|---:|----:|----:|----:|
+| `claude+grep` (no graph MCP) | 3 / 5 | 71,833 | $0.25 | 54 |
+| `+ code-review-graph` MCP | 1 / 5 | 84,082 | $0.29 | 42 |
+| `+ graphify` MCP | 2 / 5 | 55,287 | $0.19 | 46 |
+| `+ polycodegraph` MCP | **3 / 5** | **46,347** | **$0.19** | **18** |
+
+The honest read across both repos:
+
+- **`claude+grep` alone is the most correct (8/10)** — Claude can answer most codebase questions by grepping and reading whole files. But it pays the price: **336k tokens, $1.17, 78s avg latency.**
+- **`+ polycodegraph` matches that within one question (7/10) at *3× lower cost and 4× lower latency* (90k tokens, $0.37, 20s).** Because polycodegraph returns small focused subgraphs (~20-50 tokens per call) instead of grep-dumping whole files into Claude's context.
+- **The other graph MCPs are strictly worse than just grepping.** code-review-graph: 3/10 at $0.68. graphify: 5/10 at $0.50. They add tool overhead without paying off in correctness.
+
+Reproduce: `codegraph bench agent --only claude+grep,claude+grep+polycodegraph,claude+grep+code-review-graph,claude+grep+graphify`. Raw per-run JSONL in [`bench/agent_raw_latest.jsonl`](bench/agent_raw_latest.jsonl). Full methodology in [`bench/README.md`](bench/README.md).
+
+---
+
+## Install & use
+
+### From PyPI
 
 ```bash
-# Claude Code
-# Add to ~/.claude.json:
-{
-  "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
-      "args": ["mcp", "serve", "--db", ".codegraph/graph.db"]
-    }
-  }
-}
-
-# Cursor
-# Add to ~/.cursor/mcp.json (or .cursor/mcp.json per workspace):
-{
-  "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
-      "args": ["mcp", "serve", "--db", ".codegraph/graph.db"]
-    }
-  }
-}
-
-# Windsurf
-# Add to ~/.windsurf/mcp.json:
-{
-  "mcpServers": {
-    "codegraph": {
-      "command": "codegraph",
-      "args": ["mcp", "serve", "--db", ".codegraph/graph.db"]
-    }
-  }
-}
+pip install polycodegraph
+codegraph init
+codegraph build
 ```
 
-Ask questions like:
+### Register as an MCP server
+
+```jsonc
+// Claude Code  →  ~/.claude.json
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "codegraph",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+
+// Cursor  →  ~/.cursor/mcp.json  (or .cursor/mcp.json per workspace)
+{ "mcpServers": { "codegraph": { "command": "codegraph", "args": ["mcp", "serve"] } } }
+
+// Windsurf  →  ~/.windsurf/mcp.json
+{ "mcpServers": { "codegraph": { "command": "codegraph", "args": ["mcp", "serve"] } } }
+```
+
+Then ask your assistant questions like:
+
 > *"Which HANDLER nodes have no test coverage?"*
-> *"Show me all the callers of UserService.login with their arguments."*
-> *"Trace GET /api/users/{id} from the frontend fetch all the way to the database."*
+> *"Show me all the callers of `UserService.login` with their arguments."*
+> *"Trace `GET /api/users/{id}` from the frontend fetch all the way to the database."*
 > *"What's the blast radius of changing this function?"*
 
-All 15 tools return small, focused subgraphs — no context-window flooding.
+All 18 tools return small, focused subgraphs — no context-window flooding.
+
+### Optional: local embeddings
+
+```bash
+pip install 'polycodegraph[embed]'
+codegraph embed     # chunks the repo, embeds with nomic-ai/CodeRankEmbed
+```
+
+Unlocks the `semantic_search` and `hybrid_search` MCP tools. ~140 MB model download, runs locally, no API keys.
 
 ---
 
 ## Live demo
 
-A small FastAPI + SQLAlchemy + React fixture lives in [`examples/cross-stack-demo/`](examples/cross-stack-demo/). Run codegraph on it to see DF0, DF1, DF2, DF1.5, and DF3/DF4 all light up:
+A small FastAPI + SQLAlchemy + React fixture lives in [`examples/cross-stack-demo/`](examples/cross-stack-demo/). Run polycodegraph on it to see DF0, DF1, DF1.5, DF2, DF3, and DF4 all light up:
 
 ```bash
 codegraph build --no-incremental --root examples/cross-stack-demo
@@ -175,263 +193,173 @@ See the [demo README](examples/cross-stack-demo/README.md) for expected output.
 
 ---
 
-## Status & roadmap
+## Limitations (honest list)
 
-| Version | Status | What's included |
-|---------|--------|-----------------|
-| **0.1.0** | **Pre-release on main** | Parsing (Python, TS/JS), DF0–DF4 tracing, 3D dashboard, Architecture + Learn Mode, decorator-aware dead code, cycles, role classification, 15 MCP tools, PR-review CI. |
-| **0.1.2** | Planned | TypeScript R2 resolver patterns (path aliases, fresh-instance binding, decorator edges); CLI HANDLER classification for Typer / Click. |
-| **0.3+** | Planned | Type inference (Mypy/Pyright), local embeddings layer (semantic + hybrid search), multi-param arg-flow highlighting, more languages (Rust, Go, C#). |
+What polycodegraph *doesn't* do yet. Listed here so the benchmark and README claims stay clean.
 
-For full roadmap, see [`.planning/MASTER_PLAN.md`](.planning/MASTER_PLAN.md).
-
-PyPI publish is held until the launch video ships. For now, install from source.
+- **Type inference** (Mypy / Pyright). DF0 captures argument *text*, not types. Roadmap v0.3.
+- **Argument-value identity across hops.** DF4 emits ordered hops with rename annotations; full single-value propagation from fetch body → route param → service arg → DB column is deferred (v0.3).
+- **Docstrings are stored on every node but not yet consumed by analysis.** Embeddings use them as fallback body text; dead-code, role classification, and dataflow ignore them. Roadmap v0.3.
+- **Git-history mining** (commit-message semantics, author / touch-frequency signals). Not implemented. Git is used only for the current HEAD SHA and PR-review diff. Roadmap v0.4.
+- **Per-language resolver parity** (v0.1.2). Python ships the full R1/R2/R3 fixes. TypeScript R2 patterns (path aliases, fresh-instance binding, decorator-call edges) are deferred.
+- **Typer CLI symbols are not tagged HANDLER** (v0.1.x). DF1.5 only classifies HTTP framework decorators.
+- **Async / await visualization** (v0.4). DF4 walks the synchronous call graph only.
+- **Error-path branch rendering** (v0.4). Learn Mode shows the happy path.
+- **Auth middleware as a distinct phase** (v0.4). Today auth shows up as a regular CALL node.
+- **Multi-param simultaneous highlighting** (v0.4). Single-param selection only.
+- **Cross-process traces** (v0.4). Can't yet link multiple `.codegraph/graph.db` files.
 
 ---
 
+## Roadmap
+
+| Version | Status | What's in / what's planned |
+|---|---|---|
+| **0.1.0** | **Shipping on PyPI today** | Parsing (Python, TS/JS, Go), DF0–DF4 tracing, 3D dashboard + Architecture + Learn Mode, decorator-aware dead code, cycles, role classification, **local embeddings** (semantic + hybrid search), 18 MCP tools, PR-review CI, cross-repo workspace mode. |
+| 0.1.2 | Planned | TypeScript R2 resolver patterns (path aliases, fresh-instance binding, decorator edges); CLI HANDLER classification for Typer / Click. |
+| 0.3 | Planned | Type inference (Mypy/Pyright); full single-value arg-flow propagation; docstring-driven analysis hints; multi-param highlighting; more languages (Rust, Java, C#). |
+| 0.2 | Planned | Rename CLI binary `codegraph` → `polycodegraph`; keep `codegraph` as a deprecated alias for one release. |
+| 0.4 | Planned | Async / await visualization; error-path branches; auth-middleware phase; cross-process traces; git-history semantics. |
+
 ---
 
-## Features (complete reference)
+## On the self-graph: from 451 dead-code findings to 0
+
+We run polycodegraph on its own source as a regression target. Dead-code findings dropped from **451 → 24+ → 15 → 0** as the resolver hardened, decorator-aware entry-point detection landed, and intentional public-API methods were marked with `# pragma: codegraph-public-api`.
+
+Current self-graph stats:
+
+- **3,320 nodes** (files, classes, functions, imports)
+- **7,557 edges** (5,245 CALLS, 1,357 DEFINED_IN, 886 IMPORTS, 28 INHERITS, 12 ROUTE, 27 FETCH_CALL, 1 READS_FROM, 1 WRITES_TO)
+- **3 cycles**, all documented and accepted (dashboard redraw, parser self-recursion, MCP serve/run resolver false positive)
+- **0 dead-code findings** (with pragma exemptions for public-API methods)
+- **637 tests passing** (537 Python pytest + 100 Node tests)
+
+---
+
+## Where it fits
+
+| | **polycodegraph** | GitNexus | code-review-graph | better-code-review-graph | JudiniLabs / mcp-code-graph | RepoMapper | Graphify |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Local-first, single SQLite, no daemon | ✅ | ✅ | ✅ | ✅ | partial | ✅ | varies |
+| MCP-native (stdio) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Cross-stack end-to-end trace (fetch → SQL) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Decorator-aware dead code (24 frameworks) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Role classification (HANDLER/SERVICE/...) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Argument-level data flow text capture (DF0) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| 3D focus-mode flow tracer | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | partial |
+| Local embeddings (no API key) | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Open source, MIT | ✅ | ❌ (PolyForm NC) | ✅ | ✅ | ✅ | ✅ | varies |
+
+The wedge isn't a fancier graph algorithm — it's that polycodegraph treats *trace this argument across the stack* as a first-class operation, not a follow-up grep. Embedding-based retrieval tools (code-review-graph, Cursor, Cody) handle prose / docstrings well; the right architecture is **graph + embeddings in the same MCP loop**, and v0.1.0 ships both.
+
+---
+
+<details>
+<summary><strong>Full feature reference (16 capabilities)</strong></summary>
 
 | Capability | What it does | Example |
 |---|---|---|
-| **Parsing** | Walks Python and TypeScript/JavaScript/TSX/JSX repositories via tree-sitter at function/method/class granularity. | `codegraph build` |
-| **Single SQLite store** | All graph data lives in `.codegraph/graph.db`. No daemon, no database server, no network. | `git commit .codegraph/` |
-| **Cross-file resolution** | Five categories of resolver fixes: per-name imports (`from x import a, b, c`), relative imports, same-file constructors, decorator-call edges, `self.X.Y` chains, fresh-instance methods. | Handles `from pkg import a, b, c` → 3 separate edges. |
-| **DF0 call-site arguments** | Captures text of each argument at parse time (no type inference). Powers signature tooltips and edge labels in 3D view. | `func(user_id=42)` → edge label shows `user_id=42`. |
-| **Decorator-aware dead code** | Recognizes 24 framework decorators (Typer, FastAPI, Click, Celery, pytest, MCP, Flask, Django, SQLAlchemy, etc.). Framework-registered handlers never flagged as unused. | `@app.get("/x")` → handler not dead code. |
-| **Call/import cycles** | Detects strongly-connected components. Reports with full qualnames (not hashes) so you can discuss them. | `a.b → c.d → a.b` reported as cycle. |
-| **Hotspots, untested, metrics** | Identifies functions with high fan-in (many callers), no test coverage, and aggregate stats (nodes, edges, densities, avg fan-in/out). | `codegraph analyze` |
-| **DF1.5 role classification** | Tags functions and classes as HANDLER (route), SERVICE, COMPONENT, REPO (data access) based on framework patterns. HTTP-framework-aware (FastAPI, Flask, Express, NestJS). | `def login() → HANDLER`, `def get_user() → SERVICE`, `User.query() → REPO`. |
-| **DF1 ROUTE edges** | FastAPI `@app.get("/x")`, Flask `@app.route("/z", methods=["POST"])`, aiohttp — all detected. Synthetic `route::METHOD::/path` nodes. Flask multi-method expands to one edge per method. | `@app.get("/users/{id}")` → edge to `route::GET::/users/{id}`. |
-| **DF1 SQLAlchemy READS_FROM / WRITES_TO** | `session.query(Model)`, `Model.query.filter(...)`, `session.add(...)`, `session.execute(select\|insert\|update\|delete(Model))` all tracked. Edges resolve to in-repo CLASS nodes; unresolved targets dropped. | `session.query(User)` → edge to `User` class node. |
-| **DF2 FETCH_CALL extraction** | Detects `fetch(url)`, `axios.get/post/put/delete/patch(url)`, `useSWR(url)`, `useQuery({queryFn})`, and generic `apiClient.get/post(url)`. Captures method, URL, body-key shape. | `fetch("/api/users/{id}")` → edge to synthetic URL node with metadata. |
-| **DF3 URL stitching** | Normalizes route and fetch URLs with placeholder handling (`/{id}` ↔ `${id}` ↔ `:id`) and body-key overlap bonus. | `GET /users/{id}` matched to `fetch("/users/${id}")`. |
-| **DF4 end-to-end trace** | `codegraph dataflow trace "GET /api/users/{id}"` walks call graph + DF1/DF2 edges, emits ordered hops (frontend → handler → service → repo → SQL). Per-hop argument-flow mapping shows parameter renames. | Trace shows `user_id` (fetch) → `user_id` (param) → `user` (local) → `id` (DB column). |
-| **3D focus-mode dashboard** | Pick any function, expand/collapse ancestors/descendants inline, see signatures on hover, edge labels show call-site args. External calls render as leaves. | Click `UserService.get_by_id`, expand 5 levels, fold back. |
-| **Architecture view + Learn Mode** | Detects infra (web framework, ORM, cache, message queue, HTTP clients) and groups with role-classified app layer. Click handler → animated sequence/pipeline diagram of full request lifecycle with explanatory text. | Click `@app.post("/users")` → see TCP → TLS → HTTP → query → response. |
-| **MCP server (15 tools)** | `find_symbol`, `callers`, `callees`, `blast_radius`, `subgraph`, `dead_code`, `cycles`, `untested`, `hotspots`, `metrics`, `semantic_search`, `hybrid_search`, `dataflow_routes`, `dataflow_fetches`, `dataflow_trace`. | Ask Claude Code: "Who calls this?" → `callers` tool returns list. |
-| **CLI reference** | `init`, `build`, `analyze`, `status`, `serve`, `review`, `query`, `baseline`, `hook`, `viz`, `explore`, `mcp`, `embed`. | `codegraph review --format markdown --fail-on high`. |
-
----
-
-## CLI subcommands
-
-<details>
-<summary><strong>Graph Building</strong></summary>
-
-```bash
-codegraph init
-# Interactive setup: detect languages, configure ignore globs, optionally register MCP.
-
-codegraph build
-# Parse repo with tree-sitter, write/update .codegraph/graph.db.
-
-codegraph status
-# Show graph freshness, last build time, drift indicators.
-```
+| **Parsing** | tree-sitter walks Python / TypeScript / JavaScript / TSX / JSX / Go at function/method/class granularity. | `codegraph build` |
+| **Single SQLite store** | All graph data in `.codegraph/graph.db`. No daemon, no DB server, no network. | `git commit .codegraph/` |
+| **Cross-file resolution** | Per-name imports, relative imports, same-file constructors, decorator-call edges, `self.X.Y` chains, fresh-instance methods. | `from pkg import a, b, c` → 3 separate edges |
+| **DF0 call-site arguments** | Captures the text of each argument at parse time (no type inference). Powers signature tooltips and edge labels. | `func(user_id=42)` → edge label shows `user_id=42` |
+| **Decorator-aware dead code** | 24 framework decorators recognized (Typer, FastAPI, Click, Celery, pytest, MCP, Flask, Django, SQLAlchemy, etc.). Framework-registered handlers never flagged. | `@app.get("/x")` → handler not dead code |
+| **Call/import cycles** | Detects strongly-connected components, reports with full qualnames. | `a.b → c.d → a.b` |
+| **Hotspots, untested, metrics** | High-fan-in detection, untested-function listing, aggregate graph metrics. | `codegraph analyze` |
+| **DF1.5 role classification** | Functions tagged HANDLER / SERVICE / COMPONENT / REPO from framework patterns. FastAPI / Flask / Express / NestJS aware. | `def login() → HANDLER` |
+| **DF1 ROUTE edges** | FastAPI, Flask (multi-method expansion), aiohttp. Synthetic `route::METHOD::/path` nodes. | `@app.get("/users/{id}")` → edge to `route::GET::/users/{id}` |
+| **DF1 SQLAlchemy READS_FROM / WRITES_TO** | `session.query`, `Model.query.filter`, `session.add`, `session.execute(select\|insert\|update\|delete(Model))`. | `session.query(User)` → edge to `User` class |
+| **DF2 FETCH_CALL extraction** | `fetch`, `axios.get/post/...`, `useSWR`, `useQuery`, generic `apiClient.get/post`. Captures method, URL, body-key shape. | `fetch("/api/users/{id}")` → URL node with metadata |
+| **DF3 URL stitching** | Placeholder normalization (`/{id}` ↔ `${id}` ↔ `:id`); body-key overlap bonus; one-to-many tolerated. | `GET /users/{id}` ↔ `fetch("/users/${id}")` |
+| **DF4 end-to-end trace** | CLI + MCP tool. Walks call graph + DF1/DF2 edges, emits ordered hops with per-hop arg-flow mapping. | Trace shows `user_id` (fetch) → `user_id` (param) → `user` (local) → `id` (DB column) |
+| **3D focus-mode dashboard** | Pick any function, expand/collapse ancestors/descendants inline, signatures on hover, edge labels show call-site args. | Click `UserService.get_by_id`, expand 5 levels |
+| **Architecture view + Learn Mode** | Detects infra (framework, ORM, cache, queue, HTTP clients). Click handler → animated TCP → TLS → HTTP → query → response lifecycle. | Click `@app.post("/users")` |
+| **Local embeddings** | `codegraph embed` chunks the repo, embeds with nomic-ai/CodeRankEmbed (Apache 2.0, ~140 MB), enables `semantic_search` and `hybrid_search`. | `codegraph embed` |
+| **MCP server (18 tools)** | All graph queries exposed via stdio MCP — works with Claude Code, Cursor, Windsurf out of the box. | `codegraph mcp serve` |
+| **PR-review CI** | `codegraph review --format markdown --fail-on high` graph-diffs the branch vs baseline. | `cp .github/ci-templates/pr-review.workflow.yml .github/workflows/` |
 
 </details>
 
 <details>
-<summary><strong>Analysis</strong></summary>
+<summary><strong>CLI subcommands</strong></summary>
 
 ```bash
-codegraph analyze
-# Whole-project audit: dead code (decorator-aware), cycles (with qualnames), 
-# untested functions, hotspots (high fan-in), metrics.
+# Graph building
+codegraph init      # interactive setup: detect languages, configure ignore globs, register MCP
+codegraph build     # parse repo with tree-sitter, write/update .codegraph/graph.db
+codegraph status    # graph freshness, last build time, drift indicators
 
-codegraph query callers <symbol>
-# Reverse-BFS: who calls this symbol? Returns list with argument text.
-
-codegraph query callees <symbol>
-# Forward traversal: what does this symbol call? Returns list with call-site arguments.
-
+# Analysis
+codegraph analyze                # whole-project audit: dead code, cycles, untested, hotspots, metrics
+codegraph query callers <symbol> # reverse-BFS: who calls this?
+codegraph query callees <symbol> # forward traversal: what does this call?
 codegraph query subgraph <symbol>
-# Induced subgraph around a symbol (ancestors + descendants).
-
 codegraph query deadcode
-# List unreferenced functions/classes. Decorator-aware (FastAPI, pytest, etc.).
-
 codegraph query untested
-# Functions with no incoming calls from a test module.
-
 codegraph query cycles
-# Import and call strongly-connected components, reported with qualnames.
-
 codegraph query hotspots
-# Functions with highest fan-in (most callers). Often bottlenecks.
-
 codegraph query metrics
-# Aggregate: node count, edge count, density, avg fan-in/out, cycle count.
-```
 
-</details>
+# Visualization
+codegraph serve                       # web dashboard at http://127.0.0.1:8765
+codegraph viz                         # Mermaid / interactive HTML / SVG
+codegraph explore                     # static subgraph explorer pages (good for sharing)
+codegraph dataflow trace "<M> <path>" # walk DF1→DF4 to trace endpoint frontend→DB
 
-<details>
-<summary><strong>Visualization</strong></summary>
-
-```bash
-codegraph serve
-# Launch web dashboard at http://127.0.0.1:8765 (3D focus view, Architecture, Learn Mode).
-
-codegraph viz
-# Render graph as Mermaid, interactive HTML, or SVG.
-
-codegraph explore
-# Generate static subgraph explorer pages (good for sharing).
-
-codegraph dataflow trace "<METHOD> <path>"
-# Walk DF1/DF2/DF3/DF4 to trace endpoint from frontend fetch to database.
-# Example: codegraph dataflow trace "GET /api/users/{id}"
-```
-
-</details>
-
-<details>
-<summary><strong>PR Review & Baselines</strong></summary>
-
-```bash
-codegraph review
-# Graph-diff current branch vs baseline. Output risk report (CSV or Markdown).
-# Fails the check on --fail-on high/critical findings.
-
-codegraph baseline save <name>
-# Snapshot current graph as a named baseline (e.g., "main").
-
+# PR review + baselines
+codegraph review              # graph-diff current branch vs baseline; CSV or Markdown
+codegraph baseline save       # snapshot current graph as the local baseline
 codegraph baseline status
-# Compare current graph to saved baseline.
-
-codegraph baseline push
-# Push baseline to remote store (S3 optional).
-
-codegraph hook install
-# Install pre-push git hook that runs codegraph review.
-
+codegraph baseline push       # optional S3 remote
+codegraph hook install        # pre-push git hook running codegraph review
 codegraph hook uninstall
-# Remove the pre-push hook.
-```
 
-</details>
+# MCP + embeddings
+codegraph mcp serve           # MCP stdio server: 18 tools for Claude Code / Cursor / Windsurf
+codegraph embed               # chunk + embed (nomic-ai/CodeRankEmbed); enables semantic + hybrid search
 
-<details>
-<summary><strong>MCP & Embeddings</strong></summary>
-
-```bash
-codegraph mcp serve
-# Start MCP server (stdio transport) for Claude Code, Cursor, Windsurf.
-# Exposes 18 tools (find_symbol, callers, dead_code, dataflow_trace, workspace_*, etc.).
-
-codegraph embed
-# Chunk repository, embed with nomic-ai/CodeRankEmbed, write .codegraph/embeddings.lance.
-# Unlocks semantic_search and hybrid_search MCP tools.
-```
-
-</details>
-
-<details>
-<summary><strong>Cross-repo Workspace mode</strong></summary>
-
-Register multiple repos as a single mental unit. Each repo still keeps its own
-`.codegraph/graph.db`; workspace operations open them in parallel and union the
-results. Useful when you context-switch across repos (frontend + backend,
-microservices, monorepo workspaces, etc.).
-
-```bash
-codegraph workspace init
-# Create ~/.codegraph/workspace.yml (the user-level workspace file).
-
-codegraph workspace add <repo-path>
-# Register a repository in the workspace. Path is resolved to absolute.
-# Optional: --name <label> for a short display name.
-
-codegraph workspace remove <repo-path>
-# Deregister a repository (does not touch its .codegraph/graph.db).
-
+# Cross-repo workspace mode
+codegraph workspace init      # ~/.codegraph/workspace.yml
+codegraph workspace add <path>
+codegraph workspace remove <path>
 codegraph workspace list
-# Show all registered repositories and whether each has a built graph.
-
 codegraph workspace status
-# Per-repo git state: branch, dirty file count, last commit, graph freshness.
-
 codegraph workspace sync [--only <name>]
-# Rebuild each registered repo's graph (or just one via --only).
-# Equivalent to running `codegraph build` in each repo.
 ```
-
-Override the workspace file location via `CODEGRAPH_WORKSPACE_FILE` (useful for
-project-scoped workspaces, CI isolation, or testing).
-
-The same three operations are also exposed as MCP tools — see the MCP tools
-table below for `workspace_state`, `workspace_diff_since`, `workspace_blast_radius`.
 
 </details>
 
----
-
-## MCP tools (18 total)
+<details>
+<summary><strong>MCP tools (18 total)</strong></summary>
 
 | Tool | Input | Output | Use case |
 |------|-------|--------|----------|
-| `find_symbol(query, role=None)` | Symbol name or partial match; optional role filter (HANDLER, SERVICE, COMPONENT, REPO). | List of matching symbols with location and role. | "Find all HANDLER nodes called `login`." |
-| `callers(qualname)` | Function or method qualname. | List of callers with argument text at each call site. | "Who calls UserService.get_by_id?" |
-| `callees(qualname)` | Function or method qualname. | List of functions this one calls, with argument text. | "What does the login handler call?" |
-| `blast_radius(qualname)` | Function or method qualname. | Transitive closure: all functions reachable from this one. | "If I change this utility, what breaks?" |
-| `subgraph(qualname, depth=2)` | Symbol; optional depth (default 2). | Induced subgraph (ancestors + descendants). | "Show me the context around this function." |
-| `dead_code(role=None)` | Optional role filter. | List of unreferenced functions/classes. Decorator-aware. | "Any dead code in the SERVICE layer?" |
-| `cycles(qualname=None)` | Optional symbol to filter to its connected component. | Strongly-connected components with qualnames and member count. | "Are there any import cycles?" |
+| `find_symbol(query, role=None)` | Symbol name or partial match; optional role filter. | Matching symbols + location + role. | "Find all HANDLERs called `login`." |
+| `callers(qualname)` | Function qualname. | Callers with argument text at each call site. | "Who calls `UserService.get_by_id`?" |
+| `callees(qualname)` | Function qualname. | Functions this one calls with argument text. | "What does the login handler call?" |
+| `blast_radius(qualname)` | Function qualname. | Transitive closure of all reachable functions. | "If I change this utility, what breaks?" |
+| `subgraph(qualname, depth=2)` | Symbol + optional depth. | Induced subgraph (ancestors + descendants). | "Show me the context around this function." |
+| `dead_code(role=None)` | Optional role filter. | Unreferenced functions/classes. Decorator-aware. | "Any dead code in the SERVICE layer?" |
+| `cycles(qualname=None)` | Optional symbol filter. | SCCs with qualnames and member count. | "Are there any import cycles?" |
 | `untested(role=None)` | Optional role filter. | Functions with no test calls. | "Which HANDLERs have zero coverage?" |
-| `hotspots(top_n=10)` | Optional limit (default 10). | Functions sorted by fan-in (callers). | "What are the bottlenecks?" |
-| `metrics()` | None. | Aggregate: node count, edge count, density, avg fan-in/out, cycle count. | "How complex is this codebase?" |
-| `semantic_search(query, k=5)` | Query string; max results. | Code snippets ranked by cosine similarity. Requires `codegraph embed`. | "Find password reset logic." |
-| `hybrid_search(query, k=5, role=None, focus_qualname=None)` | Query + optional role + optional rerank focal point. | Snippets ranked by 0.6 · cosine + 0.4 · graph-distance. | "Find auth logic near the login handler." |
-| `dataflow_routes()` | None. | List of detected routes: {handler_qualname, method, path, framework}. | "What endpoints does the app expose?" |
-| `dataflow_fetches(handler_qualname=None)` | Optional filter by handler. | List of frontend fetches: {caller_qualname, method, url, body_keys}. | "Which handlers are called from the frontend?" |
-| `dataflow_trace(method_path)` | Route (e.g., "GET /api/users/{id}"). | Ordered list of hops: entry (route) → handler → service → repo → SQL with per-hop arg-flow mapping. | "Trace user_id from frontend to database." |
-| `workspace_state()` | None. | Per-registered-repo: branch, dirty file count, last commit, graph presence. Reads `~/.codegraph/workspace.yml`. | "What's the state of every repo I'm working on?" |
-| `workspace_diff_since(ref="main")` | Optional git ref (default `main`). | Per-repo list of files changed since `ref` (committed + working tree). | "What did I touch this week across all my repos?" |
-| `workspace_blast_radius(symbol, depth=None)` | Symbol qualname (or unambiguous substring); optional depth limit. | Per-repo blast radius unioned across the workspace. Each hit reports `target_qualname`, `node_count`, `file_count`. | "If I rename this function, what breaks across all my projects?" |
+| `hotspots(top_n=10)` | Optional limit. | Functions sorted by fan-in. | "What are the bottlenecks?" |
+| `metrics()` | None. | Node/edge counts, density, fan-in/out, cycles. | "How complex is this codebase?" |
+| `semantic_search(query, k=5)` | Query string + max results. | Snippets ranked by cosine similarity. Requires `codegraph embed`. | "Find password reset logic." |
+| `hybrid_search(query, k=5, role=None, focus_qualname=None)` | Query + optional role + rerank focal point. | Snippets ranked by 0.6 · cosine + 0.4 · graph-distance. | "Find auth logic near the login handler." |
+| `dataflow_routes()` | None. | Detected routes: handler, method, path, framework. | "What endpoints does the app expose?" |
+| `dataflow_fetches(handler_qualname=None)` | Optional handler filter. | Frontend fetches: caller, method, URL, body keys. | "Which handlers are called from the frontend?" |
+| `dataflow_trace(method_path)` | Route (e.g. `"GET /api/users/{id}"`). | Ordered hops: route → handler → service → repo → SQL with per-hop arg-flow. | "Trace `user_id` from frontend to database." |
+| `workspace_state()` | None. | Per-repo: branch, dirty count, last commit, graph presence. | "What's the state of every repo I'm working on?" |
+| `workspace_diff_since(ref="main")` | Optional ref. | Per-repo files changed since ref. | "What did I touch this week across all my repos?" |
+| `workspace_blast_radius(symbol, depth=None)` | Symbol + optional depth. | Per-repo blast radius unioned across the workspace. | "If I rename this function, what breaks across all my projects?" |
 
-**Embeddings:** `semantic_search` and `hybrid_search` require running `codegraph embed` first, which chunks the code and embeds with nomic-ai/CodeRankEmbed (Apache 2.0, ~140 MB). Vectors land in `.codegraph/embeddings.lance`. Everything runs locally — no API keys.
+</details>
 
-**Workspace tools** (`workspace_state`, `workspace_diff_since`, `workspace_blast_radius`) read the user-level workspace file at `~/.codegraph/workspace.yml`. Configure it via `codegraph workspace init`, then `codegraph workspace add <repo-path>` for each repo you want included. The MCP tools then operate across all of them transparently — no extra flags from the MCP client side.
+<details>
+<summary><strong>Architecture deep-dive (R1/R2/R3 resolver stages + DF0–DF4 implementation)</strong></summary>
 
----
-
-## PR review CI (dogfood)
-
-`codegraph` ships its own PR-review workflow as a template. Once activated, every PR runs codegraph on itself, posts the diff, and fails on high-severity findings.
-
-**Activate:**
-
-```bash
-gh auth refresh -h github.com -s workflow
-cp .github/ci-templates/pr-review.workflow.yml .github/workflows/pr-review.yml
-git add .github/workflows/pr-review.yml
-git commit -m "ci: activate codegraph PR review"
-git push
-```
-
-**What it does:**
-
-1. Builds a graph from `origin/main` and saves as baseline.
-2. Builds a graph from PR head.
-3. Runs `codegraph review --format markdown --fail-on high` against the diff.
-4. Posts result as sticky PR comment (replaced on each push).
-5. Fails the check if findings exceed `--fail-on` threshold.
-
-**Local dry-run:**
-
-```bash
-git fetch origin main
-./scripts/test-pr-review-locally.sh
-```
-
----
-
-## Architecture deep-dive
-
-### Resolver stages (R1, R2, R3)
+### Resolver stages
 
 **R1 (Parse-time edge emission):**
 - Per-name imports: `from x import a, b, c` → 3 separate IMPORTS edges
@@ -441,139 +369,60 @@ git fetch origin main
 **R2 (Cross-file binding):**
 - Follow import targets across file boundaries
 - Recognize direct assignments (`x = imported_func`)
-- Detect decorator stacks and classify functions by framework (FastAPI, Flask, pytest, etc.)
+- Detect decorator stacks and classify functions by framework
 
 **R3 (Refinement):**
 - Decorator-call edges: `@my_decorator` applied to `def func()` → CALLS edge to decorator
 - `self.X.Y` chains: `self.service.get_user()` → CALLS edges through property chain
 - Fresh-instance binding: `MyClass().method()` → CALLS edge to both `__init__` and `method`
-- Conditional `self.X` assignments: track assignments in `__init__` and match them to later calls
+- Conditional `self.X` assignments tracked from `__init__`
 
-### Data-flow layers (DF0 → DF4)
+### Data-flow layers
 
-**DF0 — Call-site arguments** (all layers)
-- Text-only capture of each argument at parse time
-- Metadata: parameter names, return-type annotations
-- No type inference (Mypy integration deferred to v0.3+)
-- Powers signature tooltips and edge labels in dashboard
+**DF0 — Call-site arguments** — text capture at parse time, no type inference. Powers signature tooltips + edge labels.
 
-**DF1 — HTTP routes** (Python + TypeScript)
-- FastAPI `@app.get("/x")`, `@router.post("/y")`
-- Flask `@app.route("/z", methods=["POST", "PUT"])` (expands to one edge per method)
-- aiohttp `@routes.get("/x")`
-- Synthetic `route::METHOD::/path` nodes
-- High-low diagram includes `routes[]` array
+**DF1 — HTTP routes** — FastAPI / Flask / aiohttp. Synthetic `route::METHOD::/path` nodes.
 
-**DF1.5 — Role classification** (HTTP frameworks only)
-- HANDLER: decorated with framework route decorator
-- SERVICE: called by HANDLERs, calls REPO/COMPONENT/external
-- COMPONENT: utility, shared service, data transformer
-- REPO: database access (SQLAlchemy, Prisma, etc.)
-- Currently HTTP-framework-aware; Typer/Click deferred to v0.1.2
+**DF1.5 — Role classification** — HANDLER (route-decorated), SERVICE (called by HANDLERs), COMPONENT (utility), REPO (DB access).
 
-**DF2 — Frontend fetches** (TypeScript/JavaScript)
-- `fetch(url, init?)`, `axios.get/post/put/delete/patch(url)`, `useSWR(url)`, `useQuery({queryFn})`
-- Generic `apiClient.get/post/put/delete(url)` heuristic
-- Captures method (GET, POST, etc. from init or method name)
-- Captures body shape (top-level keys in object literal or `JSON.stringify(...)`)
-- URL handling: literals captured verbatim, template literals preserve `${...}`, dynamic URLs flag `url_kind="dynamic"`
-- High-low diagram includes `fetches[]` array with `body_keys` metadata
+**DF2 — Frontend fetches** — `fetch`, `axios.*`, `useSWR`, `useQuery`, generic `apiClient.*`. Captures method, URL, body-key shape.
 
-**DF3 — URL stitching** (`match_route`)
-- Normalizes route placeholders: `/{id}` ↔ `${id}` ↔ `:id` ↔ numeric segments
-- Body-key overlap bonus: if frontend and backend agree on request shape, match is stronger
-- One-to-many case handled gracefully (multiple handlers for same path)
+**DF3 — URL stitching** — placeholder normalization, body-key overlap bonus, one-to-many tolerated.
 
-**DF4 — End-to-end trace** (`codegraph dataflow trace`)
-- Walks call graph + DF1/DF2 cross-layer edges
-- Emits ordered `DataFlow` of hops: entry (fetch or direct call) → handler → service → repo → SQL target
-- Per-hop argument-flow mapping: `{starting_key → local_name | null}`
-- Snake_case ↔ camelCase ↔ PascalCase normalization so `user_id` = `userId` = `UserId`
-- Rename annotations in UI: `(was userId)` when local name differs
-- Available as CLI subcommand and `dataflow_trace` MCP tool
+**DF4 — End-to-end trace** — walks call graph + DF1/DF2 cross-layer edges, emits ordered hops with per-hop arg-flow mapping. Snake_case ↔ camelCase ↔ PascalCase normalization so `user_id` = `userId` = `UserId`. Rename annotations: `(was userId)` when local name differs.
 
-### High-level diagram (HLD) payload
+### HLD payload
 
-`serialize_hld()` surfaces three layers:
+`serialize_hld()` surfaces three layers — **Infrastructure** (framework / ORM / cache / queue / HTTP clients), **Application** (HANDLER / SERVICE / COMPONENT / REPO nodes), **Data** (HANDLER-to-route, handler-to-FETCH_CALL, repo-to-SQLAlchemy with DF4 hop chains). Learn Mode reads this to animate request lifecycles.
 
-| Layer | Nodes | Edges | Metadata |
-|-------|-------|-------|----------|
-| **Infrastructure** | web framework, ORM, cache, message queue, HTTP clients | imports, instantiations | name, version (inferred) |
-| **Application** | HANDLER, SERVICE, COMPONENT, REPO nodes | CALLS within layer | role, qualname, file, line |
-| **Data** | HANDLER-to-route, handler-to-FETCH_CALL, repo-to-SQLAlchemy | DF1, DF2, DF1, DF1 cross-layer | method, path, URL, body_keys, hop chain (DF4) |
+</details>
 
-Learn Mode modal reads this to animate request lifecycle.
+<details>
+<summary><strong>PR review CI (dogfood)</strong></summary>
 
----
+polycodegraph ships its own PR-review workflow as a template. Once activated, every PR runs polycodegraph on itself, posts the diff, and fails on high-severity findings.
 
-## Limitations (what it doesn't do yet)
+**Activate:**
+```bash
+gh auth refresh -h github.com -s workflow
+cp .github/ci-templates/pr-review.workflow.yml .github/workflows/pr-review.yml
+git add .github/workflows/pr-review.yml
+git commit -m "ci: activate codegraph PR review"
+git push
+```
 
-- **Argument-flow propagation across hops** (v0.3). DF0 captures the *text* of each argument, and DF4 emits an ordered list of hops, but the value identity of a single argument (e.g. `user_id`) is not yet fully traced from fetch body → route param → service arg → DB query. Per-hop mapping is shipped; full propagation deferred.
-- **Type inference** (Mypy / Pyright integration). DF0 is text-only. v0.3+.
-- **Per-language resolver parity** (v0.1.2). Python ships the full set of R1/R2/R3 fixes. TypeScript R2 patterns (path aliases, fresh-instance binding, decorator-call edges) are deferred.
-- **Typer CLI symbols are not tagged HANDLER** (v0.1.x). DF1.5 only classifies HTTP framework decorators. CLI-handler classification is a follow-up.
-- **Async/await visualization** (v0.4). DF4 walks synchronous call graph only.
-- **Error-path branch rendering** (v0.4). Learn Mode shows the happy path.
-- **Auth middleware as a distinct phase** (v0.4). Today auth shows up as a regular CALL node.
-- **Multi-param simultaneous highlighting** (v0.4). Single param selection enough for the launch demo.
-- **Cross-process traces** (v0.4). Can't yet link multiple `.codegraph/graph.db` files.
+**What it does:** builds a baseline graph from `origin/main`, builds a head graph from the PR, runs `codegraph review --format markdown --fail-on high`, posts the result as a sticky PR comment.
 
----
+**Local dry-run:**
+```bash
+./scripts/test-pr-review-locally.sh
+```
 
-## On the self-graph: from 451 dead-code findings to 0
-
-We ran `codegraph` on its own source as the test case. Dead-code findings dropped from **451 → 24+ → 15 → 0** as we fixed the resolver, added decorator-aware entry-point detection, and marked intentional public-API methods with `# pragma: codegraph-public-api`.
-
-**Current self-graph stats:**
-- **3,320 nodes** (files, classes, functions, imports)
-- **7,557 edges** (5,245 CALLS, 1,357 DEFINED_IN, 886 IMPORTS, 28 INHERITS, 12 ROUTE, 27 FETCH_CALL, 1 READS_FROM, 1 WRITES_TO)
-- **3 cycles** (all documented and accepted — see [`.planning/CYCLES_FOUND.md`](.planning/CYCLES_FOUND.md)):
-  - Dashboard UI redraw loop: `hldRenderNav → jumpToQualname → drawFocusGraph` (intentional, bounded, tested)
-  - Parser self-recursion: `_visit_nested_defs` (intentional traversal of nested function definitions)
-  - MCP `_serve ↔ run` static-resolver false positive (documented, low risk)
-- **0 dead-code findings** (with pragma exemptions for public-API methods)
-- **637 tests passing** (537 Python pytest + 100 Node tests)
-
----
-
-## Where it fits
-
-| | **codegraph** | GitNexus | code-review-graph | better-code-review-graph | JudiniLabs / mcp-code-graph | RepoMapper | Graphify |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| Local-first, single SQLite, no daemon | ✅ | ✅ | ✅ | ✅ | partial | ✅ | varies |
-| MCP-native | ✅ | partial | ❌ | ❌ | ✅ | ❌ | ❌ |
-| External calls stop at boundary | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Decorator-aware dead code (24 frameworks) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Role classification (HANDLER/SERVICE/...) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Argument-level data flow text capture (DF0) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| 3D focus-mode flow tracer | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | partial |
-| Cycles reported with qualnames | ✅ | partial | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Open source, MIT | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | varies |
-
-**Languages:** Python and TypeScript / JavaScript / TSX / JSX. Go, Java, Rust, C#, Ruby, PHP are roadmap items — adding each is a single-file tree-sitter mapping.
-
-**Wedge:** codegraph wins on external-call boundaries (your code stays in focus), decorator-aware dead-code detection, role classification, 3D focus-mode flow tracing, and (in v0.2+) cross-stack data-flow tracing with argument capture. Embedding-based retrieval tools (Cursor, Cody, code-review-graph) handle prose/docstrings better — the right architecture is **graph + embeddings in the same MCP loop**. v0.3 adds a local embeddings layer so codegraph can offer hybrid retrieval without API keys.
-
----
-
-## Prior art and related projects
-
-`codegraph` was built independently. It is **not a fork** of, and does not descend from, any other code-graph project.
-
-Other projects in the local code-graph / MCP-for-AI space worth knowing about:
-
-- **[code-review-graph](https://github.com/tirth8205/code-review-graph)** — token-efficient review context with embeddings, the template for many tools in this space.
-- **[better-code-review-graph](https://github.com/n24q02m/better-code-review-graph)** — fork with polish and additional features.
-- **GitNexus** — visualization polish, broader graph.
-- **[JudiniLabs/mcp-code-graph](https://github.com/JudiniLabs/mcp-code-graph)** — MCP-native code graph.
-
-**Why codegraph is different:** decorator-aware dead-code detection (24 frameworks), role classification (HANDLER/SERVICE/COMPONENT/REPO), a 3D focus-mode flow tracer, and (in v0.2+) cross-stack data-flow tracing with argument capture at each call site. We don't compete on embedding-based retrieval — that's not our wedge.
+</details>
 
 ---
 
 ## Development
-
-New to the repo? Start with [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -583,32 +432,30 @@ ruff check .                    # lint
 mypy --strict codegraph         # type-check
 pytest -q                       # 537 Python tests
 node --test tests/*.js          # 100 Node tests
+./scripts/test-pr-review-locally.sh  # dry-run the PR review workflow
 ```
 
-All CI checks are defined in `.github/workflows/ci.yml`. Run locally before pushing:
+CI checks are defined in `.github/workflows/ci.yml`. New to the repo? Start with [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md). For commit conventions and PR process, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-```bash
-./scripts/test-pr-review-locally.sh    # dry-run the PR review workflow
-```
+---
+
+## A note on the names
+
+This project is installed from PyPI as `polycodegraph` because the bare name `codegraph` was already taken when v0.1.0 shipped. Everything else — the Python package you import, the CLI binary you run, and the MCP server key you register — is `codegraph`, the original project name. We're planning to unify on `polycodegraph` everywhere in v0.2 (CLI rename with a `codegraph` alias for one release). For now: two names, one tool.
 
 ---
 
 ## Acknowledgements
 
-`codegraph` stands on:
+polycodegraph stands on
 [tree-sitter](https://tree-sitter.github.io/) (parsing),
 [vasturiano/3d-force-graph](https://github.com/vasturiano/3d-force-graph) (3D rendering),
 [networkx](https://networkx.org/) (graph algorithms),
 [pydantic](https://docs.pydantic.dev/) (typed schema),
 [typer](https://typer.tiangolo.com/) (CLI),
-[rich](https://rich.readthedocs.io/) (console output), and the
-[Model Context Protocol Python SDK](https://modelcontextprotocol.io/).
-
----
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for local setup, CI checks, commit conventions, and PR merge process. Always run `./scripts/test-pr-review-locally.sh` before opening a PR.
+[rich](https://rich.readthedocs.io/) (console output),
+[nomic-ai/CodeRankEmbed](https://huggingface.co/nomic-ai/CodeRankEmbed) (embeddings),
+and the [Model Context Protocol Python SDK](https://modelcontextprotocol.io/).
 
 ---
 
@@ -616,14 +463,6 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for local setup, CI checks, commit conv
 
 [MIT](LICENSE) © mochan
 
-**Commercial support, deployments, and custom-licensed forks available** —
-contact smochan07@gmail.com. polycodegraph itself is and stays MIT; the
-contact line exists for teams who want enterprise support or specific
-license arrangements on top.
+Commercial support, deployments, and custom-licensed forks available — contact smochan07@gmail.com. polycodegraph itself is and stays MIT; the contact line exists for teams who want enterprise support or specific license arrangements on top.
 
-## Contributing
-
-Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the local
-setup, CI expectations, and the one-click
-[Contributor License Agreement](CLA.md) you'll be asked to sign on your
-first PR.
+Pull requests welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for local setup, CI checks, commit conventions, and the one-click [Contributor License Agreement](CLA.md) you'll be asked to sign on your first PR.

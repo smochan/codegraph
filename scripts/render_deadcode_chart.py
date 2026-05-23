@@ -39,7 +39,7 @@ def main() -> None:
     ax.grid(axis="x", linestyle=":", alpha=0.4)
     ax.tick_params(axis="y", labelsize=10)
 
-    for bar, count in zip(bars, counts):
+    for bar, count in zip(bars, counts, strict=True):
         width = bar.get_width()
         ax.text(
             width + max(counts) * 0.012,

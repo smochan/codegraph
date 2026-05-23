@@ -1,0 +1,62 @@
+%% polycodegraph MOAT diagram
+%% Inputs feed the graph (the moat). The graph is the substrate every output is built on.
+%% Render: npx -y @mermaid-js/mermaid-cli -i docs/diagrams/moat.mmd -o docs/images/moat-light.svg -t default
+%% Render dark: ... -t dark -o docs/images/moat-dark.svg
+
+flowchart TB
+    %% ── INPUTS ─────────────────────────────────────────────────────────
+    subgraph INPUTS["What feeds the graph"]
+        direction LR
+        I1["tree-sitter parsing<br/>Python · TS / JS · Go"]
+        I2["import resolution<br/>per-name · relative · star"]
+        I3["call-site arguments<br/>captured as text"]
+        I4["decorator stacks<br/>24 frameworks"]
+        I5["framework routes<br/>FastAPI · Flask · aiohttp"]
+        I6["frontend fetches<br/>fetch · axios · SWR · useQuery"]
+        I7["SQLAlchemy reads / writes<br/>session.query · session.add"]
+        I8["URL stitching<br/>/{id} ↔ ${id} ↔ :id"]
+    end
+
+    %% ── THE MOAT ───────────────────────────────────────────────────────
+    GRAPH(("ONE SQLite graph<br/><b>.codegraph/graph.db</b><br/>No daemon. Travels with git."))
+
+    %% ── OUTPUTS ────────────────────────────────────────────────────────
+    subgraph OUTPUTS["Everything you get for free, once the graph is right"]
+        direction LR
+        O1["Decorator-aware<br/>dead code"]
+        O2["Blast radius<br/>+ cycles"]
+        O3["Role classification<br/>HANDLER · SERVICE · COMPONENT · REPO"]
+        O4["DF4 end-to-end trace<br/>fetch → handler → service → SQL<br/>with rename annotations"]
+        O5["3D focus dashboard<br/>+ Architecture map"]
+        O6["18 MCP tools<br/>Claude Code · Cursor · Windsurf"]
+        O7["Local embeddings<br/>semantic + hybrid search"]
+        O8["PR-review CI<br/>graph-diff vs baseline"]
+    end
+
+    %% ── EDGES ──────────────────────────────────────────────────────────
+    I1 --> GRAPH
+    I2 --> GRAPH
+    I3 --> GRAPH
+    I4 --> GRAPH
+    I5 --> GRAPH
+    I6 --> GRAPH
+    I7 --> GRAPH
+    I8 --> GRAPH
+
+    GRAPH --> O1
+    GRAPH --> O2
+    GRAPH --> O3
+    GRAPH --> O4
+    GRAPH --> O5
+    GRAPH --> O6
+    GRAPH --> O7
+    GRAPH --> O8
+
+    %% ── STYLING ────────────────────────────────────────────────────────
+    classDef input fill:#e8f0fe,stroke:#1a73e8,stroke-width:1px,color:#0b3d91
+    classDef output fill:#e6f4ef,stroke:#2a9d8f,stroke-width:1px,color:#13433b
+    classDef moat fill:#2a9d8f,stroke:#0b3d91,stroke-width:3px,color:#ffffff
+
+    class I1,I2,I3,I4,I5,I6,I7,I8 input
+    class O1,O2,O3,O4,O5,O6,O7,O8 output
+    class GRAPH moat

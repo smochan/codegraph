@@ -21,6 +21,15 @@ env/
 # codegraph artifacts
 .codegraph/
 
+# bench harness artifacts (per-tool venvs, target repo clones, LLM cache, scratch outputs)
+bench/.venvs/
+bench/repos_cache/
+bench/.llm_cache/
+bench/results/*/
+!bench/results/.keep
+.llm_cache/
+graphify-out/
+
 # OS / IDE
 .DS_Store
 .idea/
@@ -37,8 +46,9 @@ env/
 # Local screenshot scratch files (visual smoke tests)
 three-d-*.png
 .claude/
-.planning/
+.planning/*
 !.planning/SESSION_HANDOFF.md
+!.planning/SESSION_HANDOFF_BENCH.md
 !.planning/PLAN_V0_3_UNIFIED_TRACE.md
 .codegraph.yml
 uv.lock

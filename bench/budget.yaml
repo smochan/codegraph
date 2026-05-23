@@ -1,0 +1,18 @@
+# Hard budget caps. The harness aborts a runner that exceeds its allocation.
+# All values in USD.
+
+global:
+  total_run_cap_usd: 100        # Abort the whole run if cumulative spend exceeds this.
+
+per_tool:
+  polycodegraph:    { llm_calls_cap_usd: 0,   notes: "local-only, no LLM cost" }
+  code-review-graph:{ llm_calls_cap_usd: 5 }
+  better-code-review-graph: { llm_calls_cap_usd: 5 }
+  gitnexus:         { llm_calls_cap_usd: 5 }
+  judini-mcp-code-graph: { llm_calls_cap_usd: 5 }
+  repomapper:       { llm_calls_cap_usd: 5 }
+  graphify:         { llm_calls_cap_usd: 5 }
+  plain-llm:        { llm_calls_cap_usd: 20, notes: "Claude Sonnet baseline" }
+
+# Per-task wall-clock cap. A runner that exceeds this is killed and counted as a timeout.
+per_task_timeout_seconds: 300

@@ -1,0 +1,16 @@
+# Per-run artifacts are large and reproducible from raw.jsonl + repos.yaml.
+results/*/
+!results/.keep
+
+# Cached LLM responses (reproducible from prompt hashes, but heavy).
+.llm_cache/
+
+# Shallow-cloned target repos.
+repos_cache/
+
+# Per-tool isolated venvs. Re-create with `codegraph bench setup`.
+.venvs/
+
+# Per-run raw results are gitignored at the repo root .gitignore.
+# But the rolling "latest" snapshot at bench/RESULTS_*_LATEST.md is checked in
+# so the headline numbers travel with the branch.

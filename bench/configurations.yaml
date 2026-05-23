@@ -1,0 +1,109 @@
+# Claude-Code-style benchmark configurations.
+#
+# Each configuration is a named bundle of MCP servers Claude has access to.
+# The agent harness runs the same question set under every configuration so
+# the only thing that varies is the registered tool surface.
+#
+# `command` + `args` are evaluated relative to each per-tool venv where
+# applicable. The harness fills in `{repo_path}` placeholders at runtime.
+
+configurations:
+  baseline:
+    description: "Claude with no code-aware tools. Pure model knowledge + general reasoning."
+    servers: []
+
+  polycodegraph:
+    description: "Claude + polycodegraph MCP server (18 graph tools)."
+    servers:
+      - name: polycodegraph
+        command: .venv/bin/codegraph
+        args: ["mcp", "serve"]
+        cwd_is_target_repo: true
+
+  code-review-graph:
+    description: "Claude + code-review-graph MCP server (28 graph tools)."
+    servers:
+      - name: code-review-graph
+        command: bench/.venvs/code-review-graph/bin/code-review-graph
+        args: ["serve"]
+        cwd_is_target_repo: true
+
+  graphify:
+    description: "Claude + graphify MCP server (10 BFS/graph tools)."
+    servers:
+      - name: graphify
+        command: bench/.venvs/graphify/bin/python
+        args: ["-m", "graphify.serve"]
+        cwd_is_target_repo: true
+
+  better-code-review-graph:
+    description: "Claude + better-code-review-graph MCP server (6 composite tools)."
+    servers:
+      - name: better-crg
+        command: bench/.venvs/better-code-review-graph/bin/better-code-review-graph
+        args: []
+        cwd_is_target_repo: true
+
+  both:
+    description: "Claude with polycodegraph + code-review-graph MCPs registered concurrently."
+    servers:
+      - name: polycodegraph
+        command: .venv/bin/codegraph
+        args: ["mcp", "serve"]
+        cwd_is_target_repo: true
+      - name: code-review-graph
+        command: bench/.venvs/code-review-graph/bin/code-review-graph
+        args: ["serve"]
+        cwd_is_target_repo: true
+
+  # ------------------------------------------------------------------------
+  # Realistic Claude-Code-style configurations (the new headline bench).
+  # Every config below includes the `filetools` MCP server, which mimics
+  # Claude Code's native Read / Grep / Glob surface. The only thing that
+  # varies between these four configs is whether (and which) graph-based
+  # MCP is *also* registered alongside grep+file tools.
+  # ------------------------------------------------------------------------
+
+  claude+grep:
+    description: "Claude + grep/file MCP tools only. Realistic Claude Code baseline."
+    servers:
+      - name: filetools
+        command: .venv/bin/python
+        args: ["-m", "bench.runners.filetools_mcp"]
+        cwd_is_target_repo: true
+
+  claude+grep+polycodegraph:
+    description: "Claude + grep + polycodegraph MCP. The realistic IDE setup with polycodegraph."
+    servers:
+      - name: filetools
+        command: .venv/bin/python
+        args: ["-m", "bench.runners.filetools_mcp"]
+        cwd_is_target_repo: true
+      - name: polycodegraph
+        command: .venv/bin/codegraph
+        args: ["mcp", "serve"]
+        cwd_is_target_repo: true
+
+  claude+grep+code-review-graph:
+    description: "Claude + grep + code-review-graph MCP. Graph-based competitor #1."
+    servers:
+      - name: filetools
+        command: .venv/bin/python
+        args: ["-m", "bench.runners.filetools_mcp"]
+        cwd_is_target_repo: true
+      - name: code-review-graph
+        command: bench/.venvs/code-review-graph/bin/code-review-graph
+        args: ["serve"]
+        cwd_is_target_repo: true
+
+  claude+grep+graphify:
+    description: "Claude + grep + graphify MCP (via stdout-filter shim). Graph-based competitor #2."
+    servers:
+      - name: filetools
+        command: .venv/bin/python
+        args: ["-m", "bench.runners.filetools_mcp"]
+        cwd_is_target_repo: true
+      - name: graphify
+        command: bench/runners/_graphify_stdio_filter.sh
+        args: []
+        cwd_is_target_repo: true
