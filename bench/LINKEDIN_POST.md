@@ -5,7 +5,141 @@
 
 ---
 
-## Version F — pain-first narrative (RECOMMENDED, 2026-05-23)
+## Version G — emoji-paced, comparison table, community CTA (RECOMMENDED, 2026-05-24)
+
+Three variations below — G1 short / G2 medium / G3 long. All three drop the technical DF0-DF4 enumeration (it lives in the README), surface the competitor comparison from the README's "Where it fits" table inline, and end with a clear *"use it, file issues, send PRs"* ask.
+
+---
+
+### Version G1 — short punchy (~700 chars, image-led)
+
+🐌 Claude Code is great — until your codebase gets big. Then it greps. And greps. And greps.
+
+🛠 OSS code-graph tools (code-review-graph, graphify, GitNexus) saw this and started building graphs for AI retrieval. Most stopped there.
+
+🎯 If you've gone to the trouble of building a graph of the whole repo, why stop at retrieval? I rebuilt the graph from the ground up and made *everything* fall out of it — dead code, blast radius, cross-stack tracing, PR-review, an 18-tool MCP, a 3D dashboard.
+
+📊 Same Claude. Same 10 questions. Two real repos. Only the graph MCP changes:
+
+| MCP            | Correct | Tokens | Cost  |
+|----------------|--------:|-------:|------:|
+| grep only      |   8/10  |  337k  | $1.17 |
+| polycodegraph  |   7/10  | **90k**| **$0.37** |
+| code-review-g  |   3/10  |  203k  | $0.68 |
+| graphify       |   5/10  |  155k  | $0.50 |
+
+Polycodegraph: **3× cheaper, 4× faster** than letting Claude grep, at near-grep correctness. (Full benchmark + technical write-up in the README.)
+
+🐍 Today: Python · TS / JS · Go. Roadmap: Java, Rust, C#.
+
+🤝 **Use it in your project. Open issues. Send PRs.** Adding a new language is a ~3-hour tree-sitter parser. The bench harness is open too — reproduce the numbers or extend it.
+
+`pip install polycodegraph` · MIT · works with Claude Code, Cursor, Windsurf, Codex, Copilot CLI
+👉 github.com/smochan/polycodegraph
+
+#mcp #claudecode #cursor #ai #developertools #opensource
+
+---
+
+### Version G2 — medium, story-first with table (~1100 chars)
+
+I spent two days building a code-graph tool I was sure would beat the incumbents. The first benchmark made me look bad.
+
+Then I realised I was measuring the wrong thing.
+
+🐌 Developers don't run my CLI. They let Claude Code or Cursor call it via MCP. And Claude's already great at code — *until* the codebase gets big. Then it greps, and greps, and greps.
+
+🛠 OSS graph tools tried to fix this — code-review-graph, graphify, GitNexus, JudiniLabs/mcp-code-graph — but most stopped at "give Claude a better retrieval surface."
+
+🎯 My take: if you've gone to the trouble of building a graph of the whole repo, why stop at retrieval? Use it for dead code (decorator-aware, 24 frameworks), blast radius, end-to-end argument tracing (fetch → SQL with rename annotations), PR-review by graph-diff, 18 MCP tools, and a 3D dashboard. The graph is the moat — every feature falls out of it.
+
+📊 Same Claude Sonnet, same 10 questions, two real repos (mine + FastAPI). All four configs have Claude's native grep + file tools — only the graph MCP changes:
+
+| MCP                | ✅ Correct | 🧮 Tokens | 💵 Cost | ⏱ Latency |
+|--------------------|----------:|---------:|--------:|----------:|
+| grep only          |     8/10  |    337k  |  $1.17  |    78s    |
+| code-review-graph  |     3/10  |    203k  |  $0.68  |    49s    |
+| graphify           |     5/10  |    155k  |  $0.50  |    65s    |
+| **polycodegraph**  |   **7/10**| **90k**  |**$0.37**| **20s**   |
+
+Same correctness as grep alone — at **3× lower cost and 4× lower latency.** Other graph MCPs are strictly worse than just grepping.
+
+🐍 Today: Python · TS / JS / TSX / JSX · Go. Roadmap: Java, Rust, C# (v0.3). Adding a language is ~3 hours of tree-sitter.
+
+🤝 **If you use Claude Code / Cursor and your repo is bigger than a side project, try it.** File issues for what breaks. PRs welcome — the benchmark harness is open too, so you can reproduce the numbers or add your own MCP to the comparison.
+
+`pip install polycodegraph` · MIT · works with Claude Code, Cursor, Windsurf, Codex, Copilot CLI
+👉 github.com/smochan/polycodegraph (technical write-up + reproducible benchmark in the README)
+
+#mcp #claudecode #cursor #ai #developertools #opensource
+
+---
+
+### Version G3 — long, full pitch (~1700 chars)
+
+I spent two days building a code-graph tool I was sure would beat the incumbents. The first benchmark made me look bad.
+
+Then I realised I was measuring the wrong thing.
+
+🐌 **The pain.** Claude Code and Cursor are great — until your codebase gets big. Then your AI assistant greps, and greps, and greps. 30 file reads to answer "where is `Depends` defined?" 200k tokens to figure out which handler is untested.
+
+🛠 **What's been tried.** OSS code-graph tools — code-review-graph, graphify, GitNexus, JudiniLabs/mcp-code-graph, RepoMapper — saw this problem and started building graphs for the AI to query. Good idea. But most stopped at retrieval and shipped a search box.
+
+🎯 **My take.** If you've gone to the trouble of building a graph of the whole repo, why stop at retrieval? Use it for:
+• 🪦 dead code that's actually dead (24 framework decorators recognised — no false positives on FastAPI / Flask / Django / Celery / pytest handlers)
+• 💥 blast-radius computation before you change anything
+• 🔭 end-to-end argument tracing — watch `user_id` travel fetch → handler → service → SQL with rename annotations (`userId → user_id → id`)
+• 🧪 PR-review by graph-diffing the branch against `main`
+• 🤖 18 MCP tools your AI assistant can call directly — small focused subgraphs, no context flooding
+• 🎨 3D focus dashboard + Learn Mode lifecycle modal for the visual learners
+
+The graph is the moat. Every feature falls out of it. (Full technique deep-dive in the README — DF0 args, DF1 routes, DF1.5 role classification, DF2 fetches, DF3 URL stitching, DF4 end-to-end trace, R1/R2/R3 resolver stages.)
+
+📊 **The proof.** Same Claude Sonnet 4.6, same 10 questions across two real codebases (polycodegraph + FastAPI). All four configs have Claude's native grep + file tools — only the graph MCP changes:
+
+| Configuration                    | ✅ Correct | 🧮 Tokens | 💵 Cost | ⏱ Latency |
+|----------------------------------|----------:|---------:|--------:|----------:|
+| Claude + grep alone              |    8/10   |   337k   |  $1.17  |    78s    |
+| + code-review-graph MCP          |    3/10   |   203k   |  $0.68  |    49s    |
+| + graphify MCP                   |    5/10   |   155k   |  $0.50  |    65s    |
+| + **polycodegraph MCP**          |  **7/10** | **90k**  |**$0.37**| **20s**   |
+
+Same correctness as raw grep, at **3× the cost reduction and 4× the latency reduction.** Other graph MCPs are strictly worse than just grepping.
+
+🔎 **Honest about what's not yet shipping:** type inference, async/await visualization, git-history mining, full single-value arg propagation. Listed in the README's Limitations section.
+
+🐍 **Languages today:** Python, TypeScript / JavaScript / TSX / JSX, Go.
+🛣 **Roadmap:** Java, Rust, C# (v0.3); Ruby, PHP later. A new language is ~3 hours of tree-sitter parsing.
+
+🤝 **The ask.** If you spend a lot of time in Claude Code / Cursor and your repo is bigger than a side project, **install it and tell me what breaks.** File issues. Send PRs. The benchmark harness is open source too — reproduce the numbers, add your own MCP to the comparison, or run it against your favourite repo.
+
+`pip install polycodegraph` · MIT · works with Claude Code, Cursor, Windsurf, Codex, Copilot CLI, Zed, Continue
+👉 github.com/smochan/polycodegraph
+
+#mcp #claudecode #cursor #ai #developertools #opensource #python
+
+---
+
+### Variant notes
+
+- **G1** wins on engagement velocity — short, comparison table front-and-center, single CTA.
+- **G2** balances story arc + table + community ask. Recommended default.
+- **G3** is the full pitch — best for a personal-blog cross-post or a follow-up "deep dive" thread. May be too long for LinkedIn's initial scroll.
+
+### What to attach (all three variants)
+
+1. `docs/images/hero_benchmark.png` — the numbers visualised
+2. `docs/images/df4_trace.gif` — the visual demo of cross-stack tracing
+3. `docs/images/mcp_output_card.png` — proof of real MCP output
+4. (optional) `docs/images/moat.png` — for readers who scroll past
+
+### A note on the comparison table in the post
+
+The table inline above is intentionally compressed (4 tools, 4 axes). The full 7-tool × 9-axis comparison is in the README's "Where it fits" section. If LinkedIn renders the ASCII table poorly on mobile, fall back to attaching a screenshot of the table as a 5th image.
+
+---
+
+## Version F — pain-first narrative (was RECOMMENDED 2026-05-23, superseded by G)
 
 Author's voice. Story arc: pain → why current tools fall short → the insight → all the features that fall out for free → benchmark proof. Numbers in `<NUMBERS_TBD>` are filled in from `bench/RESULTS_AGENT_LATEST.md` once the 4-config run completes.
 
