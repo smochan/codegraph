@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `True`. (Issue surfaced when a user ran `pipx install polycodegraph` on
   a fresh project and Cursor saw no MCP server.)
 
+### Upgrading from 0.1.0
+
+If you ran `codegraph init` on 0.1.0 and answered **yes** to the MCP
+register prompt, your `.codegraph.yml` says `register_mcp: true` but no
+`.mcp.json` was ever written. **Re-run `codegraph init`** after upgrading
+— it will re-prompt (defaults are pre-filled from your existing config)
+and now actually write the file. Your existing graph + config are
+preserved.
+
 ### Post-launch-sprint additions (still pre-release)
 
 #### Go language support — `.go` files parse + analyze cleanly
