@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> 0.1.0 is in-progress / pre-release. The README, CLI, MCP server, and 3D
-> dashboard reflect the current state of `main`, but the package has not yet
-> been pushed to PyPI. Items below describe what has shipped on `main` and
-> will roll into the eventual 0.1.0 tag. Install from source for now
-> (`pip install -e .`).
+## [0.1.1] — 2026-05-24
+
+### Fixed
+
+- **`codegraph init` now actually writes `.mcp.json`** when the user accepts
+  the "Register MCP server" prompt. Previously the prompt was labelled
+  "Phase 3 implementation" and only stored `register_mcp: true` in
+  `.codegraph.yml` while doing nothing on disk — which meant the README's
+  "Claude Code and Cursor auto-pick up polycodegraph" claim was broken in
+  0.1.0. Init now writes a project-local `.mcp.json`, merges into an
+  existing file when present, and preserves any user-customised `codegraph`
+  entry it already finds. The prompt default also flipped from `False` to
+  `True`. (Issue surfaced when a user ran `pipx install polycodegraph` on
+  a fresh project and Cursor saw no MCP server.)
 
 ### Post-launch-sprint additions (still pre-release)
 
