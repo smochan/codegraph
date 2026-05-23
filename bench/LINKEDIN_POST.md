@@ -5,6 +5,65 @@
 
 ---
 
+## Version E — sourced from the new README (RECOMMENDED, 2026-05-23)
+
+Lead with the "I was wrong" hook (still the strongest opener), then surface the MOAT framing
+from the rewritten README's section #5, then deliver the benchmark as proof, then point
+straight at the DF4 trace video as the unique-capability claim. Every line traces back to
+a section of `README.md` or `bench/RESULTS_AGENT_LATEST.md`.
+
+---
+
+I spent two days building a code-graph tool I was sure would beat the incumbents. The first benchmark made me look bad.
+
+Then I realised I was measuring the wrong thing.
+
+Developers don't run my CLI. They let Claude Code or Cursor call it via MCP. So I rebuilt the benchmark around that — same Claude Sonnet, same 10 questions about 2 real codebases (mine + FastAPI), only the registered MCP changes:
+
+→ Claude alone:                            1/10 correct, $0.15
+→ Claude + popular competitor MCP:         1/10 correct, $0.73
+→ Claude + polycodegraph MCP:              7/10 correct, $0.33
+
+The table is the floor. The video is the claim ↓
+
+polycodegraph has exactly one opinion: build the right graph, and every interesting feature falls out for free. It reads tree-sitter parses for Python / TS / JS / Go, captures every call-site argument as text, recognises 24 framework decorators (FastAPI, Flask, Celery, pytest, Django, SQLAlchemy…), detects frontend fetches (fetch, axios, useSWR, useQuery) and SQLAlchemy reads/writes, then stitches URLs across the stack (/{id} ↔ ${id} ↔ :id).
+
+Once the graph is right, you get for free: decorator-aware dead code, blast radius, role classification (HANDLER / SERVICE / COMPONENT / REPO), an end-to-end cross-stack trace with rename annotations (userId → user_id → id), a 3D focus dashboard, a Learn Mode lifecycle modal, local embeddings, and an 18-tool MCP server.
+
+One SQLite file. No daemon. No API keys. Travels with your git branch.
+
+Honest about what's not yet shipping: type inference, async-await visualization, git-history mining, full single-value arg propagation across hops. Listed in the README's Limitations section.
+
+pip install polycodegraph · MIT · works with Claude Code, Cursor, Windsurf
+Repo + reproducible benchmark harness: github.com/smochan/polycodegraph
+
+#mcp #claudecode #cursor #ai #developertools
+
+---
+
+### What to attach
+
+- **Image:** `docs/images/hero_benchmark.png` (already in the repo)
+- **Video:** `docs/images/df4_trace.gif` (capture per `docs/RECORDING_GUIDE.md`)
+
+### Why this version, not A/B/C/D
+
+- Hook unchanged from C (the highest-converting opener). "I was wrong" still earns the see-more click.
+- MOAT paragraph is verbatim from README section 5 — every claim is verifiable in code, not marketing.
+- Benchmark line is byte-identical to `bench/RESULTS_AGENT_LATEST.md` totals. No exaggeration.
+- "The table is the floor. The video is the claim" reframes the numbers as evidence for the *real* product, not the product itself.
+- "Honest about what's not yet shipping" — explicit limitations line. Builds credibility, deflects the inevitable "but does it do X" comment.
+
+### One-line variants of the hook, if you want to A/B test
+
+- *"I spent two days building a tool I was sure would beat the incumbents. The first benchmark made me look bad."* (current)
+- *"My code-graph tool failed its first benchmark. Then I realised I was benchmarking the wrong thing."*
+- *"Same Claude, same questions, three MCPs. Two of them got 1/10. One got 7/10."*
+
+The first is strongest on stakes + curiosity. The second is shorter. The third is the most "Twitter-engineer" voice — punchy, no narrative, image does the work.
+
+---
+
 ## Version A — the hook is the table (long-form, ~1200 chars + table)
 
 I gave Claude Sonnet the same 10 questions about two real Python codebases. Then I changed only one thing — which MCP server it had access to.
