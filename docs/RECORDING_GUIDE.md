@@ -1,11 +1,15 @@
-# Recording guide — the two visual assets you still need to capture
+# Recording guide — how the visual assets are produced
 
-The README is live with the hero benchmark image + MOAT diagram. Two assets still need to be captured by hand:
+All four README visual assets are reproducible from a clean clone:
 
-1. **DF4 cross-stack trace screencast** — drops into the "What you can do" 3rd row, replaces a placeholder, becomes the LinkedIn post's primary video.
-2. **MCP-in-Claude screenshot** — drops into the 4th row of "What you can do", currently shows `_coming soon_`.
+| Asset | Path | Producer |
+|---|---|---|
+| Hero benchmark chart | `docs/images/hero_benchmark.png` | `scripts/render_hero_benchmark.py` |
+| MOAT diagram | `docs/images/moat.png` + `moat-light.svg` + `moat-dark.svg` | `docs/diagrams/moat.mmd` via Mermaid CLI |
+| DF4 trace GIF | `docs/images/df4_trace.gif` | 9 dashboard frames captured via Playwright + assembled by `scripts/assemble_df4_gif.py` |
+| MCP response card | `docs/images/mcp_output_card.png` | Real `find_symbol` MCP response rendered via an HTML template + Playwright screenshot |
 
-Both should land in `docs/images/`. The README already references the target filenames — replace the placeholders by committing the files at the exact paths below.
+The DF4 GIF and MCP card were originally tagged as "user-side capture" tasks. They're now automated end-to-end. The detailed steps below are kept for re-capture with different framing or against a different target repo.
 
 ---
 
