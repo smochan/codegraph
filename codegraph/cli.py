@@ -256,6 +256,46 @@ def _update_gitignore(repo_root: Path) -> None:
         gi_path.write_text(f"{entry}\n")
 
 
+def _write_project_mcp_json(repo_root: Path) -> str:
+    """Register the codegraph MCP server in the repo-local .mcp.json.
+
+    Returns "created" if the file was newly written, "merged" if an existing
+    .mcp.json was extended with the `codegraph` entry, or "already-present" if
+    a `codegraph` entry was already there (left untouched in that case).
+
+    Project-level .mcp.json is auto-loaded by Claude Code and Cursor as soon
+    as you open the project — no global config edits needed. Other clients
+    (Windsurf, Codex, Copilot CLI, Zed, Continue) need a one-time add to
+    their global config; see the README for snippets.
+    """
+    import json
+
+    mcp_path = repo_root / ".mcp.json"
+    entry = {"command": "codegraph", "args": ["mcp", "serve"]}
+
+    if mcp_path.exists():
+        try:
+            data = json.loads(mcp_path.read_text() or "{}")
+        except json.JSONDecodeError:
+            # Don't clobber an existing-but-broken file. Caller decides.
+            return "already-present"
+        if not isinstance(data, dict):
+            data = {}
+        servers = data.setdefault("mcpServers", {})
+        if not isinstance(servers, dict):
+            servers = {}
+            data["mcpServers"] = servers
+        if "codegraph" in servers:
+            return "already-present"
+        servers["codegraph"] = entry
+        mcp_path.write_text(json.dumps(data, indent=2) + "\n")
+        return "merged"
+
+    payload = {"mcpServers": {"codegraph": entry}}
+    mcp_path.write_text(json.dumps(payload, indent=2) + "\n")
+    return "created"
+
+
 @app.command()
 def init(
     non_interactive: bool = typer.Option(
@@ -329,8 +369,9 @@ def init(
     cfg.install_hook = install_hook
 
     register_mcp = questionary.confirm(
-        "Register MCP server in .mcp.json? (Phase 3 implementation)",
-        default=False,
+        "Register MCP server in .mcp.json? "
+        "(Claude Code + Cursor auto-pick this up next time they open the repo.)",
+        default=True,
     ).ask() or False
     cfg.register_mcp = register_mcp
 
@@ -338,6 +379,23 @@ def init(
     _update_gitignore(repo_root)
 
     console.print("\n[green]✓[/green] Wrote .codegraph.yml")
+
+    if register_mcp:
+        mcp_state = _write_project_mcp_json(repo_root)
+        if mcp_state == "created":
+            console.print(
+                "[green]✓[/green] Wrote .mcp.json "
+                "(Claude Code + Cursor will auto-register the `codegraph` MCP server)"
+            )
+        elif mcp_state == "merged":
+            console.print(
+                "[green]✓[/green] Added `codegraph` entry to existing .mcp.json"
+            )
+        elif mcp_state == "already-present":
+            console.print(
+                "[dim]·[/dim] .mcp.json already has a `codegraph` entry — left as-is"
+            )
+
     console.print("Next step: [bold]codegraph build[/bold]")
 
 

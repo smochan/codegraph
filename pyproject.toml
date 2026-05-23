@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "polycodegraph"
-version = "0.1.0"
+version = "0.1.1"
 description = "Multi-language code graph builder, analyzer, PR risk reviewer, and MCP server. Supports Python, TypeScript, JavaScript, and Go."
 readme = "README.md"
 license = { text = "MIT" }
