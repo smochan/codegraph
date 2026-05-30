@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dead `mcp.enabled` config block.** `.codegraph.yml` carried an
+  `mcp.enabled: false` default that no code path ever read — confusing
+  next to the active `register_mcp: true`. Removed from `CodegraphConfig`;
+  the model is set to silently ignore the field so existing 0.1.x configs
+  still load without error. New configs no longer emit it.
+
 ### Added
 
 - **`codegraph clean` subcommand + auto-prune of `.codegraph/explore/`.**
