@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Edge classification: `external` vs `unresolved-local`.** The
+  `unresolved_edges` metric used to lump together imports of external
+  packages (`fastapi`, `os`, `react`) — which static analysis without a
+  venv/site-packages parse cannot resolve and isn't supposed to — with
+  edges that pointed at in-repo symbols but couldn't be matched (rename
+  drift, dynamic import). One number, two very different meanings.
+  `compute_metrics` now also returns `external_edges` (root module not
+  in the repo) and `unresolved_local_edges` (root is in-repo, symbol
+  missed). The `unresolved_edges` total is kept as the sum for
+  back-compat. Markdown report + MCP `metrics` tool both expose the
+  split. (Surfaced by a user adding polycodegraph to a FastAPI project
+  who saw "1,423 unresolved edges" and asked whether the tool was
+  broken; almost all were external imports.)
+
 ### Fixed
 
 - **`codegraph init` now writes a robust `.mcp.json`** — uses the absolute
