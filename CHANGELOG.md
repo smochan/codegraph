@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Auto-populate ignore patterns from detected ecosystem during `init`.**
+  The free-text "Extra ignore patterns" prompt was a footgun — a user
+  once typed `y` thinking it was yes/no and got `ignore: [- y]` in
+  their YAML. Init now sniffs the repo for `pyproject.toml`,
+  `package.json` (with React Native detection), `go.mod`, `Cargo.toml`,
+  `pom.xml`, `build.gradle`, and pre-fills the matching ignore patterns
+  (`__pycache__/`, `.venv/`, `node_modules/`, `ios/Pods/`,
+  `android/build/`, `vendor/`, `target/`, `build/`, …). The user
+  confirms the auto-detected list with a single yes/no; the free-text
+  extras prompt is still there for project-specific paths but no longer
+  the only path to safety.
 - **`codegraph init` writes agent guidance to `CLAUDE.md` and `AGENTS.md`.**
   After a fresh install on a project, coding agents (Claude Code,
   Cursor, Codex, …) defaulted to grep even with polycodegraph's MCP

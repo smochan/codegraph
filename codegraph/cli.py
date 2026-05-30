@@ -446,13 +446,38 @@ def init(
     ).ask() or "local"
     cfg.baseline = {"backend": backend}
 
+    from codegraph.init_presets import detect_ignore_presets
+
+    auto_patterns, auto_labels = detect_ignore_presets(repo_root)
+    if auto_patterns:
+        console.print(
+            "\n[bold]Auto-detected ignore patterns[/bold] "
+            f"(from {', '.join(auto_labels)}):"
+        )
+        for pat in auto_patterns:
+            console.print(f"  {pat}")
+        accept_auto = questionary.confirm(
+            "Use these ignore patterns?", default=True,
+        ).ask()
+        if accept_auto is False:
+            auto_patterns = []
+        extra_default = ""
+    else:
+        extra_default = ""
     extra = questionary.text(
         "Extra ignore patterns (comma/newline separated, optional):",
-        default="",
+        default=extra_default,
     ).ask() or ""
-    cfg.ignore = [
+    extras_list = [
         p.strip() for p in extra.replace("\n", ",").split(",") if p.strip()
     ]
+    # Combine auto + extras, de-duplicating in insertion order.
+    seen_ignore: set[str] = set()
+    cfg.ignore = []
+    for pat in (*auto_patterns, *extras_list):
+        if pat not in seen_ignore:
+            seen_ignore.add(pat)
+            cfg.ignore.append(pat)
 
     install_hook = questionary.confirm(
         "Install git pre-push hook? (Phase 2 implementation)", default=False
