@@ -256,12 +256,57 @@ def _update_gitignore(repo_root: Path) -> None:
         gi_path.write_text(f"{entry}\n")
 
 
+def _resolve_codegraph_binary() -> str:
+    """Best-effort absolute path to the `codegraph` executable.
+
+    Order: sibling of the running interpreter (venv/pipx install), then
+    `shutil.which`, then bare "codegraph" as a last-resort fallback.
+    """
+    import shutil
+    import sys
+
+    candidate = Path(sys.executable).parent / "codegraph"
+    if candidate.exists():
+        return str(candidate)
+    which = shutil.which("codegraph")
+    if which:
+        return which
+    return "codegraph"
+
+
+def _build_mcp_entry(repo_root: Path) -> dict[str, object]:
+    """The canonical codegraph entry for project-level `.mcp.json`."""
+    db_path = repo_root / ".codegraph" / "graph.db"
+    return {
+        "command": _resolve_codegraph_binary(),
+        "args": ["mcp", "serve", "--db", str(db_path)],
+        "cwd": str(repo_root),
+    }
+
+
+def _is_default_codegraph_entry(entry: object) -> bool:
+    """True if the entry looks like a pre-0.1.2 default (no --db, no cwd).
+
+    Used to migrate users forward without clobbering a customised entry.
+    """
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("command") != "codegraph":
+        return False
+    args = entry.get("args")
+    if args != ["mcp", "serve"]:
+        return False
+    return "cwd" not in entry
+
+
 def _write_project_mcp_json(repo_root: Path) -> str:
     """Register the codegraph MCP server in the repo-local .mcp.json.
 
     Returns "created" if the file was newly written, "merged" if an existing
-    .mcp.json was extended with the `codegraph` entry, or "already-present" if
-    a `codegraph` entry was already there (left untouched in that case).
+    .mcp.json was extended with the `codegraph` entry, "migrated" if a
+    pre-0.1.2 default entry was rewritten with the robust shape, or
+    "already-present" if a customised `codegraph` entry was already there
+    (left untouched in that case).
 
     Project-level .mcp.json is auto-loaded by Claude Code and Cursor as soon
     as you open the project — no global config edits needed. Other clients
@@ -271,7 +316,7 @@ def _write_project_mcp_json(repo_root: Path) -> str:
     import json
 
     mcp_path = repo_root / ".mcp.json"
-    entry = {"command": "codegraph", "args": ["mcp", "serve"]}
+    entry = _build_mcp_entry(repo_root)
 
     if mcp_path.exists():
         try:
@@ -286,6 +331,10 @@ def _write_project_mcp_json(repo_root: Path) -> str:
             servers = {}
             data["mcpServers"] = servers
         if "codegraph" in servers:
+            if _is_default_codegraph_entry(servers["codegraph"]):
+                servers["codegraph"] = entry
+                mcp_path.write_text(json.dumps(data, indent=2) + "\n")
+                return "migrated"
             return "already-present"
         servers["codegraph"] = entry
         mcp_path.write_text(json.dumps(data, indent=2) + "\n")
@@ -390,6 +439,11 @@ def init(
         elif mcp_state == "merged":
             console.print(
                 "[green]✓[/green] Added `codegraph` entry to existing .mcp.json"
+            )
+        elif mcp_state == "migrated":
+            console.print(
+                "[green]✓[/green] Migrated .mcp.json `codegraph` entry to the "
+                "0.1.2 shape (absolute binary path + --db + cwd)"
             )
         elif mcp_state == "already-present":
             console.print(
