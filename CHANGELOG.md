@@ -100,6 +100,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ...}`. New `GraphNotBuiltError` exposed from
   `codegraph.mcp_server.server` for callers that want to handle it
   explicitly.
+- **`workspace_state` MCP tool now distinguishes "not configured" from
+  "no repos".** When `~/.codegraph/workspace.yml` didn't exist, the
+  tool returned `{workspace_size: 0, repos: []}` — indistinguishable
+  from a configured-but-empty workspace. LLMs paraphrased this as
+  "everything is broken" and cascaded into wrong-answer territory.
+  Result now carries a `status` field
+  (`workspace_not_configured` / `workspace_empty` / `ok`) with an
+  actionable message: "local-graph MCP tools work independently — this
+  only affects cross-repo tools. Run `codegraph workspace init` …".
 
 ## [0.1.1] — 2026-05-24
 
