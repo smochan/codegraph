@@ -50,6 +50,7 @@ three-d-*.png
 !.planning/SESSION_HANDOFF.md
 !.planning/SESSION_HANDOFF_BENCH.md
 !.planning/SESSION_HANDOFF_LAUNCH.md
+!.planning/SESSION_HANDOFF_DISTRIBUTION.md
 !.planning/PLAN_V0_3_UNIFIED_TRACE.md
 .codegraph.yml
 uv.lock
