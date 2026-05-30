@@ -798,8 +798,26 @@ def _handle_workspace_state(
     from codegraph.workspace.config import load_workspace, resolve_workspace_path
     from codegraph.workspace.operations import workspace_state
 
-    cfg = load_workspace(resolve_workspace_path())
-    return workspace_state(cfg)
+    workspace_path = resolve_workspace_path()
+    if not workspace_path.exists():
+        return {
+            "status": "workspace_not_configured",
+            "workspace_path": str(workspace_path),
+            "message": (
+                "polycodegraph: no workspace configured at "
+                f"{workspace_path}. The local-graph MCP tools (find_symbol, "
+                "callers, callees, blast_radius, dataflow_trace, …) work "
+                "independently — this only affects the cross-repo workspace "
+                "tools. Run `codegraph workspace init` then "
+                "`codegraph workspace add <path>` to enable them."
+            ),
+            "workspace_size": 0,
+            "repos": [],
+        }
+    cfg = load_workspace(workspace_path)
+    result = workspace_state(cfg)
+    result["status"] = "ok" if cfg.repos else "workspace_empty"
+    return result
 
 
 @_register(
