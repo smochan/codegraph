@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`codegraph init` now writes a robust `.mcp.json`** — uses the absolute
+  path to the `codegraph` binary (resolved from the running interpreter's
+  bin dir, then `shutil.which`, then bare fallback), passes an explicit
+  `--db .codegraph/graph.db` flag, and sets `cwd` to the repo root. The
+  0.1.1 fix wrote the file but used a bare `codegraph` command with no
+  `--db` and no `cwd`, which forced users to hand-edit the file when
+  their MCP client's `$PATH` or working directory didn't line up. Old
+  pre-0.1.2 default entries are migrated forward in place; user-customised
+  entries are left alone. (Surfaced when a user added polycodegraph to a
+  FastAPI project — Claude reported needing to fix all three.)
+
 ## [0.1.1] — 2026-05-24
 
 ### Fixed
