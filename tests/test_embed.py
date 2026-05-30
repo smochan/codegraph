@@ -373,7 +373,10 @@ def test_mcp_semantic_search_missing_index(tmp_path: Path) -> None:
     finally:
         os.chdir(orig)
     assert isinstance(result, dict)
-    assert "error" in result
+    # 0.1.2: soft-fail returns a structured `{status, message}` payload
+    # so LLMs can tell apart "feature not enabled" from "feature not built".
+    assert result["status"] == "embeddings_not_built"
+    assert "codegraph embed" in result["message"]
 
 
 def test_mcp_tool_registry_includes_new_tools() -> None:

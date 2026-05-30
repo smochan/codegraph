@@ -109,6 +109,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`workspace_not_configured` / `workspace_empty` / `ok`) with an
   actionable message: "local-graph MCP tools work independently — this
   only affects cross-repo tools. Run `codegraph workspace init` …".
+- **`semantic_search` and `hybrid_search` MCP tools distinguish
+  "not enabled" from "not built".** Both used to return a bare
+  `{error: <stringified-exception>}` when called without the optional
+  embeddings index. LLMs read this as catastrophic. Now both tools
+  return `{status, message}`:
+  - `embeddings_not_enabled` — the optional `codegraph.embed` import
+    failed (dep not installed). Message: install with
+    `pip install polycodegraph[embed]`.
+  - `embeddings_not_built` — module imports fine but no index for the
+    repo. Message: run `codegraph embed` (~140 MB, ~30s).
+
+  Both messages spell out that the structural query tools
+  (find_symbol, callers, callees, blast_radius, dataflow_trace) work
+  without embeddings, so the LLM doesn't escalate the partial degrade
+  into "everything is broken".
 
 ## [0.1.1] — 2026-05-24
 
