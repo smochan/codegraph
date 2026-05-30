@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DeadCodeConfig(BaseModel):
@@ -29,6 +29,11 @@ class DeadCodeConfig(BaseModel):
 
 
 class CodegraphConfig(BaseModel):
+    # `mcp:` was a vestigial block in 0.1.x configs (`mcp.enabled: false`)
+    # that no code path ever read. Removed in 0.1.2. `extra="ignore"` keeps
+    # forward-compat: old configs containing it still load without error.
+    model_config = ConfigDict(extra="ignore")
+
     version: int = 1
     languages: list[str] = Field(
         default_factory=lambda: ["python", "typescript", "javascript"]
@@ -39,7 +44,6 @@ class CodegraphConfig(BaseModel):
         default_factory=lambda: {"backend": "local"}
     )
     critical_paths: list[dict[str, Any]] = Field(default_factory=list)
-    mcp: dict[str, Any] = Field(default_factory=lambda: {"enabled": False})
     install_hook: bool = False
     register_mcp: bool = False
     dead_code: DeadCodeConfig = Field(default_factory=DeadCodeConfig)
