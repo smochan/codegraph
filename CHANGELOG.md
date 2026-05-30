@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`codegraph init` writes agent guidance to `CLAUDE.md` and `AGENTS.md`.**
+  After a fresh install on a project, coding agents (Claude Code,
+  Cursor, Codex, …) defaulted to grep even with polycodegraph's MCP
+  server registered, because they had no hint that polycodegraph was
+  available. Init now prompts (default: yes) and writes a short
+  "`## polycodegraph`" section telling the agent which MCP tool to use
+  for each kind of structural query (find-symbol, callers, callees,
+  blast-radius, dataflow-trace, untested, dead-code). Mirrors the
+  `.mcp.json` behaviour: creates the file when absent, appends when
+  present without the section, leaves alone when the section is
+  already there. Both files are written so Codex / GitHub Copilot CLI
+  (which read `AGENTS.md`) get the hint too.
+
 ### Changed
 
 - **Edge classification: `external` vs `unresolved-local`.** The
