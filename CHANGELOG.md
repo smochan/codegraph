@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`codegraph clean` subcommand + auto-prune of `.codegraph/explore/`.**
+  `codegraph serve` generated a pyvis HTML page per explored function
+  and never pruned them — long-lived projects could grow this cache to
+  hundreds of MB. New module `codegraph/cache_prune.py` implements LRU
+  eviction by mtime (`prune_cache_to_size(path, max_size_mb)`), and the
+  new `codegraph clean` subcommand exposes it with `--max-size-mb 50`
+  (default) and `--all` (wipe everything). `codegraph serve` runs the
+  prune on startup and prints the current cache size.
 - **Auto-populate ignore patterns from detected ecosystem during `init`.**
   The free-text "Extra ignore patterns" prompt was a footgun — a user
   once typed `y` thinking it was yes/no and got `ignore: [- y]` in
