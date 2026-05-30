@@ -124,6 +124,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (find_symbol, callers, callees, blast_radius, dataflow_trace) work
   without embeddings, so the LLM doesn't escalate the partial degrade
   into "everything is broken".
+- **Bench harness: repomapper venv now bootstraps on Python 3.14.**
+  `aider-chat` (transitive dep of repomapper) failed to install because
+  the bundled pip didn't provision `setuptools.build_meta` quickly
+  enough; build aborted with `ModuleNotFoundError: No module named
+  'setuptools.build_meta'`. `bench.runners._venv.ensure_venv` gained a
+  `build_deps=[...]` kwarg that installs build-time deps in a separate
+  `pip install` before the main one; the repomapper runner sets it to
+  `["setuptools", "wheel"]`. Bench-side only — does not affect end
+  users.
 
 ## [0.1.1] — 2026-05-24
 

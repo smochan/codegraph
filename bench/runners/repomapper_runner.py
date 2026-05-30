@@ -20,6 +20,13 @@ def _ensure_repomapper() -> Path:
     """RepoMapper is git-clone-only. Bring it into bench/.venvs/repomapper/src/."""
     venv = ensure_venv(
         "repomapper",
+        # aider-chat's build backend imports `setuptools.build_meta` at
+        # install time. On Python 3.14 the bundled pip does not auto-
+        # provision setuptools quickly enough, so we install it (and
+        # wheel, which aider's setup.py also reaches for) explicitly
+        # first. Without this prelude, `pip install aider-chat` fails
+        # with `ModuleNotFoundError: No module named 'setuptools.build_meta'`.
+        build_deps=["setuptools", "wheel"],
         pip_install=["aider-chat"],  # repomap dep chain
     )
     src = (venv / "src").resolve()
