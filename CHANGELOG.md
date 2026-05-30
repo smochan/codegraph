@@ -35,6 +35,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-0.1.2 default entries are migrated forward in place; user-customised
   entries are left alone. (Surfaced when a user added polycodegraph to a
   FastAPI project — Claude reported needing to fix all three.)
+- **Type-annotation-only references no longer count as dead code.** The
+  Python parser now emits a reference edge from a function/method to
+  each capitalized type name appearing in its parameter and return type
+  annotations. Edges go through the existing `unresolved::<TypeName>`
+  resolver pipeline, so they rewrite to real `CLASS` ids when the type
+  is defined in the repo. The flagship case is FastAPI Pydantic
+  request-body models — `def create_defect(body: RetroDefect): ...` was
+  flagged dead because the only reference to `RetroDefect` came through
+  the type annotation; that loop is now closed. Stdlib typing
+  scaffolding (`Optional`, `Annotated`, `Union`, …) and FastAPI
+  dependency markers (`Body`, `Depends`, …) are blocklisted so the
+  graph stays clean. Framework-agnostic: any function with type
+  annotations benefits, not just route handlers.
 
 ## [0.1.1] — 2026-05-24
 
