@@ -803,6 +803,54 @@ def analyze(
 
 
 @app.command()
+def clean(
+    explore_dir: str = typer.Option(
+        ".codegraph/explore",
+        "--explore-dir",
+        help="Folder of generated pyvis pages to prune.",
+    ),
+    max_size_mb: float = typer.Option(
+        50.0,
+        "--max-size-mb",
+        help="LRU-evict files until total cache size is under this cap (MB).",
+    ),
+    all_: bool = typer.Option(
+        False, "--all", help="Delete every file in the cache (ignores --max-size-mb).",
+    ),
+) -> None:
+    """Prune the local pyvis explore cache (`.codegraph/explore/`)."""
+    from codegraph.cache_prune import (
+        directory_size_bytes,
+        prune_cache_to_size,
+    )
+
+    repo_root = Path.cwd()
+    target = Path(explore_dir)
+    if not target.is_absolute():
+        target = repo_root / target
+
+    if not target.exists():
+        console.print(f"[dim]·[/dim] {target} does not exist — nothing to clean.")
+        return
+
+    before = directory_size_bytes(target)
+    cap = 0.0 if all_ else max_size_mb
+    result = prune_cache_to_size(target, cap)
+
+    if result.files_deleted == 0:
+        console.print(
+            f"[dim]·[/dim] {target} already under cap "
+            f"({before / 1024 / 1024:.1f} MB)."
+        )
+    else:
+        console.print(
+            f"[green]✓[/green] Pruned {result.files_deleted} file(s); "
+            f"freed {result.bytes_freed / 1024 / 1024:.1f} MB. "
+            f"Remaining: {result.bytes_remaining / 1024 / 1024:.1f} MB."
+        )
+
+
+@app.command()
 def explore(
     output: str = typer.Option(
         ".codegraph/explore", "--output", "-o", help="Output directory."
@@ -895,6 +943,26 @@ def serve(
                 f"[yellow]warn:[/yellow] failed to refresh explore pages: {exc}"
             )
         return graph
+
+    # Auto-prune the explore cache to the default 50 MB cap on startup,
+    # and surface the current size so users notice if it's growing.
+    from codegraph.cache_prune import (
+        directory_size_bytes,
+        prune_cache_to_size,
+    )
+
+    if explore_path.exists():
+        size_mb = directory_size_bytes(explore_path) / 1024 / 1024
+        prune = prune_cache_to_size(explore_path, 50.0)
+        if prune.files_deleted:
+            console.print(
+                f"[dim]· pruned {prune.files_deleted} old cache file(s); "
+                f"explore cache now {prune.bytes_remaining / 1024 / 1024:.1f} MB[/dim]"
+            )
+        else:
+            console.print(
+                f"[dim]· explore cache: {size_mb:.1f} MB[/dim]"
+            )
 
     # Make sure pyvis pages exist on first run.
     if not (explore_path / "architecture.html").exists():
