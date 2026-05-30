@@ -64,6 +64,8 @@ def _metrics_to_dict(m: GraphMetrics) -> dict[str, Any]:
         "languages": dict(m.languages),
         "top_files_by_nodes": [list(t) for t in m.top_files_by_nodes],
         "unresolved_edges": m.unresolved_edges,
+        "external_edges": m.external_edges,
+        "unresolved_local_edges": m.unresolved_local_edges,
     }
 
 
@@ -90,7 +92,10 @@ def report_to_markdown(report: AnalyzeReport) -> str:
     lines.append("")
     lines.append(f"- Nodes: **{m.total_nodes}**")
     lines.append(f"- Edges: **{m.total_edges}**")
-    lines.append(f"- Unresolved edges: **{m.unresolved_edges}**")
+    lines.append(
+        f"- Unresolved edges: **{m.unresolved_edges}** "
+        f"(external: {m.external_edges}, local-unresolved: {m.unresolved_local_edges})"
+    )
     if m.nodes_by_kind:
         lines.append("- Nodes by kind: " + ", ".join(
             f"{k}={v}" for k, v in m.nodes_by_kind.items()

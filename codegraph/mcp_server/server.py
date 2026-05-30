@@ -363,6 +363,8 @@ def tool_metrics(graph: nx.MultiDiGraph) -> dict[str, Any]:
         "languages": m.languages,
         "top_files_by_nodes": m.top_files_by_nodes,
         "unresolved_edges": m.unresolved_edges,
+        "external_edges": m.external_edges,
+        "unresolved_local_edges": m.unresolved_local_edges,
     }
 
 
