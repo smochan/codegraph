@@ -321,6 +321,58 @@ def _simplify_arg(node: tree_sitter.Node, src: bytes) -> str:
     return "<expr>"
 
 
+# Names that look like classes by the capital-letter heuristic but are
+# either builtins, stdlib, or typing scaffolding — emitting REFERENCES
+# edges to these would be noise. The dead-code analyzer doesn't care
+# about them anyway.
+_ANNOTATION_NAME_BLOCKLIST: frozenset[str] = frozenset({
+    # typing module scaffolding
+    "Any", "AnyStr", "Optional", "Union", "Literal", "Final", "ClassVar",
+    "Annotated", "TypedDict", "TypeVar", "ParamSpec", "Concatenate",
+    "Type", "Tuple", "List", "Dict", "Set", "FrozenSet", "Callable",
+    "Iterable", "Iterator", "Generator", "AsyncIterator", "AsyncGenerator",
+    "Awaitable", "Coroutine", "AsyncContextManager", "ContextManager",
+    "Sequence", "Mapping", "MutableMapping", "MutableSequence", "MutableSet",
+    "Hashable", "Sized", "Container", "Collection", "Reversible",
+    "NamedTuple", "Self", "Never", "NoReturn", "LiteralString", "NotRequired",
+    "Required", "Unpack", "TypeAlias", "TypeGuard", "TypeIs",
+    # Pydantic / FastAPI dependency annotations users wrap their types in.
+    # We don't want to emit references TO `Body` / `Depends` etc.;
+    # we want the inner type names that come along with them.
+    "Body", "Depends", "Path", "Query", "Header", "Cookie", "Form", "File",
+    "Security", "Request", "Response",
+    # Common Python builtins that pass the capital-letter heuristic.
+    "True", "False", "None", "Ellipsis", "NotImplemented",
+})
+
+_TYPE_NAME_RE = re.compile(r"\b([A-Z][A-Za-z0-9_]*)\b")
+
+
+def _extract_type_references(annotation: str | None) -> list[str]:
+    """Return capitalized type names referenced in an annotation string.
+
+    Splits ``Annotated[User, Body(...)]`` / ``list[User] | None`` /
+    ``Optional[User]`` etc. into the candidate names ``User``. Stdlib
+    typing scaffolding and FastAPI dependency markers are blocklisted.
+
+    Returns names in source-order with duplicates removed; an empty list
+    when ``annotation`` is None or blank.
+    """
+    if not annotation:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _TYPE_NAME_RE.finditer(annotation):
+        name = match.group(1)
+        if name in _ANNOTATION_NAME_BLOCKLIST:
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
 def _extract_params(
     params_node: tree_sitter.Node,
     src: bytes,
@@ -1152,6 +1204,40 @@ class PythonExtractor(ExtractorBase):
         ))
 
         self._emit_decorator_calls(node, rel, func_id, src, edges)
+
+        # Emit reference edges for each capitalized type name appearing in
+        # parameter annotations and the return type. The resolver rewrites
+        # ``unresolved::<TypeName>`` to the real CLASS id if the type is
+        # defined in the repo. This keeps dead-code detection honest for
+        # types that are only referenced via type annotations — most
+        # notably FastAPI Pydantic request-body models, which would
+        # otherwise look unreferenced because handler dispatch happens
+        # via parameter annotations rather than direct calls.
+        annotation_strs: list[str] = []
+        params_meta = metadata.get("params")
+        if isinstance(params_meta, list):
+            for param in params_meta:
+                if isinstance(param, dict):
+                    type_str = param.get("type")
+                    if isinstance(type_str, str):
+                        annotation_strs.append(type_str)
+        return_meta = metadata.get("returns")
+        if isinstance(return_meta, str):
+            annotation_strs.append(return_meta)
+        emitted: set[str] = set()
+        for ann in annotation_strs:
+            for type_name in _extract_type_references(ann):
+                if type_name in emitted:
+                    continue
+                emitted.add(type_name)
+                edges.append(Edge(
+                    src=func_id,
+                    dst=f"unresolved::{type_name}",
+                    kind=EdgeKind.CALLS,
+                    file=rel,
+                    line=node.start_point[0] + 1,
+                    metadata={"target_name": type_name, "via": "annotation"},
+                ))
 
         # DF1 — HTTP route extraction. One ROUTE edge per (method, path);
         # Flask's ``methods=[...]`` expands to multiple edges.
