@@ -18,17 +18,36 @@ _CACHED_GRAPH: nx.MultiDiGraph | None = None
 _CACHED_DB_PATH: Path | None = None
 
 
+class GraphNotBuiltError(FileNotFoundError):
+    """Raised when an MCP tool is invoked but `.codegraph/graph.db` is missing.
+
+    Carries the resolved path so the dispatcher can surface it in the
+    actionable message sent back to the LLM.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = db_path
+        super().__init__(str(db_path))
+
+
 def _load_graph(db_path: Path | None = None) -> nx.MultiDiGraph:
     """Load (or return cached) the MultiDiGraph from *db_path*.
 
     If *db_path* is None, auto-resolves to ``cwd/.codegraph/graph.db``.
-    A different *db_path* forces a reload.
+    A different *db_path* forces a reload. Raises
+    :class:`GraphNotBuiltError` when the database file does not exist
+    so the dispatcher can return an actionable error instead of an
+    empty graph (which previous Claude/Cursor prompts paraphrased as
+    "workspace is empty", which was misleading).
     """
     global _CACHED_GRAPH, _CACHED_DB_PATH
 
     resolved = db_path or (Path.cwd() / ".codegraph" / "graph.db")
     if _CACHED_GRAPH is not None and resolved == _CACHED_DB_PATH:
         return _CACHED_GRAPH
+
+    if not resolved.exists():
+        raise GraphNotBuiltError(resolved)
 
     from codegraph.graph.store_networkx import to_digraph
     from codegraph.graph.store_sqlite import SQLiteGraphStore
@@ -867,7 +886,20 @@ def _build_server(name: str) -> Any:  # returns mcp.server.Server
         if name.startswith("workspace_"):
             graph: nx.MultiDiGraph | None = None
         else:
-            graph = _load_graph(None)
+            try:
+                graph = _load_graph(None)
+            except GraphNotBuiltError as exc:
+                result = {
+                    "error": "graph_not_built",
+                    "message": (
+                        f"polycodegraph: no graph found at {exc.db_path}. "
+                        f"Run `codegraph build` in the repo root first."
+                    ),
+                    "db_path": str(exc.db_path),
+                }
+                return [
+                    TextContent(type="text", text=json.dumps(result, indent=2))
+                ]
         result = handler_fn(graph, arguments)
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
 

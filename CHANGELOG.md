@@ -90,6 +90,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency markers (`Body`, `Depends`, …) are blocklisted so the
   graph stays clean. Framework-agnostic: any function with type
   annotations benefits, not just route handlers.
+- **MCP server returns an actionable error when the graph isn't built.**
+  Previously, every tool would happily return an empty result against
+  a missing `.codegraph/graph.db`. Claude / Cursor paraphrased that as
+  "workspace is empty," sending users down the wrong rabbit hole. Now
+  the dispatcher catches the missing-db case and returns a structured
+  `{error: "graph_not_built", message: "polycodegraph: no graph found
+  at <path>. Run \`codegraph build\` in the repo root first.", db_path:
+  ...}`. New `GraphNotBuiltError` exposed from
+  `codegraph.mcp_server.server` for callers that want to handle it
+  explicitly.
 
 ## [0.1.1] — 2026-05-24
 
