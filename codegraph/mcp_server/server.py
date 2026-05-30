@@ -602,6 +602,30 @@ def _handle_dataflow_routes(
 # ---------------------------------------------------------------------------
 
 
+# Actionable soft-fail messages for the embeddings tools. Both surface
+# "this is optional — structural tools still work" so LLMs don't
+# cascade into "everything is broken".
+_EMBEDDINGS_NOT_ENABLED = {
+    "status": "embeddings_not_enabled",
+    "message": (
+        "polycodegraph: optional embeddings dependency not installed. "
+        "Install with `pip install polycodegraph[embed]` (or `pipx inject "
+        "polycodegraph 'polycodegraph[embed]'` for pipx users). "
+        "Structural query tools (find_symbol, callers, callees, "
+        "blast_radius, dataflow_trace) work without embeddings."
+    ),
+}
+_EMBEDDINGS_NOT_BUILT = {
+    "status": "embeddings_not_built",
+    "message": (
+        "polycodegraph: optional embeddings index not built for this repo. "
+        "Run `codegraph embed` (~140 MB, ~30s). Structural query tools "
+        "(find_symbol, callers, callees, blast_radius, dataflow_trace) "
+        "work without embeddings."
+    ),
+}
+
+
 def tool_semantic_search(
     graph: nx.MultiDiGraph,
     query: str,
@@ -612,17 +636,14 @@ def tool_semantic_search(
     """Pure cosine-similarity search against the embeddings index."""
     try:
         from codegraph.embed.query import IndexMissingError, semantic_query
-    except ImportError as exc:
-        return {
-            "error": "embeddings module unavailable",
-            "detail": str(exc),
-        }
+    except ImportError:
+        return {**_EMBEDDINGS_NOT_ENABLED}
     try:
         hits = semantic_query(query, k=k, repo_root=repo_root)
-    except IndexMissingError as exc:
-        return {"error": str(exc)}
+    except IndexMissingError:
+        return {**_EMBEDDINGS_NOT_BUILT}
     except Exception as exc:  # pragma: no cover
-        return {"error": f"semantic search failed: {exc}"}
+        return {"status": "error", "message": f"semantic search failed: {exc}"}
     return [hit.as_dict() for hit in hits]
 
 
@@ -638,11 +659,8 @@ def tool_hybrid_search(
     """Semantic search reranked by graph distance from a focus node."""
     try:
         from codegraph.embed.query import IndexMissingError, hybrid_query
-    except ImportError as exc:
-        return {
-            "error": "embeddings module unavailable",
-            "detail": str(exc),
-        }
+    except ImportError:
+        return {**_EMBEDDINGS_NOT_ENABLED}
     try:
         hits = hybrid_query(
             query,
@@ -652,10 +670,10 @@ def tool_hybrid_search(
             repo_root=repo_root,
             graph=graph,
         )
-    except IndexMissingError as exc:
-        return {"error": str(exc)}
+    except IndexMissingError:
+        return {**_EMBEDDINGS_NOT_BUILT}
     except Exception as exc:  # pragma: no cover
-        return {"error": f"hybrid search failed: {exc}"}
+        return {"status": "error", "message": f"hybrid search failed: {exc}"}
     return [hit.as_dict(score_field="final_score") for hit in hits]
 
 
