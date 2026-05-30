@@ -299,6 +299,48 @@ def _is_default_codegraph_entry(entry: object) -> bool:
     return "cwd" not in entry
 
 
+_AGENT_GUIDANCE_HEADER = "## polycodegraph"
+
+_AGENT_GUIDANCE_SNIPPET = """## polycodegraph
+
+This project has polycodegraph installed and registered via `.mcp.json`.
+For any question about code structure, prefer polycodegraph's MCP tools
+over `Grep` / `Read` / `Glob`:
+
+- "Where is X defined?" → `mcp__codegraph__find_symbol(query: "X")`
+- "Who calls Y?" → `mcp__codegraph__callers(qualname: "Y")`
+- "What does Z depend on?" → `mcp__codegraph__callees(qualname: "Z")`
+- "What breaks if I change this?" → `mcp__codegraph__blast_radius(qualname: "...")`
+- "Trace an HTTP request end-to-end" → `mcp__codegraph__dataflow_trace(method_path: "GET /api/...")`
+- "What's untested?" → `mcp__codegraph__untested()`
+- "Any dead code?" → `mcp__codegraph__dead_code()`
+
+Each tool returns a small focused subgraph (~20-50 tokens). Fall back
+to grep only for free-text searches across comments / config / strings,
+or when polycodegraph returns no hits.
+"""
+
+
+def _write_agent_guidance(repo_root: Path, filename: str) -> str:
+    """Append the polycodegraph guidance snippet to *filename* in repo root.
+
+    Returns "created" if the file was newly written, "appended" if the
+    snippet was added to an existing file, or "already-present" if the
+    file already contains the `## polycodegraph` section header.
+    """
+    target = repo_root / filename
+    if target.exists():
+        existing = target.read_text()
+        if _AGENT_GUIDANCE_HEADER in existing:
+            return "already-present"
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        target.write_text(existing + "\n" + _AGENT_GUIDANCE_SNIPPET)
+        return "appended"
+    target.write_text(_AGENT_GUIDANCE_SNIPPET)
+    return "created"
+
+
 def _write_project_mcp_json(repo_root: Path) -> str:
     """Register the codegraph MCP server in the repo-local .mcp.json.
 
@@ -424,6 +466,12 @@ def init(
     ).ask() or False
     cfg.register_mcp = register_mcp
 
+    write_agent_guidance = questionary.confirm(
+        "Add a polycodegraph section to CLAUDE.md and AGENTS.md? "
+        "(Tells coding agents to prefer polycodegraph's MCP tools over grep.)",
+        default=True,
+    ).ask() or False
+
     save_config(repo_root, cfg)
     _update_gitignore(repo_root)
 
@@ -449,6 +497,20 @@ def init(
             console.print(
                 "[dim]·[/dim] .mcp.json already has a `codegraph` entry — left as-is"
             )
+
+    if write_agent_guidance:
+        for filename in ("CLAUDE.md", "AGENTS.md"):
+            state = _write_agent_guidance(repo_root, filename)
+            if state == "created":
+                console.print(f"[green]✓[/green] Wrote {filename}")
+            elif state == "appended":
+                console.print(
+                    f"[green]✓[/green] Appended polycodegraph section to {filename}"
+                )
+            elif state == "already-present":
+                console.print(
+                    f"[dim]·[/dim] {filename} already has a polycodegraph section — left as-is"
+                )
 
     console.print("Next step: [bold]codegraph build[/bold]")
 
