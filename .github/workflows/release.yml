@@ -85,7 +85,7 @@ jobs:
     permissions:
       id-token: write  # OIDC trusted publishing
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -106,7 +106,7 @@ jobs:
     permissions:
       id-token: write  # OIDC trusted publishing
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -124,7 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
