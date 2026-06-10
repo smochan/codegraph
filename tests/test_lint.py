@@ -258,3 +258,110 @@ def test_db_call_in_loop_message_contains_chain(tmp_path: Path) -> None:
     assert findings
     for f in findings:
         assert "db." in f.message or "session." in f.message
+
+
+# --- any-on-boundary -------------------------------------------------------
+
+
+def test_any_on_boundary_fires_for_exported_any_param(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+    ]
+    names_in_msgs = " ".join(f.message for f in findings)
+    assert "processPayload" in names_in_msgs
+
+
+def test_any_on_boundary_fires_for_exported_any_return(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+    ]
+    # processPayload has both any param and any return
+    process_findings = [f for f in findings if "processPayload" in f.message]
+    assert process_findings
+    assert "return type" in process_findings[0].message
+
+
+def test_any_on_boundary_fires_for_exported_arrow_any_param(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+        and f.line == 9
+    ]
+    assert findings, "expected finding on line 9 (exported arrow with any param)"
+
+
+def test_any_on_boundary_does_not_fire_for_non_exported(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+    ]
+    # internalProcess is not exported; must not appear
+    assert not any("internalProcess" in f.message for f in findings)
+
+
+def test_any_on_boundary_does_not_fire_for_typed_export(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+    ]
+    assert not any("typedHandler" in f.message for f in findings)
+
+
+def test_any_on_boundary_severity_low(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "any-on-boundary"
+    ]
+    assert findings
+    assert all(f.severity == "low" for f in findings)
+
+
+# --- any-into-db-write -------------------------------------------------------
+
+
+def test_any_into_db_write_fires_for_as_any_in_values(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-into-db-write" and f.file == "src/api.ts"
+    ]
+    assert findings
+    assert findings[0].line == 25
+
+
+def test_any_into_db_write_severity_med(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "any-into-db-write"
+    ]
+    assert findings
+    assert all(f.severity == "med" for f in findings)
+
+
+def test_any_into_db_write_does_not_fire_for_typed_arg(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-into-db-write" and f.file == "src/api.ts"
+    ]
+    # submitTypedJob passes a typed payload — should not fire
+    # Only submitJob (line 25) should fire; line 30 should not
+    assert len(findings) == 1
+    assert findings[0].line == 25
