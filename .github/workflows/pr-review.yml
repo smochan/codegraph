@@ -39,9 +39,15 @@ jobs:
           BASELINE_DIR="${RUNNER_TEMP}/cg-baseline-checkout"
           rm -rf "$BASELINE_DIR"
           git worktree add "$BASELINE_DIR" origin/main
+          # Both graphs are built with the PR-head codegraph (installed in
+          # the previous step). Re-installing from the baseline worktree
+          # here would silently clobber the editable install, making the
+          # diff AND the rule evaluation run main's code — PR changes to
+          # the differ/rules/parsers would never take effect in their own
+          # review, and parser changes would dominate the diff as
+          # added/removed-node noise.
           (
             cd "$BASELINE_DIR"
-            pip install -e . --quiet
             codegraph build --no-incremental
             codegraph baseline save --output "$GITHUB_WORKSPACE/.codegraph/baseline.db"
           )
