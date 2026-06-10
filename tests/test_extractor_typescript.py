@@ -93,3 +93,61 @@ def test_parse_arrow_function(extractor: TypeScriptExtractor) -> None:
     nodes, _ = extractor.parse_file(FIXTURE_DIR / "utils.ts", FIXTURE_DIR)
     names = {n.name for n in nodes if n.kind == NodeKind.FUNCTION}
     assert "multiply" in names
+
+
+# --- exported + any metadata -----------------------------------------------
+
+LINT_SAMPLE_DIR = Path(__file__).parent / "fixtures" / "lint_sample" / "src"
+
+
+def test_exported_flag_set_on_exported_function(
+    extractor: TypeScriptExtractor,
+) -> None:
+    nodes, _ = extractor.parse_file(LINT_SAMPLE_DIR / "api.ts", LINT_SAMPLE_DIR)
+    funcs = {n.name: n for n in nodes if n.kind == NodeKind.FUNCTION}
+    assert funcs["processPayload"].metadata.get("exported") is True
+    assert funcs["typedHandler"].metadata.get("exported") is True
+    assert funcs["handleInput"].metadata.get("exported") is True
+
+
+def test_exported_flag_absent_on_non_exported_function(
+    extractor: TypeScriptExtractor,
+) -> None:
+    nodes, _ = extractor.parse_file(LINT_SAMPLE_DIR / "api.ts", LINT_SAMPLE_DIR)
+    funcs = {n.name: n for n in nodes if n.kind == NodeKind.FUNCTION}
+    assert not funcs["internalProcess"].metadata.get("exported")
+
+
+def test_any_params_recorded_for_any_param_function(
+    extractor: TypeScriptExtractor,
+) -> None:
+    nodes, _ = extractor.parse_file(LINT_SAMPLE_DIR / "api.ts", LINT_SAMPLE_DIR)
+    funcs = {n.name: n for n in nodes if n.kind == NodeKind.FUNCTION}
+    assert funcs["processPayload"].metadata.get("any_params") == ["x"]
+    assert funcs["handleInput"].metadata.get("any_params") == ["data"]
+
+
+def test_any_params_absent_for_typed_function(
+    extractor: TypeScriptExtractor,
+) -> None:
+    nodes, _ = extractor.parse_file(LINT_SAMPLE_DIR / "api.ts", LINT_SAMPLE_DIR)
+    funcs = {n.name: n for n in nodes if n.kind == NodeKind.FUNCTION}
+    assert not funcs["typedHandler"].metadata.get("any_params")
+
+
+def test_any_return_set_when_return_type_is_any(
+    extractor: TypeScriptExtractor,
+) -> None:
+    nodes, _ = extractor.parse_file(LINT_SAMPLE_DIR / "api.ts", LINT_SAMPLE_DIR)
+    funcs = {n.name: n for n in nodes if n.kind == NodeKind.FUNCTION}
+    assert funcs["processPayload"].metadata.get("any_return") is True
+
+
+def test_any_return_absent_for_typed_return(
+    extractor: TypeScriptExtractor,
+) -> None:
+    nodes, _ = extractor.parse_file(LINT_SAMPLE_DIR / "api.ts", LINT_SAMPLE_DIR)
+    funcs = {n.name: n for n in nodes if n.kind == NodeKind.FUNCTION}
+    assert not funcs["typedHandler"].metadata.get("any_return")
+    # arrow with any param but typed return should NOT set any_return
+    assert not funcs["handleInput"].metadata.get("any_return")

@@ -257,6 +257,20 @@ def _strip_type_annotation(text: str) -> str:
     return s.strip()
 
 
+_ANY_WORD_RE = re.compile(r"\bany\b")
+
+
+def _type_mentions_any(t: str | None) -> bool:
+    """Return True if *t* contains the bare type ``any``.
+
+    Matches ``any``, ``any[]``, ``Promise<any>``, ``Record<string, any>``
+    but NOT ``Company``, ``anything``, or similar sub-word occurrences.
+    """
+    if t is None:
+        return False
+    return bool(_ANY_WORD_RE.search(t))
+
+
 def _extract_param(
     p: tree_sitter.Node, src: bytes
 ) -> dict[str, str | None] | None:
@@ -682,6 +696,7 @@ class TypeScriptExtractor(ExtractorBase):
                         self._handle_function_decl(
                             sub, rel, parent_qualname, parent_id, lang,
                             src, nodes, edges,
+                            exported=True,
                         )
                     elif sub.type in (
                         "lexical_declaration", "variable_declaration"
@@ -689,6 +704,7 @@ class TypeScriptExtractor(ExtractorBase):
                         self._handle_lexical_decl(
                             sub, rel, parent_qualname, parent_id, lang,
                             src, nodes, edges,
+                            exported=True,
                         )
 
     def _handle_import(
@@ -899,6 +915,8 @@ class TypeScriptExtractor(ExtractorBase):
         src: bytes,
         nodes: list[Node],
         edges: list[Edge],
+        *,
+        exported: bool = False,
     ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -921,6 +939,17 @@ class TypeScriptExtractor(ExtractorBase):
             "params": params_list,
             "returns": return_type,
         }
+        if exported:
+            func_md["exported"] = True
+        any_params = [
+            p["name"]
+            for p in params_list
+            if isinstance(p, dict) and _type_mentions_any(p.get("type"))
+        ]
+        if any_params:
+            func_md["any_params"] = any_params
+        if _type_mentions_any(return_type):
+            func_md["any_return"] = True
         if _has_public_api_pragma_ts(node, src):
             func_md["public_api"] = True
         func_node = Node(
@@ -957,6 +986,8 @@ class TypeScriptExtractor(ExtractorBase):
         src: bytes,
         nodes: list[Node],
         edges: list[Edge],
+        *,
+        exported: bool = False,
     ) -> None:
         for child in node.children:
             if child.type != "variable_declarator":
@@ -990,6 +1021,23 @@ class TypeScriptExtractor(ExtractorBase):
                     value_node, arrow_params, src
                 )
 
+                arrow_md: dict[str, Any] = {
+                    "arrow": True,
+                    "params": params_list,
+                    "returns": return_type,
+                }
+                if exported:
+                    arrow_md["exported"] = True
+                any_params = [
+                    p["name"]
+                    for p in params_list
+                    if isinstance(p, dict) and _type_mentions_any(p.get("type"))
+                ]
+                if any_params:
+                    arrow_md["any_params"] = any_params
+                if _type_mentions_any(return_type):
+                    arrow_md["any_return"] = True
+
                 func_node = Node(
                     id=func_id,
                     kind=NodeKind.FUNCTION,
@@ -999,11 +1047,7 @@ class TypeScriptExtractor(ExtractorBase):
                     line_start=node.start_point[0] + 1,
                     line_end=node.end_point[0] + 1,
                     language=lang,
-                    metadata={
-                        "arrow": True,
-                        "params": params_list,
-                        "returns": return_type,
-                    },
+                    metadata=arrow_md,
                 )
                 nodes.append(func_node)
 
