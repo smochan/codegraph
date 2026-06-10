@@ -1005,11 +1005,16 @@ def review(
     rules_file: str | None = typer.Option(
         None, "--rules", help="Path to rules YAML (default: .codegraph/rules.yml)."
     ),
+    no_lint: bool = typer.Option(
+        False, "--no-lint", help="Skip the syntactic lint pass on touched files."
+    ),
 ) -> None:
     """Diff vs baseline; produce a risk-scored PR review."""
+    from codegraph.analysis.lint import run_lint, to_review_findings
     from codegraph.review.baseline import load_baseline
     from codegraph.review.differ import diff_graphs
     from codegraph.review.rules import (
+        _SEVERITY_RANK,
         evaluate_rules,
         load_rules,
         severity_at_least,
@@ -1043,6 +1048,27 @@ def review(
         diff, new_graph=new_graph, old_graph=old_graph, rules=rules
     )
 
+    if not no_lint:
+        touched = sorted(
+            {
+                c.file
+                for c in diff.added_nodes + diff.modified_nodes
+                if c.file
+            }
+        )
+        if touched:
+            findings.extend(
+                to_review_findings(run_lint(repo_root, files=touched))
+            )
+            findings.sort(
+                key=lambda f: (
+                    -_SEVERITY_RANK.get(f.severity, 0),
+                    -f.score,
+                    f.qualname,
+                    f.rule_id,
+                )
+            )
+
     threshold = (fail_on or block_on).lower()
     text = _render_review(diff, findings, fmt=fmt, target=target)
     if output:
@@ -1054,6 +1080,51 @@ def review(
     blocking = [f for f in findings if severity_at_least(f.severity, threshold)]
     if blocking:
         raise typer.Exit(1)
+
+
+@app.command("lint")
+def lint_cmd(
+    fail_on: str | None = typer.Option(
+        None,
+        "--fail-on",
+        help="Exit non-zero if any finding has at least this severity.",
+    ),
+    fmt: str = typer.Option(
+        "markdown", "--format", help="markdown|json|sarif"
+    ),
+    output: str | None = typer.Option(
+        None, "--output", help="Write report to file instead of stdout."
+    ),
+    rules_file: str | None = typer.Option(
+        None, "--rules", help="Path to lint rules YAML (default: .codegraph/lint.yml)."
+    ),
+) -> None:
+    """Run the syntactic lint pass over the whole repo (no graph needed)."""
+    from codegraph.analysis.lint import (
+        load_lint_rules,
+        run_lint,
+        to_review_findings,
+    )
+    from codegraph.review.differ import GraphDiff
+    from codegraph.review.rules import severity_at_least
+
+    repo_root = Path.cwd()
+    lint_rules = load_lint_rules(Path(rules_file) if rules_file else None)
+    findings = to_review_findings(run_lint(repo_root, rules=lint_rules))
+
+    text = _render_review(GraphDiff(), findings, fmt=fmt, target="lint")
+    if output:
+        Path(output).write_text(text)
+        console.print(f"[green]✓[/green] wrote lint report to {output}")
+    else:
+        print(text)
+
+    if fail_on:
+        blocking = [
+            f for f in findings if severity_at_least(f.severity, fail_on.lower())
+        ]
+        if blocking:
+            raise typer.Exit(1)
 
 
 def _render_review(
@@ -1114,6 +1185,7 @@ def _finding_to_dict(f: Finding) -> dict[str, object]:
         "line": f.line,
         "score": f.score,
         "reasons": list(f.reasons),
+        "kind": f.kind,
     }
 
 
@@ -1133,13 +1205,15 @@ def _render_markdown(
         lines.append("_No findings._")
         return "\n".join(lines) + "\n"
     lines.append("")
-    lines.append("| severity | rule | qualname | file:line | score | message |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append(
+        "| severity | rule | kind | qualname | file:line | score | message |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
     for f in findings:
         loc = f"{f.file}:{f.line}" if f.file else ""
         lines.append(
-            f"| {f.severity} | {f.rule_id} | `{f.qualname}` | {loc} | "
-            f"{f.score} | {f.message} |"
+            f"| {f.severity} | {f.rule_id} | {f.kind} | `{f.qualname}` | "
+            f"{loc} | {f.score} | {f.message} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -1189,6 +1263,7 @@ def _render_sarif(findings: list[Finding]) -> str:
                             "score": f.score,
                             "qualname": f.qualname,
                             "reasons": list(f.reasons),
+                            "kind": f.kind,
                         },
                     }
                     for f in findings

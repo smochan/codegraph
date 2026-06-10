@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Syntactic lint pass (`codegraph lint`) + lint findings in `codegraph review`.**
+  New module `codegraph/analysis/lint.py` re-parses files with the cached
+  tree-sitter parsers and runs AST-local rules the graph can't express.
+  First rule: `console-in-prod` — flags `console.*` calls in non-test
+  TS/JS files (configurable `allow:` list, e.g. permit `console.warn`).
+  Rules load from `.codegraph/lint.yml` (same pattern as review rules).
+  `codegraph review` now lints diff-touched files and merges the results
+  into its findings (tagged `kind: lint`, honoring `--fail-on`); opt out
+  with `--no-lint`. The standalone `codegraph lint` command walks the
+  whole repo and supports the same `--format markdown|json|sarif`,
+  `--output`, and `--fail-on` options — no graph build required.
+  Review `Finding` objects and all three renderers now carry a
+  `kind` field (`graph` | `lint`). First slice of the gap-analysis
+  roadmap (`docs/GAP_ANALYSIS_VS_LLM_REVIEWER.md`).
+
 ## [0.1.2] — 2026-05-31
 
 ### Removed
