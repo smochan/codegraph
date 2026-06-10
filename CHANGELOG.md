@@ -119,6 +119,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Review diff no longer churns on dataflow nodes; moved symbols no
+  longer flag as removed.** The graph differ now excludes `VARIABLE` /
+  `PARAMETER` nodes and `DATA_*` edges from review diffs — their
+  qualnames embed line numbers (`pkg.fn.<var:x:42>`), so any edit that
+  shifted lines made every local variable appear removed+added and fired
+  false-positive `removed-referenced` criticals (12+ on a clean
+  typescript.py refactor). Separately, `removed-referenced` now skips
+  symbols whose terminal name reappears in the added set with the same
+  kind — moving `esc`/`pyvisHref` from `app.js` to `ui/helpers.js` with
+  every caller updated was flagged critical three times. Genuine
+  deletions with surviving callers still fire. (Both surfaced by the
+  self-review gate on the wave-2 dashboard/resolver PRs.)
 - **`codegraph init` now writes a robust `.mcp.json`** — uses the absolute
   path to the `codegraph` binary (resolved from the running interpreter's
   bin dir, then `shutil.which`, then bare fallback), passes an explicit
