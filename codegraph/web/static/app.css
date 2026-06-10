@@ -661,4 +661,133 @@ html.theme-light .pyvis-warn { display: flex !important; }
 
 .bg-app-1 { background: var(--bg-1); }
 .bg-app-2 { background: var(--bg-2); }
+
+/* =========================================================
+   Tailwind-compat utilities
+   Replaces the Tailwind CDN runtime. Covers only the utility
+   classes actually used in index.html (grepped exhaustively).
+   Custom design-token classes (ink-*, brand-*, shadow-*) are
+   mapped to CSS variables already defined above.
+   ========================================================= */
+
+/* --- Layout --- */
+.flex         { display: flex; }
+.inline-flex  { display: inline-flex; }
+.flex-col     { flex-direction: column; }
+.flex-1       { flex: 1 1 0%; }
+.flex-none    { flex: none; }
+.shrink-0     { flex-shrink: 0; }
+.items-center  { align-items: center; }
+.items-start   { align-items: flex-start; }
+.justify-center  { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.relative { position: relative; }
+.fixed    { position: fixed; }
+.sticky   { position: sticky; }
+.inset-0  { inset: 0; }
+.top-0    { top: 0; }
+.bottom-4 { bottom: 1rem; }
+.right-4  { right: 1rem; }
+.z-10 { z-index: 10; }
+.z-50 { z-index: 50; }
+.min-h-screen { min-height: 100vh; }
+.h-screen { height: 100vh; }
+.h-full   { height: 100%; }
+.w-full   { width: 100%; }
+.w-60     { width: 15rem; }
+.w-9      { width: 2.25rem; }
+.h-9      { height: 2.25rem; }
+.w-3\.5   { width: 0.875rem; }
+.h-3\.5   { height: 0.875rem; }
+.min-w-0  { min-width: 0; }
+.overflow-y-auto { overflow-y: auto; }
+.overflow-hidden { overflow: hidden; }
+.pointer-events-none { pointer-events: none; }
+
+/* --- Gap & space --- */
+.gap-2   { gap: 0.5rem; }
+.gap-2\.5 { gap: 0.625rem; }
+.gap-3   { gap: 0.75rem; }
+.gap-4   { gap: 1rem; }
+.space-y-0\.5 > * + * { margin-top: 0.125rem; }
+.space-y-2    > * + * { margin-top: 0.5rem; }
+
+/* --- Padding & margin --- */
+.p-3     { padding: 0.75rem; }
+.px-3    { padding-left: 0.75rem; padding-right: 0.75rem; }
+.py-2    { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+.px-5    { padding-left: 1.25rem; padding-right: 1.25rem; }
+.py-5    { padding-top: 1.25rem; padding-bottom: 1.25rem; }
+.px-6    { padding-left: 1.5rem; padding-right: 1.5rem; }
+.py-4    { padding-top: 1rem; padding-bottom: 1rem; }
+.max-w-sm { max-width: 24rem; }
+.mt-0\.5  { margin-top: 0.125rem; }
+.ml-1    { margin-left: 0.25rem; }
+.ml-auto { margin-left: auto; }
+
+/* --- Borders --- */
+.border   { border-width: 1px; border-style: solid; }
+.border-r { border-right-width: 1px; border-right-style: solid; }
+.border-b { border-bottom-width: 1px; border-bottom-style: solid; }
+.border-t { border-top-width: 1px; border-top-style: solid; }
+.rounded-lg { border-radius: 0.5rem; }
+.rounded-md { border-radius: 0.375rem; }
+
+/* --- Opacity & transition --- */
+.opacity-0  { opacity: 0; }
+.transition { transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter; transition-timing-function: cubic-bezier(0.4,0,0.2,1); transition-duration: 150ms; }
+.transition-opacity { transition-property: opacity; transition-timing-function: cubic-bezier(0.4,0,0.2,1); transition-duration: 150ms; }
+.transition-\[width\] { transition-property: width; transition-timing-function: cubic-bezier(0.4,0,0.2,1); }
+.duration-200 { transition-duration: 200ms; }
+
+/* --- Backdrop --- */
+.backdrop-blur { backdrop-filter: blur(8px); }
+
+/* --- Typography --- */
+.antialiased { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+.font-sans   { font-family: 'Inter var', 'Inter', system-ui, sans-serif; }
+.font-mono   { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+.font-semibold { font-weight: 600; }
+.font-bold     { font-weight: 700; }
+.text-sm  { font-size: 0.875rem; line-height: 1.25rem; }
+.text-xs  { font-size: 0.75rem; line-height: 1rem; }
+.text-lg  { font-size: 1.125rem; line-height: 1.75rem; }
+.text-base { font-size: 1rem; line-height: 1.5rem; }
+.text-\[10px\] { font-size: 10px; }
+.text-\[11px\] { font-size: 11px; }
+.text-\[12\.5px\] { font-size: 12.5px; }
+.tracking-tight    { letter-spacing: -0.025em; }
+.tracking-\[0\.14em\] { letter-spacing: 0.14em; }
+.uppercase  { text-transform: uppercase; }
+.truncate   { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.text-center { text-align: center; }
+
+/* --- Color tokens mapped to CSS vars --- */
+.text-ink-50  { color: #e6ecf5; }
+.text-ink-200 { color: #8b9ab8; }
+.text-ink-300 { color: #5b6b8c; }
+.text-ink-950 { color: #05070d; }
+.bg-ink-700\/80  { background-color: rgba(22,31,51,0.80); }
+.bg-ink-700\/95  { background-color: rgba(22,31,51,0.95); }
+.bg-ink-900\/70  { background-color: rgba(10,15,28,0.70); }
+.border-ink-500\/60 { border-color: rgba(42,57,87,0.60); }
+.border-ink-500\/80 { border-color: rgba(42,57,87,0.80); }
+.border-ink-600\/60 { border-color: rgba(29,41,66,0.60); }
+.hover\:bg-ink-600:hover  { background-color: #1d2942; }
+.hover\:border-brand-500:hover { border-color: #818cf8; }
+
+/* --- Gradient (for the logo badge) --- */
+.bg-gradient-to-br { background-image: linear-gradient(to bottom right, var(--tw-gradient-from, transparent), var(--tw-gradient-via, transparent), var(--tw-gradient-to, transparent)); }
+.from-brand-500 { --tw-gradient-from: #818cf8; }
+.via-brand-600  { --tw-gradient-via:  #6366f1; }
+.to-accent-cyan { --tw-gradient-to:   #22d3ee; }
+
+/* --- Custom shadows (from tailwind.config in index.html) --- */
+.shadow-card { box-shadow: 0 1px 0 0 rgba(255,255,255,0.04) inset, 0 12px 32px -16px rgba(0,0,0,0.65); }
+.shadow-glow { box-shadow: 0 0 0 1px rgba(129,140,248,0.4), 0 0 32px -8px rgba(129,140,248,0.45); }
+
+/* --- Responsive: md breakpoint (768px+) --- */
+@media (min-width: 768px) {
+  .md\:px-8 { padding-left: 2rem; padding-right: 2rem; }
+}
 .bg-app-3 { background: var(--bg-3); }
