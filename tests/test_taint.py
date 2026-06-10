@@ -854,3 +854,69 @@ def test_call_result_source_detected(tmp_path: Path) -> None:
     findings = propagate(graph, catalog)
     eval_findings = [f for f in findings if f.sink_class == "eval"]
     assert len(eval_findings) >= 1
+
+
+# ---------------------------------------------------------------------------
+# _out_edges_by_kind (edge-walk helper used by every propagation step)
+# ---------------------------------------------------------------------------
+
+
+def test_out_edges_by_kind_filters_and_merges_metadata() -> None:
+    from codegraph.analysis.taint import _out_edges_by_kind
+
+    g: nx.MultiDiGraph = nx.MultiDiGraph()
+    g.add_node("a")
+    g.add_node("b")
+    g.add_node("c")
+    g.add_edge(
+        "a", "b", key="DATA_ASSIGN", kind="DATA_ASSIGN",
+        file="pkg/m.py", line=12,
+        metadata={"callee": "fn", "position": 0},
+    )
+    g.add_edge("a", "c", key="CALLS", kind="CALLS")
+
+    result = _out_edges_by_kind(g, "a", "DATA_ASSIGN")
+    assert len(result) == 1
+    dst, meta = result[0]
+    assert dst == "b"
+    # Nested metadata and top-level file/line merged into one dict.
+    assert meta["callee"] == "fn"
+    assert meta["position"] == 0
+    assert meta["file"] == "pkg/m.py"
+    assert meta["line"] == 12
+
+
+def test_out_edges_by_kind_multiple_kinds_and_missing_node() -> None:
+    from codegraph.analysis.taint import _out_edges_by_kind
+
+    g: nx.MultiDiGraph = nx.MultiDiGraph()
+    g.add_node("a")
+    g.add_node("b")
+    g.add_edge("a", "b", key="DATA_ARG", kind="DATA_ARG")
+    g.add_edge("a", "b", key="DATA_RETURN", kind="DATA_RETURN")
+    g.add_edge("a", "b", key="IMPORTS", kind="IMPORTS")
+
+    result = _out_edges_by_kind(g, "a", "DATA_ARG", "DATA_RETURN")
+    assert {dst for dst, _ in result} == {"b"}
+    assert len(result) == 2
+
+    # Unknown node id returns empty instead of raising.
+    assert _out_edges_by_kind(g, "ghost", "DATA_ARG") == []
+
+
+def test_out_edges_by_kind_metadata_takes_precedence_over_top_level() -> None:
+    """When the nested metadata already carries file/line, the top-level
+    edge attrs must not clobber them (setdefault semantics)."""
+    from codegraph.analysis.taint import _out_edges_by_kind
+
+    g: nx.MultiDiGraph = nx.MultiDiGraph()
+    g.add_node("a")
+    g.add_node("b")
+    g.add_edge(
+        "a", "b", key="DATA_ASSIGN", kind="DATA_ASSIGN",
+        file="outer.py", line=1,
+        metadata={"file": "inner.py", "line": 99},
+    )
+    [(_, meta)] = _out_edges_by_kind(g, "a", "DATA_ASSIGN")
+    assert meta["file"] == "inner.py"
+    assert meta["line"] == 99
