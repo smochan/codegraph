@@ -10,6 +10,9 @@ Findings surface through ``codegraph lint`` (whole repo) and merge into
 """
 from __future__ import annotations
 
+import math
+import re
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -121,8 +124,204 @@ def _check_console_in_prod(
     )
 
 
+def _member_chain(
+    node: tree_sitter.Node, src: bytes
+) -> tuple[str, list[str]] | None:
+    """Flatten a call chain like ``db.select().from(x).where(y)``.
+
+    Returns ``(base, methods)`` — e.g. ``("db", ["select", "from", "where"])``
+    — or ``None`` when the chain doesn't bottom out at an identifier.
+    """
+    methods: list[str] = []
+    cur: tree_sitter.Node | None = node
+    while cur is not None:
+        if cur.type == "call_expression":
+            cur = cur.child_by_field_name("function")
+        elif cur.type == "member_expression":
+            prop = cur.child_by_field_name("property")
+            if prop is not None:
+                methods.append(node_text(prop, src))
+            cur = cur.child_by_field_name("object")
+        elif cur.type in ("identifier", "this"):
+            return node_text(cur, src), list(reversed(methods))
+        else:
+            return None
+    return None
+
+
+def _is_chain_root(node: tree_sitter.Node) -> bool:
+    """True iff ``node`` is the outermost call of its member chain."""
+    parent = node.parent
+    if parent is None or parent.type != "member_expression":
+        return True
+    grandparent = parent.parent
+    return grandparent is None or grandparent.type != "call_expression"
+
+
+_DEFAULT_QUERY_PATTERN = r"\b(db|database)\.(select|query)\b"
+
+
+def _check_unfiltered_query(
+    node: tree_sitter.Node, ctx: _LintContext
+) -> LintFinding | None:
+    """Query-builder chain with ``from`` but no ``where``/``limit``."""
+    if ctx.language not in _TS_LANGS or ctx.is_test_file:
+        return None
+    if node.type != "call_expression" or not _is_chain_root(node):
+        return None
+    chain = _member_chain(node, ctx.src)
+    if chain is None:
+        return None
+    base, methods = chain
+    chain_text = ".".join([base, *methods])
+    pattern = str(ctx.rule.options.get("pattern") or _DEFAULT_QUERY_PATTERN)
+    if not re.search(pattern, chain_text):
+        return None
+    if "from" not in methods:
+        return None
+    filters = set(ctx.rule.options.get("filters") or ["where", "limit"])
+    if filters.intersection(methods):
+        return None
+    return LintFinding(
+        rule_id=ctx.rule.id,
+        severity=ctx.rule.severity,
+        message=_format_message(ctx.rule, chain=chain_text),
+        file=ctx.rel_path,
+        line=node.start_point[0] + 1,
+        snippet=_snippet(node, ctx.src),
+    )
+
+
+# Singular-only on purpose: plural forms are overwhelmingly counts or
+# collections of non-secrets in real code (``tokens_in`` = LLM token
+# count, ``_FIX_TOKENS`` = match words), while actual secrets are
+# assigned to singular names (``token``, ``auth_token``, ``api_key``).
+# Demographic category names stay matchable via their ``_``-suffixed
+# forms (``gender_options`` → ``(^|_)gender(_|$)``).
+_DEFAULT_SENSITIVE_PATTERN = (
+    r"(^|_)(gender|ethnicity|race|veteran|disability|password|passwd|"
+    r"secret|api_key|apikey|token|credential)(_|$)"
+)
+_ENTROPY_THRESHOLD = 4.5
+_ENTROPY_MIN_LEN = 20
+_ENTROPY_MAX_LEN = 512
+_WHITESPACE_RE = re.compile(r"\s")
+_CAMEL_RE = re.compile(r"([a-z0-9])([A-Z])")
+
+_TS_LITERAL_TYPES = frozenset(
+    {"string", "template_string", "array", "object", "number"}
+)
+_PY_LITERAL_TYPES = frozenset(
+    {"string", "list", "dictionary", "tuple", "integer", "float"}
+)
+
+
+def _identifier_words(name: str) -> str:
+    """Normalize camelCase / SCREAMING_SNAKE to snake_case for matching."""
+    return _CAMEL_RE.sub(r"\1_\2", name).lower()
+
+
+def _shannon_entropy(text: str) -> float:
+    if not text:
+        return 0.0
+    counts = Counter(text)
+    total = len(text)
+    return -sum(
+        (n / total) * math.log2(n / total) for n in counts.values()
+    )
+
+
+def _string_body(node: tree_sitter.Node, src: bytes) -> str:
+    text = node_text(node, src)
+    return text.strip("\"'`")
+
+
+def _assignment_parts(
+    node: tree_sitter.Node, language: str
+) -> tuple[tree_sitter.Node, tree_sitter.Node] | None:
+    """Return (lhs, rhs) for an assignment-shaped node, else None."""
+    if language == "python":
+        if node.type != "assignment":
+            return None
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+    elif node.type == "variable_declarator":
+        left = node.child_by_field_name("name")
+        right = node.child_by_field_name("value")
+    elif node.type == "assignment_expression":
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+    elif node.type == "pair":
+        left = node.child_by_field_name("key")
+        right = node.child_by_field_name("value")
+    else:
+        return None
+    if left is None or right is None:
+        return None
+    return left, right
+
+
+def _check_sensitive_literal(
+    node: tree_sitter.Node, ctx: _LintContext
+) -> LintFinding | None:
+    """Sensitive identifier assigned a literal, or a high-entropy string."""
+    if ctx.is_test_file:
+        return None
+    parts = _assignment_parts(node, ctx.language)
+    if parts is None:
+        return None
+    left, right = parts
+    if left.type not in ("identifier", "property_identifier"):
+        return None
+    name = node_text(left, ctx.src)
+    literal_types = (
+        _PY_LITERAL_TYPES if ctx.language == "python" else _TS_LITERAL_TYPES
+    )
+    if right.type not in literal_types:
+        return None
+
+    pattern = str(
+        ctx.rule.options.get("pattern") or _DEFAULT_SENSITIVE_PATTERN
+    )
+    name_matches = bool(re.search(pattern, _identifier_words(name)))
+
+    high_entropy = False
+    if not name_matches and right.type in ("string", "template_string"):
+        body = _string_body(right, ctx.src)
+        # Secret-shaped only: tokens have no whitespace and a bounded
+        # length. Long prose / HTML templates also clear the entropy bar
+        # but are not secrets.
+        high_entropy = (
+            _ENTROPY_MIN_LEN <= len(body) <= _ENTROPY_MAX_LEN
+            and not _WHITESPACE_RE.search(body)
+            and _shannon_entropy(body) > _ENTROPY_THRESHOLD
+        )
+
+    if not name_matches and not high_entropy:
+        return None
+    # Empty-string placeholders are not findings.
+    if right.type in ("string", "template_string") and not _string_body(
+        right, ctx.src
+    ):
+        return None
+
+    reason = "sensitive identifier" if name_matches else "high-entropy string"
+    return LintFinding(
+        rule_id=ctx.rule.id,
+        severity=ctx.rule.severity,
+        message=_format_message(ctx.rule, name=name, reason=reason),
+        file=ctx.rel_path,
+        line=node.start_point[0] + 1,
+        # Deliberately redact the RHS: never echo a potential secret
+        # value into reports, CI logs, or PR comments.
+        snippet=name,
+    )
+
+
 _CHECK_REGISTRY: dict[str, _Checker] = {
     "console-in-prod": _check_console_in_prod,
+    "unfiltered-query": _check_unfiltered_query,
+    "sensitive-literal": _check_sensitive_literal,
 }
 
 
@@ -132,6 +331,18 @@ DEFAULT_LINT_RULES: list[LintRule] = [
         check="console-in-prod",
         severity="low",
         message="console.{method} call in production code",
+    ),
+    LintRule(
+        id="unfiltered-query",
+        check="unfiltered-query",
+        severity="med",
+        message="Query builder chain `{chain}` has no .where/.limit",
+    ),
+    LintRule(
+        id="sensitive-literal",
+        check="sensitive-literal",
+        severity="med",
+        message="Literal assigned to `{name}` looks sensitive ({reason})",
     ),
 ]
 

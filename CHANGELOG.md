@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Review `Finding` objects and all three renderers now carry a
   `kind` field (`graph` | `lint`). First slice of the gap-analysis
   roadmap (`docs/GAP_ANALYSIS_VS_LLM_REVIEWER.md`).
+- **Lint rules `unfiltered-query` and `sensitive-literal`.**
+  `unfiltered-query` (med) flags TS/JS query-builder chains like
+  `db.select().from(jobs)` that reach the chain end with no
+  `.where`/`.limit` (configurable `pattern:` and `filters:` options).
+  `sensitive-literal` (med) flags literals assigned to identifiers
+  matching demographic / credential names (`gender`, `ethnicity`,
+  `password`, `secret`, `api_key`, `token`, …) in TS and Python, plus
+  secret-shaped high-entropy strings (≥20 chars, no whitespace,
+  entropy > 4.5). Reports deliberately redact the assigned value —
+  only the identifier name appears in output, so a real secret never
+  lands in CI logs or PR comments. The name match is singular-only
+  (`tokens_in` token counts and `_FIX_TOKENS` word lists don't fire).
 
 ## [0.1.2] — 2026-05-31
 
