@@ -10,6 +10,8 @@ from typing import Any, cast
 import networkx as nx
 import yaml
 
+from codegraph.analysis._common import in_test_module
+from codegraph.graph.schema import EdgeKind, NodeKind
 from codegraph.review.differ import GraphDiff, NodeChange
 from codegraph.review.risk import (
     _count_callers,
@@ -87,6 +89,13 @@ DEFAULT_RULES: list[Rule] = [
         severity="med",
         message="Modified node signature change",
     ),
+    Rule(
+        id="new-untested-hotspot",
+        when="new_untested_hotspot",
+        severity="high",
+        message="New function with {fan_in} callers and no test coverage",
+        threshold=5,
+    ),
 ]
 
 
@@ -98,6 +107,7 @@ _VALID_WHEN = {
     "introduces_cycle",
     "high_fan_in",
     "new_dead_code",
+    "new_untested_hotspot",
 }
 
 
@@ -314,6 +324,39 @@ def evaluate_rules(
                     _make_finding(
                         rule, change,
                         new_graph=new_graph, old_graph=old_graph, extra=extra,
+                    )
+                )
+        elif when == "new_untested_hotspot":
+            threshold = rule.threshold or 5
+            for change in diff.added_nodes:
+                if not _node_matches(rule, change):
+                    continue
+                if change.kind not in (
+                    NodeKind.FUNCTION.value,
+                    NodeKind.METHOD.value,
+                ):
+                    continue
+                new_id = _find_node_id(change.qualname, change.kind, new_graph)
+                if new_id is None:
+                    continue
+                fan_in = _count_callers(new_id, new_graph)
+                if fan_in < threshold:
+                    continue
+                # Check whether any caller is from a test module.
+                has_test_caller = False
+                for src, _dst, key in new_graph.in_edges(new_id, keys=True):
+                    if key != EdgeKind.CALLS.value:
+                        continue
+                    if in_test_module(new_graph, src):
+                        has_test_caller = True
+                        break
+                if has_test_caller:
+                    continue
+                findings.append(
+                    _make_finding(
+                        rule, change,
+                        new_graph=new_graph, old_graph=old_graph, extra=extra,
+                        fmt_kwargs={"fan_in": fan_in},
                     )
                 )
         elif when == "introduces_cycle":
