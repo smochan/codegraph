@@ -185,3 +185,42 @@ def test_call_literal_kinds_captured(
     _, edges = _run_extractor_on_source(tmp_path, src)
     call = next(e for e in _calls_edges(edges) if e.metadata.get("target_name") == "f")
     assert call.metadata["args"] == [expected]
+
+
+# --- loop_depth / in_loop metadata ----------------------------------------
+
+
+def test_call_inside_for_loop_has_loop_depth(tmp_path: Path) -> None:
+    src = "def caller(items):\n    for item in items:\n        f(item)\n"
+    _, edges = _run_extractor_on_source(tmp_path, src)
+    call = next(e for e in _calls_edges(edges) if e.metadata.get("target_name") == "f")
+    assert call.metadata["loop_depth"] == 1
+    assert call.metadata["in_loop"] is True
+
+
+def test_call_inside_while_loop_has_loop_depth(tmp_path: Path) -> None:
+    src = "def caller(cond):\n    while cond:\n        f()\n"
+    _, edges = _run_extractor_on_source(tmp_path, src)
+    call = next(e for e in _calls_edges(edges) if e.metadata.get("target_name") == "f")
+    assert call.metadata["loop_depth"] == 1
+    assert call.metadata["in_loop"] is True
+
+
+def test_call_outside_loop_has_zero_loop_depth(tmp_path: Path) -> None:
+    src = "def caller():\n    f()\n"
+    _, edges = _run_extractor_on_source(tmp_path, src)
+    call = next(e for e in _calls_edges(edges) if e.metadata.get("target_name") == "f")
+    assert call.metadata["loop_depth"] == 0
+    assert call.metadata["in_loop"] is False
+
+
+def test_nested_loop_increments_depth(tmp_path: Path) -> None:
+    src = (
+        "def caller(matrix):\n"
+        "    for row in matrix:\n"
+        "        for cell in row:\n"
+        "            f(cell)\n"
+    )
+    _, edges = _run_extractor_on_source(tmp_path, src)
+    call = next(e for e in _calls_edges(edges) if e.metadata.get("target_name") == "f")
+    assert call.metadata["loop_depth"] == 2

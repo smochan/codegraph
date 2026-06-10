@@ -23,6 +23,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Review `Finding` objects and all three renderers now carry a
   `kind` field (`graph` | `lint`). First slice of the gap-analysis
   roadmap (`docs/GAP_ANALYSIS_VS_LLM_REVIEWER.md`).
+- **Lint rules `unfiltered-query` and `sensitive-literal`.**
+  `unfiltered-query` (med) flags TS/JS query-builder chains like
+  `db.select().from(jobs)` that reach the chain end with no
+  `.where`/`.limit` (configurable `pattern:` and `filters:` options).
+  `sensitive-literal` (med) flags literals assigned to identifiers
+  matching demographic / credential names (`gender`, `ethnicity`,
+  `password`, `secret`, `api_key`, `token`, …) in TS and Python, plus
+  secret-shaped high-entropy strings (≥20 chars, no whitespace,
+  entropy > 4.5). Reports deliberately redact the assigned value —
+  only the identifier name appears in output, so a real secret never
+  lands in CI logs or PR comments. The name match is singular-only
+  (`tokens_in` token counts and `_FIX_TOKENS` word lists don't fire).
+- **Lint rule `db-call-in-loop` + `loop_depth` on call records.**
+  Both parsers now thread loop depth through their call-collection DFS;
+  CALLS edge metadata gains `loop_depth` / `in_loop`. TS additionally
+  treats function arguments to `.map/.forEach/.filter/.reduce/.flatMap`
+  as implicit loop bodies. The new rule (high) flags DB-API calls
+  (`db.select|insert|update|delete|execute|query` in TS;
+  `session|cursor|db . query|execute|add|commit` in Python) executing
+  inside a loop — the classic N+1.
+- **Risk-ranked untested + `new_untested_hotspot` review rule.**
+  `rank_untested()` joins untested × hotspot score × blast radius so
+  reports lead with untested *and* high-fan-in functions; surfaced in
+  `codegraph query untested` and the MCP `untested` tool. New default
+  review rule (high, threshold 5): a newly-added function with ≥5
+  callers and no test-module caller now gates PRs. **Note:** this new
+  default rule can change `codegraph review` exit codes for existing
+  users; disable by shipping a custom `.codegraph/rules.yml`.
+- **Lint rules `any-on-boundary` (low) and `any-into-db-write` (med).**
+  The TS parser records `exported`, `any_params`, and `any_return`
+  metadata; the rules flag exported functions with `any` in their
+  signature and `as any` casts passed into DB-write calls. Surface
+  syntax only — this is not type inference.
 
 ## [0.1.2] — 2026-05-31
 

@@ -1319,6 +1319,11 @@ class PythonExtractor(ExtractorBase):
                     continue
             stack.extend(node.children)
 
+    # Python loop node types that increase loop depth for their children.
+    _PY_LOOP_TYPES: frozenset[str] = frozenset(
+        {"for_statement", "while_statement"}
+    )
+
     def _collect_calls(
         self,
         node: tree_sitter.Node,
@@ -1328,9 +1333,11 @@ class PythonExtractor(ExtractorBase):
         edges: list[Edge],
     ) -> None:
         """Walk subtree collecting call expressions, stopping at nested defs."""
-        stack: list[tree_sitter.Node] = list(node.children)
+        stack: list[tuple[tree_sitter.Node, int]] = [
+            (child, 0) for child in node.children
+        ]
         while stack:
-            child = stack.pop()
+            child, depth = stack.pop()
             if child.type == "call":
                 func_child = child.child_by_field_name("function")
                 if func_child is None and child.children:
@@ -1352,6 +1359,8 @@ class PythonExtractor(ExtractorBase):
                             "target_name": name,
                             "args": args,
                             "kwargs": kwargs,
+                            "loop_depth": depth,
+                            "in_loop": depth > 0,
                         },
                     ))
             # ``decorator`` subtrees are handled by ``_emit_decorator_calls``
@@ -1361,7 +1370,10 @@ class PythonExtractor(ExtractorBase):
             if child.type not in (
                 "class_definition", "function_definition", "decorator",
             ):
-                stack.extend(child.children)
+                child_depth = (
+                    depth + 1 if child.type in self._PY_LOOP_TYPES else depth
+                )
+                stack.extend((gc, child_depth) for gc in child.children)
 
     def _emit_decorator_calls(
         self,

@@ -1359,21 +1359,32 @@ def query_subgraph(
 
 @query_app.command("untested")
 def query_untested(limit: int = typer.Option(50, "--limit")) -> None:
-    """List functions/methods with no test-side caller."""
-    from codegraph.analysis import find_untested
+    """List functions/methods with no test-side caller, ranked by risk."""
+    from codegraph.analysis import rank_untested
 
     graph = _open_graph(Path.cwd())
     if graph is None:
         raise typer.Exit(1)
-    rows = find_untested(graph)
+    rows = rank_untested(graph)
     console.print(f"[bold]{len(rows)} untested[/bold]")
     table = Table()
     table.add_column("qualname")
     table.add_column("file")
     table.add_column("line", justify="right")
     table.add_column("callers", justify="right")
+    table.add_column("hotspot", justify="right")
+    table.add_column("blast_r", justify="right")
+    table.add_column("blast_f", justify="right")
     for u in rows[:limit]:
-        table.add_row(u.qualname, u.file, str(u.line_start), str(u.incoming_calls))
+        table.add_row(
+            u.qualname,
+            u.file,
+            str(u.line_start),
+            str(u.incoming_calls),
+            str(u.hotspot_score),
+            str(u.blast_radius_size),
+            str(u.blast_files),
+        )
     console.print(table)
 
 

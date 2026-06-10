@@ -257,6 +257,20 @@ def _strip_type_annotation(text: str) -> str:
     return s.strip()
 
 
+_ANY_WORD_RE = re.compile(r"\bany\b")
+
+
+def _type_mentions_any(t: str | None) -> bool:
+    """Return True if *t* contains the bare type ``any``.
+
+    Matches ``any``, ``any[]``, ``Promise<any>``, ``Record<string, any>``
+    but NOT ``Company``, ``anything``, or similar sub-word occurrences.
+    """
+    if t is None:
+        return False
+    return bool(_ANY_WORD_RE.search(t))
+
+
 def _extract_param(
     p: tree_sitter.Node, src: bytes
 ) -> dict[str, str | None] | None:
@@ -682,6 +696,7 @@ class TypeScriptExtractor(ExtractorBase):
                         self._handle_function_decl(
                             sub, rel, parent_qualname, parent_id, lang,
                             src, nodes, edges,
+                            exported=True,
                         )
                     elif sub.type in (
                         "lexical_declaration", "variable_declaration"
@@ -689,6 +704,7 @@ class TypeScriptExtractor(ExtractorBase):
                         self._handle_lexical_decl(
                             sub, rel, parent_qualname, parent_id, lang,
                             src, nodes, edges,
+                            exported=True,
                         )
 
     def _handle_import(
@@ -899,6 +915,8 @@ class TypeScriptExtractor(ExtractorBase):
         src: bytes,
         nodes: list[Node],
         edges: list[Edge],
+        *,
+        exported: bool = False,
     ) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -921,6 +939,17 @@ class TypeScriptExtractor(ExtractorBase):
             "params": params_list,
             "returns": return_type,
         }
+        if exported:
+            func_md["exported"] = True
+        any_params = [
+            p["name"]
+            for p in params_list
+            if isinstance(p, dict) and _type_mentions_any(p.get("type"))
+        ]
+        if any_params:
+            func_md["any_params"] = any_params
+        if _type_mentions_any(return_type):
+            func_md["any_return"] = True
         if _has_public_api_pragma_ts(node, src):
             func_md["public_api"] = True
         func_node = Node(
@@ -957,6 +986,8 @@ class TypeScriptExtractor(ExtractorBase):
         src: bytes,
         nodes: list[Node],
         edges: list[Edge],
+        *,
+        exported: bool = False,
     ) -> None:
         for child in node.children:
             if child.type != "variable_declarator":
@@ -990,6 +1021,23 @@ class TypeScriptExtractor(ExtractorBase):
                     value_node, arrow_params, src
                 )
 
+                arrow_md: dict[str, Any] = {
+                    "arrow": True,
+                    "params": params_list,
+                    "returns": return_type,
+                }
+                if exported:
+                    arrow_md["exported"] = True
+                any_params = [
+                    p["name"]
+                    for p in params_list
+                    if isinstance(p, dict) and _type_mentions_any(p.get("type"))
+                ]
+                if any_params:
+                    arrow_md["any_params"] = any_params
+                if _type_mentions_any(return_type):
+                    arrow_md["any_return"] = True
+
                 func_node = Node(
                     id=func_id,
                     kind=NodeKind.FUNCTION,
@@ -999,11 +1047,7 @@ class TypeScriptExtractor(ExtractorBase):
                     line_start=node.start_point[0] + 1,
                     line_end=node.end_point[0] + 1,
                     language=lang,
-                    metadata={
-                        "arrow": True,
-                        "params": params_list,
-                        "returns": return_type,
-                    },
+                    metadata=arrow_md,
                 )
                 nodes.append(func_node)
 
@@ -1017,6 +1061,20 @@ class TypeScriptExtractor(ExtractorBase):
                     self._collect_calls(body, rel, func_id, src, edges)
                     self._collect_fetches(body, rel, func_id, src, nodes, edges)
 
+    # Higher-order iteration methods whose function-typed arguments are treated
+    # as implicit loop bodies for loop-depth tracking purposes.
+    _ITER_METHODS: frozenset[str] = frozenset(
+        {"map", "forEach", "filter", "reduce", "flatMap"}
+    )
+    # TS/JS loop node types that increase loop depth for their children.
+    _TS_LOOP_TYPES: frozenset[str] = frozenset(
+        {"for_statement", "for_in_statement", "while_statement", "do_statement"}
+    )
+    # Function-typed AST node types that can appear as callbacks.
+    _FUNC_ARG_TYPES: frozenset[str] = frozenset(
+        {"arrow_function", "function_expression", "function"}
+    )
+
     def _collect_calls(
         self,
         node: tree_sitter.Node,
@@ -1025,9 +1083,11 @@ class TypeScriptExtractor(ExtractorBase):
         src: bytes,
         edges: list[Edge],
     ) -> None:
-        stack: list[tree_sitter.Node] = list(node.children)
+        stack: list[tuple[tree_sitter.Node, int]] = [
+            (child, 0) for child in node.children
+        ]
         while stack:
-            child = stack.pop()
+            child, depth = stack.pop()
             if child.type == "call_expression":
                 func_child = child.child_by_field_name("function")
                 if func_child is None and child.children:
@@ -1056,9 +1116,37 @@ class TypeScriptExtractor(ExtractorBase):
                             "target_name": name,
                             "args": call_args,
                             "kwargs": call_kwargs,
+                            "loop_depth": depth,
+                            "in_loop": depth > 0,
                         },
                     ))
-            stack.extend(child.children)
+                    # Determine whether this call is an iteration method
+                    # (.map/.forEach/.filter/.reduce/.flatMap) and bump depth
+                    # for any function-typed arguments.
+                    iter_method = ""
+                    if func_child is not None and func_child.type == "member_expression":
+                        prop_node = func_child.child_by_field_name("property")
+                        if prop_node is not None:
+                            iter_method = node_text(prop_node, src)
+                    if iter_method in self._ITER_METHODS and args_node is not None:
+                        # The callee subtree may itself contain calls
+                        # (e.g. ``getUsers().map(cb)``) — keep visiting it
+                        # at the current depth.
+                        stack.extend(
+                            (gc, depth) for gc in func_child.children
+                        )
+                        for arg in args_node.children:
+                            if arg.type in self._FUNC_ARG_TYPES:
+                                stack.extend(
+                                    (gc, depth + 1) for gc in arg.children
+                                )
+                            elif arg.type not in (",", "(", ")"):
+                                stack.extend((gc, depth) for gc in arg.children)
+                        continue
+            child_depth = (
+                depth + 1 if child.type in self._TS_LOOP_TYPES else depth
+            )
+            stack.extend((gc, child_depth) for gc in child.children)
 
     # ------------------------------------------------------------------
     # DF2: HTTP call-site detection (fetch / axios / SWR / api-clients)

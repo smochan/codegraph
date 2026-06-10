@@ -222,6 +222,9 @@ def test_untested_returns_list(fixture_graph: nx.MultiDiGraph) -> None:
     for r in results:
         assert "qualname" in r
         assert "kind" in r
+        assert "hotspot_score" in r
+        assert "blast_radius_size" in r
+        assert "blast_files" in r
 
 
 def test_hotspots_returns_list(fixture_graph: nx.MultiDiGraph) -> None:

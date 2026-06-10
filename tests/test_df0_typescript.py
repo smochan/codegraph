@@ -196,3 +196,53 @@ def test_jsx_function_captures_params() -> None:
         {"name": "name", "type": "string", "default": None},
     ]
     assert f.metadata["returns"] == "JSX.Element"
+
+
+# ---------- loop_depth / in_loop metadata ----------
+
+
+@pytest.fixture(scope="module")
+def loop_parsed() -> tuple[list[Node], list[Edge]]:
+    extractor = TypeScriptExtractor()
+    return extractor.parse_file(FIXTURE_DIR / "loop_calls.ts", FIXTURE_DIR)
+
+
+def test_call_inside_for_of_has_loop_depth(
+    loop_parsed: tuple[list[Node], list[Edge]],
+) -> None:
+    _, edges = loop_parsed
+    # doWork called inside for...of — loop_depth must be >= 1
+    calls = _calls_in(edges, "doWork")
+    in_loop_calls = [e for e in calls if e.metadata.get("loop_depth", 0) >= 1]
+    assert in_loop_calls, "expected at least one doWork call with loop_depth >= 1"
+
+
+def test_call_inside_foreach_callback_has_loop_depth(
+    loop_parsed: tuple[list[Node], list[Edge]],
+) -> None:
+    _, edges = loop_parsed
+    # doWork called inside .forEach callback — in_loop must be True
+    calls = _calls_in(edges, "doWork")
+    forEach_in_loop = [e for e in calls if e.metadata.get("in_loop") is True]
+    assert forEach_in_loop, "expected at least one doWork call with in_loop=True"
+
+
+def test_call_outside_loop_has_zero_loop_depth(
+    loop_parsed: tuple[list[Node], list[Edge]],
+) -> None:
+    _, edges = loop_parsed
+    # doWork called in withoutLoop — loop_depth must be 0
+    calls = _calls_in(edges, "doWork")
+    outside_calls = [e for e in calls if e.metadata.get("loop_depth", -1) == 0]
+    assert outside_calls, "expected at least one doWork call with loop_depth == 0"
+
+
+def test_callee_chained_before_map_still_collected(
+    loop_parsed: tuple[list[Node], list[Edge]],
+) -> None:
+    _, edges = loop_parsed
+    # getUsers() is the receiver of .map — its CALLS edge must not be
+    # dropped by the iteration-method depth handling.
+    calls = _calls_in(edges, "getUsers")
+    assert calls, "expected getUsers() call edge to survive .map handling"
+    assert calls[0].metadata.get("loop_depth") == 0

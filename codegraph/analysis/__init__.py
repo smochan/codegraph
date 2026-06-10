@@ -6,7 +6,7 @@ from codegraph.analysis.dead_code import DeadNode, find_dead_code
 from codegraph.analysis.hotspots import Hotspot, find_hotspots
 from codegraph.analysis.metrics import GraphMetrics, compute_metrics
 from codegraph.analysis.roles import classify_roles
-from codegraph.analysis.untested import UntestedNode, find_untested
+from codegraph.analysis.untested import UntestedNode, find_untested, rank_untested
 
 __all__ = [
     "BlastRadiusResult",
@@ -26,5 +26,6 @@ __all__ = [
     "find_hotspots",
     "find_untested",
     "match_route",
+    "rank_untested",
     "trace",
 ]

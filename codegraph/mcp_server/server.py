@@ -331,10 +331,10 @@ def tool_untested(
     graph: nx.MultiDiGraph,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Return untested functions/methods."""
-    from codegraph.analysis.untested import find_untested
+    """Return untested functions/methods ranked by risk."""
+    from codegraph.analysis.untested import rank_untested
 
-    items = find_untested(graph)
+    items = rank_untested(graph)
     return [
         {
             "qualname": u.qualname,
@@ -342,6 +342,9 @@ def tool_untested(
             "file": u.file,
             "line": u.line_start,
             "incoming_calls": u.incoming_calls,
+            "hotspot_score": u.hotspot_score,
+            "blast_radius_size": u.blast_radius_size,
+            "blast_files": u.blast_files,
         }
         for u in items[:limit]
     ]

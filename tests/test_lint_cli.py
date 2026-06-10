@@ -38,7 +38,12 @@ def test_lint_markdown_output(lint_repo: Path) -> None:
 def test_lint_fail_on_gates_exit_code(lint_repo: Path) -> None:
     result = runner.invoke(app, ["lint", "--fail-on", "low"])
     assert result.exit_code == 1
+    # db-call-in-loop (high) fires on the sample fixture, so --fail-on high
+    # also exits non-zero.
     result = runner.invoke(app, ["lint", "--fail-on", "high"])
+    assert result.exit_code == 1
+    # No critical findings in the fixture → exit 0.
+    result = runner.invoke(app, ["lint", "--fail-on", "critical"])
     assert result.exit_code == 0
 
 
@@ -50,9 +55,9 @@ def test_lint_json_output(lint_repo: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(out.read_text())
     findings = payload["findings"]
-    assert len(findings) == 3
     assert all(f["kind"] == "lint" for f in findings)
-    assert all(f["rule_id"] == "console-in-prod" for f in findings)
+    console = [f for f in findings if f["rule_id"] == "console-in-prod"]
+    assert len(console) == 3
 
 
 def test_lint_sarif_output(lint_repo: Path) -> None:
@@ -64,8 +69,10 @@ def test_lint_sarif_output(lint_repo: Path) -> None:
     payload = json.loads(out.read_text())
     assert payload["version"] == "2.1.0"
     results = payload["runs"][0]["results"]
-    assert len(results) == 3
+    assert results
     assert all(r["properties"]["kind"] == "lint" for r in results)
+    rule_ids = {r["ruleId"] for r in results}
+    assert "console-in-prod" in rule_ids
 
 
 def test_lint_custom_rules_file(lint_repo: Path) -> None:

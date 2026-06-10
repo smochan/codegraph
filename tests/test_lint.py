@@ -120,3 +120,248 @@ def test_ignores_unsupported_and_missing_files(tmp_path: Path) -> None:
     (repo / "notes.md").write_text("console.log in prose\n")
     findings = run_lint(repo, files=["notes.md", "missing.ts"])
     assert findings == []
+
+
+def test_unfiltered_query_flags_missing_where(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "unfiltered-query"
+    ]
+    assert len(findings) == 1
+    assert findings[0].file == "src/queries.ts"
+    assert findings[0].line == 4
+    assert "db.select.from" in findings[0].message
+
+
+def test_unfiltered_query_filtered_chains_pass(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "unfiltered-query"
+    ]
+    lines = {f.line for f in findings if f.file == "src/queries.ts"}
+    # .where (line 9) and .limit (line 14) chains are not flagged
+    assert lines == {4}
+
+
+def test_sensitive_literal_typescript(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f
+        for f in run_lint(repo)
+        if f.rule_id == "sensitive-literal" and f.file == "src/constants.ts"
+    ]
+    names = {f.snippet for f in findings}
+    assert names == {
+        "GENDER_OPTIONS",
+        "apiKey",
+        "SESSION_SECRET",
+        "highEntropyBlob",
+    }
+    # tokenizerName, MAX_RETRIES, EMPTY_PASSWORD, envKey are NOT flagged
+    assert "tokenizerName" not in names
+    assert "EMPTY_PASSWORD" not in names
+
+
+def test_sensitive_literal_python(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f
+        for f in run_lint(repo)
+        if f.rule_id == "sensitive-literal" and f.file == "src/settings.py"
+    ]
+    names = {f.snippet for f in findings}
+    assert names == {"DATABASE_PASSWORD", "ETHNICITY_CHOICES"}
+
+
+def test_sensitive_literal_redacts_value(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "sensitive-literal"
+    ]
+    for f in findings:
+        assert "hunter2" not in f.snippet
+        assert "hunter2" not in f.message
+        assert "sk-test" not in f.snippet
+        assert "sk-test" not in f.message
+
+
+# --- db-call-in-loop -------------------------------------------------------
+
+
+def test_db_call_in_loop_typescript_for_of(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/loops.ts"
+    ]
+    # for...of loop (line 6) should fire
+    loop_lines = {f.line for f in findings}
+    assert 6 in loop_lines
+
+
+def test_db_call_in_loop_typescript_foreach_callback(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/loops.ts"
+    ]
+    # forEach callback (line 13) should fire
+    loop_lines = {f.line for f in findings}
+    assert 13 in loop_lines
+
+
+def test_db_call_in_loop_typescript_non_loop_not_flagged(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/loops.ts"
+    ]
+    # non-loop db.insert (line 19) must NOT fire
+    loop_lines = {f.line for f in findings}
+    assert 19 not in loop_lines
+
+
+def test_db_call_in_loop_python(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/batch.py"
+    ]
+    # for loop session.execute (line 7) should fire
+    assert any(f.line == 7 for f in findings)
+
+
+def test_db_call_in_loop_python_non_loop_not_flagged(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/batch.py"
+    ]
+    # non-loop session.execute (line 11) must NOT fire
+    assert not any(f.line == 11 for f in findings)
+
+
+def test_db_call_in_loop_severity_high(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "db-call-in-loop"
+    ]
+    assert findings
+    assert all(f.severity == "high" for f in findings)
+
+
+def test_db_call_in_loop_message_contains_chain(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "db-call-in-loop"
+    ]
+    assert findings
+    for f in findings:
+        assert "db." in f.message or "session." in f.message
+
+
+# --- any-on-boundary -------------------------------------------------------
+
+
+def test_any_on_boundary_fires_for_exported_any_param(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+    ]
+    names_in_msgs = " ".join(f.message for f in findings)
+    assert "processPayload" in names_in_msgs
+
+
+def test_any_on_boundary_fires_for_exported_any_return(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+    ]
+    # processPayload has both any param and any return
+    process_findings = [f for f in findings if "processPayload" in f.message]
+    assert process_findings
+    assert "return type" in process_findings[0].message
+
+
+def test_any_on_boundary_fires_for_exported_arrow_any_param(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+        and f.line == 9
+    ]
+    assert findings, "expected finding on line 9 (exported arrow with any param)"
+
+
+def test_any_on_boundary_does_not_fire_for_non_exported(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+    ]
+    # internalProcess is not exported; must not appear
+    assert not any("internalProcess" in f.message for f in findings)
+
+
+def test_any_on_boundary_does_not_fire_for_typed_export(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-on-boundary" and f.file == "src/api.ts"
+    ]
+    assert not any("typedHandler" in f.message for f in findings)
+
+
+def test_any_on_boundary_severity_low(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "any-on-boundary"
+    ]
+    assert findings
+    assert all(f.severity == "low" for f in findings)
+
+
+# --- any-into-db-write -------------------------------------------------------
+
+
+def test_any_into_db_write_fires_for_as_any_in_values(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-into-db-write" and f.file == "src/api.ts"
+    ]
+    assert findings
+    assert findings[0].line == 25
+
+
+def test_any_into_db_write_severity_med(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "any-into-db-write"
+    ]
+    assert findings
+    assert all(f.severity == "med" for f in findings)
+
+
+def test_any_into_db_write_does_not_fire_for_typed_arg(
+    tmp_path: Path,
+) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "any-into-db-write" and f.file == "src/api.ts"
+    ]
+    # submitTypedJob passes a typed payload — should not fire
+    # Only submitJob (line 25) should fire; line 30 should not
+    assert len(findings) == 1
+    assert findings[0].line == 25
