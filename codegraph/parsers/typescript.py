@@ -1017,6 +1017,20 @@ class TypeScriptExtractor(ExtractorBase):
                     self._collect_calls(body, rel, func_id, src, edges)
                     self._collect_fetches(body, rel, func_id, src, nodes, edges)
 
+    # Higher-order iteration methods whose function-typed arguments are treated
+    # as implicit loop bodies for loop-depth tracking purposes.
+    _ITER_METHODS: frozenset[str] = frozenset(
+        {"map", "forEach", "filter", "reduce", "flatMap"}
+    )
+    # TS/JS loop node types that increase loop depth for their children.
+    _TS_LOOP_TYPES: frozenset[str] = frozenset(
+        {"for_statement", "for_in_statement", "while_statement", "do_statement"}
+    )
+    # Function-typed AST node types that can appear as callbacks.
+    _FUNC_ARG_TYPES: frozenset[str] = frozenset(
+        {"arrow_function", "function_expression", "function"}
+    )
+
     def _collect_calls(
         self,
         node: tree_sitter.Node,
@@ -1025,9 +1039,11 @@ class TypeScriptExtractor(ExtractorBase):
         src: bytes,
         edges: list[Edge],
     ) -> None:
-        stack: list[tree_sitter.Node] = list(node.children)
+        stack: list[tuple[tree_sitter.Node, int]] = [
+            (child, 0) for child in node.children
+        ]
         while stack:
-            child = stack.pop()
+            child, depth = stack.pop()
             if child.type == "call_expression":
                 func_child = child.child_by_field_name("function")
                 if func_child is None and child.children:
@@ -1056,9 +1072,37 @@ class TypeScriptExtractor(ExtractorBase):
                             "target_name": name,
                             "args": call_args,
                             "kwargs": call_kwargs,
+                            "loop_depth": depth,
+                            "in_loop": depth > 0,
                         },
                     ))
-            stack.extend(child.children)
+                    # Determine whether this call is an iteration method
+                    # (.map/.forEach/.filter/.reduce/.flatMap) and bump depth
+                    # for any function-typed arguments.
+                    iter_method = ""
+                    if func_child is not None and func_child.type == "member_expression":
+                        prop_node = func_child.child_by_field_name("property")
+                        if prop_node is not None:
+                            iter_method = node_text(prop_node, src)
+                    if iter_method in self._ITER_METHODS and args_node is not None:
+                        # The callee subtree may itself contain calls
+                        # (e.g. ``getUsers().map(cb)``) — keep visiting it
+                        # at the current depth.
+                        stack.extend(
+                            (gc, depth) for gc in func_child.children
+                        )
+                        for arg in args_node.children:
+                            if arg.type in self._FUNC_ARG_TYPES:
+                                stack.extend(
+                                    (gc, depth + 1) for gc in arg.children
+                                )
+                            elif arg.type not in (",", "(", ")"):
+                                stack.extend((gc, depth) for gc in arg.children)
+                        continue
+            child_depth = (
+                depth + 1 if child.type in self._TS_LOOP_TYPES else depth
+            )
+            stack.extend((gc, child_depth) for gc in child.children)
 
     # ------------------------------------------------------------------
     # DF2: HTTP call-site detection (fetch / axios / SWR / api-clients)

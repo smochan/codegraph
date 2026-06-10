@@ -183,3 +183,78 @@ def test_sensitive_literal_redacts_value(tmp_path: Path) -> None:
         assert "hunter2" not in f.message
         assert "sk-test" not in f.snippet
         assert "sk-test" not in f.message
+
+
+# --- db-call-in-loop -------------------------------------------------------
+
+
+def test_db_call_in_loop_typescript_for_of(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/loops.ts"
+    ]
+    # for...of loop (line 6) should fire
+    loop_lines = {f.line for f in findings}
+    assert 6 in loop_lines
+
+
+def test_db_call_in_loop_typescript_foreach_callback(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/loops.ts"
+    ]
+    # forEach callback (line 13) should fire
+    loop_lines = {f.line for f in findings}
+    assert 13 in loop_lines
+
+
+def test_db_call_in_loop_typescript_non_loop_not_flagged(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/loops.ts"
+    ]
+    # non-loop db.insert (line 19) must NOT fire
+    loop_lines = {f.line for f in findings}
+    assert 19 not in loop_lines
+
+
+def test_db_call_in_loop_python(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/batch.py"
+    ]
+    # for loop session.execute (line 7) should fire
+    assert any(f.line == 7 for f in findings)
+
+
+def test_db_call_in_loop_python_non_loop_not_flagged(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo)
+        if f.rule_id == "db-call-in-loop" and f.file == "src/batch.py"
+    ]
+    # non-loop session.execute (line 11) must NOT fire
+    assert not any(f.line == 11 for f in findings)
+
+
+def test_db_call_in_loop_severity_high(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "db-call-in-loop"
+    ]
+    assert findings
+    assert all(f.severity == "high" for f in findings)
+
+
+def test_db_call_in_loop_message_contains_chain(tmp_path: Path) -> None:
+    repo = _sample_repo(tmp_path)
+    findings = [
+        f for f in run_lint(repo) if f.rule_id == "db-call-in-loop"
+    ]
+    assert findings
+    for f in findings:
+        assert "db." in f.message or "session." in f.message

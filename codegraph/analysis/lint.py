@@ -318,10 +318,84 @@ def _check_sensitive_literal(
     )
 
 
+_TS_DB_PATTERN = r"\b(db|database)\.(select|insert|update|delete|execute|query)\b"
+_PY_DB_PATTERN = r"\b(session|cursor|db)\.(query|execute|add|commit)\b"
+
+# Higher-order iteration methods treated as implicit loop bodies.
+_TS_ITER_METHODS = frozenset({"map", "forEach", "filter", "reduce", "flatMap"})
+# Function-typed AST node types that can appear as callbacks.
+_FUNC_NODE_TYPES = frozenset({"arrow_function", "function_expression", "function"})
+
+
+def _py_chain_text(node: tree_sitter.Node, src: bytes) -> str | None:
+    """Flatten a Python attribute-access chain to dotted text.
+
+    For a ``call`` node whose ``function`` child is an ``attribute``,
+    walks the attribute chain to produce e.g. ``session.execute``.
+    Returns ``None`` when the chain doesn't bottom out at an identifier.
+    """
+    parts: list[str] = []
+    cur: tree_sitter.Node | None = node.child_by_field_name("function")
+    while cur is not None:
+        if cur.type == "attribute":
+            attr = cur.child_by_field_name("attribute")
+            if attr is not None:
+                parts.append(node_text(attr, src))
+            cur = cur.child_by_field_name("object")
+        elif cur.type in ("identifier",):
+            parts.append(node_text(cur, src))
+            return ".".join(reversed(parts))
+        else:
+            return None
+    return None
+
+
+def _check_db_call_in_loop(
+    node: tree_sitter.Node, ctx: _LintContext
+) -> LintFinding | None:
+    """DB call inside a loop body — potential N+1 query."""
+    if ctx.is_test_file or ctx.loop_depth < 1:
+        return None
+
+    if ctx.language in _TS_LANGS:
+        if node.type != "call_expression" or not _is_chain_root(node):
+            return None
+        chain = _member_chain(node, ctx.src)
+        if chain is None:
+            return None
+        base, methods = chain
+        chain_text = ".".join([base, *methods])
+        pattern = str(ctx.rule.options.get("pattern") or _TS_DB_PATTERN)
+    elif ctx.language == "python":
+        if node.type != "call":
+            return None
+        chain_text = _py_chain_text(node, ctx.src) or ""
+        if not chain_text:
+            return None
+        pattern = str(ctx.rule.options.get("pattern") or _PY_DB_PATTERN)
+    else:
+        return None
+
+    if not re.search(pattern, chain_text):
+        return None
+
+    return LintFinding(
+        rule_id=ctx.rule.id,
+        severity=ctx.rule.severity,
+        message=_format_message(
+            ctx.rule, chain=chain_text, depth=ctx.loop_depth
+        ),
+        file=ctx.rel_path,
+        line=node.start_point[0] + 1,
+        snippet=_snippet(node, ctx.src),
+    )
+
+
 _CHECK_REGISTRY: dict[str, _Checker] = {
     "console-in-prod": _check_console_in_prod,
     "unfiltered-query": _check_unfiltered_query,
     "sensitive-literal": _check_sensitive_literal,
+    "db-call-in-loop": _check_db_call_in_loop,
 }
 
 
@@ -343,6 +417,12 @@ DEFAULT_LINT_RULES: list[LintRule] = [
         check="sensitive-literal",
         severity="med",
         message="Literal assigned to `{name}` looks sensitive ({reason})",
+    ),
+    LintRule(
+        id="db-call-in-loop",
+        check="db-call-in-loop",
+        severity="high",
+        message="DB call `{chain}` inside a loop (N+1 risk)",
     ),
 ]
 
@@ -412,6 +492,45 @@ def _is_test_path(rel_path: str, language: str) -> bool:
     return _is_ts_test_file(rel_path)
 
 
+def _iter_children_with_depth(
+    node: tree_sitter.Node, base_depth: int, language: str, src: bytes
+) -> list[tuple[tree_sitter.Node, int]]:
+    """Return ``(child, depth)`` pairs for a node's children.
+
+    For TS/JS ``call_expression`` nodes whose member property is one of the
+    higher-order iteration methods (.map, .forEach, .filter, .reduce,
+    .flatMap), function-typed arguments receive ``base_depth + 1`` so the
+    DFS treats their bodies as implicit loop bodies.  All other children
+    keep ``base_depth``.
+    """
+    if language not in _TS_LANGS or node.type != "call_expression":
+        return [(child, base_depth) for child in reversed(node.children)]
+
+    fn = node.child_by_field_name("function")
+    if fn is None or fn.type != "member_expression":
+        return [(child, base_depth) for child in reversed(node.children)]
+
+    prop = fn.child_by_field_name("property")
+    if prop is None or node_text(prop, src) not in _TS_ITER_METHODS:
+        return [(child, base_depth) for child in reversed(node.children)]
+
+    args_node = node.child_by_field_name("arguments")
+    if args_node is None:
+        return [(child, base_depth) for child in reversed(node.children)]
+
+    result: list[tuple[tree_sitter.Node, int]] = []
+    for child in reversed(node.children):
+        if child == args_node:
+            for arg in reversed(child.children):
+                if arg.type in _FUNC_NODE_TYPES:
+                    result.append((arg, base_depth + 1))
+                else:
+                    result.append((arg, base_depth))
+        else:
+            result.append((child, base_depth))
+    return result
+
+
 def _lint_file(
     path: Path, rel_path: str, language: str, rules: list[LintRule]
 ) -> list[LintFinding]:
@@ -450,8 +569,13 @@ def _lint_file(
         child_depth = (
             loop_depth + 1 if node.type in _LOOP_NODE_TYPES else loop_depth
         )
-        for child in reversed(node.children):
-            stack.append((child, child_depth))
+        # For .map/.forEach/.filter/.reduce/.flatMap calls (TS only), treat
+        # function-typed arguments as implicit loop bodies.
+        children_with_depth = _iter_children_with_depth(
+            node, child_depth, language, src
+        )
+        for child, cd in children_with_depth:
+            stack.append((child, cd))
     return findings
 
 

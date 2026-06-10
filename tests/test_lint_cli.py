@@ -38,7 +38,12 @@ def test_lint_markdown_output(lint_repo: Path) -> None:
 def test_lint_fail_on_gates_exit_code(lint_repo: Path) -> None:
     result = runner.invoke(app, ["lint", "--fail-on", "low"])
     assert result.exit_code == 1
+    # db-call-in-loop (high) fires on the sample fixture, so --fail-on high
+    # also exits non-zero.
     result = runner.invoke(app, ["lint", "--fail-on", "high"])
+    assert result.exit_code == 1
+    # No critical findings in the fixture → exit 0.
+    result = runner.invoke(app, ["lint", "--fail-on", "critical"])
     assert result.exit_code == 0
 
 
