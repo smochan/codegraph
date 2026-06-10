@@ -174,3 +174,57 @@ def test_line_shift_AND_signature_change_records_both_in_details() -> None:
     details = diff.modified_nodes[0].details or {}
     assert "signature" in details
     assert "line_start" in details
+
+
+def _add_node(
+    g: nx.MultiDiGraph,
+    qn: str,
+    *,
+    kind: str,
+    file: str = "pkg/foo.py",
+    line: int = 1,
+) -> None:
+    g.add_node(
+        f"node::{qn}",
+        qualname=qn,
+        kind=kind,
+        file=file,
+        line_start=line,
+        signature="",
+    )
+
+
+def test_variable_and_parameter_nodes_are_ignored() -> None:
+    """Regression test: dataflow VARIABLE/PARAMETER qualnames embed line
+    numbers (``pkg.fn.<var:x:42>``), so a pure line shift makes every local
+    look removed+added. PR #74 got 12+ false-positive ``removed-referenced``
+    criticals on refactored locals in typescript.py."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_func(old_g, "pkg.fn", signature="fn()")
+    _add_func(new_g, "pkg.fn", signature="fn()")
+    _add_node(old_g, "pkg.fn.<var:x:42>", kind="VARIABLE", line=42)
+    _add_node(old_g, "pkg.fn.<param:y:40>", kind="PARAMETER", line=40)
+    _add_node(new_g, "pkg.fn.<var:x:57>", kind="VARIABLE", line=57)
+    _add_node(new_g, "pkg.fn.<param:y:55>", kind="PARAMETER", line=55)
+    diff = diff_graphs(old_g, new_g)
+    assert diff.added_nodes == []
+    assert diff.removed_nodes == []
+    assert diff.modified_nodes == []
+
+
+def test_data_edges_are_ignored() -> None:
+    """DATA_* edges churn with every line edit alongside their var nodes;
+    they are dataflow plumbing, not reviewable API surface."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_func(old_g, "pkg.fn", signature="fn()")
+    _add_func(new_g, "pkg.fn", signature="fn()")
+    _add_node(new_g, "pkg.fn.<var:x:57>", kind="VARIABLE", line=57)
+    new_g.add_edge(
+        "node::pkg.fn", "node::pkg.fn.<var:x:57>",
+        key="DATA_ASSIGN", kind="DATA_ASSIGN",
+    )
+    diff = diff_graphs(old_g, new_g)
+    assert diff.added_edges == []
+    assert diff.removed_edges == []
