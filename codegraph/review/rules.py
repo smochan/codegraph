@@ -52,6 +52,7 @@ class Finding:
     line: int
     score: int
     reasons: list[str] = field(default_factory=list)
+    kind: str = "graph"  # graph | lint
 
 
 DEFAULT_RULES: list[Rule] = [
