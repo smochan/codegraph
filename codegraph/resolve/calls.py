@@ -9,6 +9,8 @@ into a real node id using a few cheap heuristics:
 * bare ``foo`` inside a module/function -> function/class in the same module
 * ``mod.foo`` -> resolved through the module's IMPORTS edges
 * fully-qualified name -> exact qualname match
+* tsconfig/jsconfig path aliases: ``@/lib/db`` -> ``src.lib.db``
+* index-file fallback: ``models`` -> ``models.index`` when direct match fails
 * otherwise: unique tail/qualname match across the whole graph
 
 Anything that cannot be resolved unambiguously is left as ``unresolved::*`` so
@@ -18,9 +20,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 
 from codegraph.graph.schema import Edge, EdgeKind, Node, NodeKind
 from codegraph.graph.store_sqlite import SQLiteGraphStore
+from codegraph.resolve.tsconfig_paths import TsPathMapping, load_ts_path_mapping, rewrite_alias
 
 _REFERENCE_KINDS: frozenset[EdgeKind] = frozenset(
     {
@@ -333,6 +337,24 @@ def _resolve_target(
     if mod is not None:
         return mod
 
+    # 5b. Index-file fallback: ``./models`` often means ``models/index.ts``.
+    # When the module qualname has no direct match, retry with ``.index``
+    # appended before falling through to the expensive suffix scan.
+    index_target = target + ".index"
+    mod_index = index.module_by_qualname.get(index_target)
+    if mod_index is not None:
+        return mod_index
+    cands_index = index.by_qualname.get(index_target, [])
+    if len(cands_index) == 1:
+        return cands_index[0]
+    # Also retry the same-module variant with the index suffix. Like every
+    # other heuristic, accept only an unambiguous single match.
+    if src_module is not None:
+        candidate_index_q = f"{src_module.qualname}.{target}.index"
+        cands = index.by_qualname.get(candidate_index_q, [])
+        if len(cands) == 1:
+            return cands[0]
+
     # 6. Tail match: any qualname ending with .target -- accept only if unique.
     suffix_matches: list[Node] = []
     for qn, nodes in index.by_qualname.items():
@@ -351,12 +373,19 @@ def _resolve_target(
 
 
 def _build_import_bindings(
-    edges: list[Edge], index: _Index
+    edges: list[Edge],
+    index: _Index,
+    ts_mapping: TsPathMapping | None = None,
+    repo_root: Path | None = None,
 ) -> dict[str, dict[str, str]]:
     """For each module node id, map import alias -> imported module qualname.
 
     Currently we only know the textual target_name (e.g. "models" or
     "./utils"), so the alias is the leaf segment.
+
+    When *ts_mapping* is provided, tsconfig path aliases (e.g. ``@/lib/db``)
+    are rewritten to their dotted qualname equivalents before the usual
+    normalization step.
     """
     bindings: dict[str, dict[str, str]] = defaultdict(dict)
     for edge in edges:
@@ -368,21 +397,52 @@ def _build_import_bindings(
         target = edge.metadata.get("target_name")
         if not isinstance(target, str) or not target:
             continue
+
+        imported_name_raw = edge.metadata.get("imported_name")
+
+        # tsconfig alias rewrite: operate on the module portion of target_name.
+        # The TS parser emits target_name like "@/lib/db.db" (module + "."
+        # + imported_name). We extract and rewrite the module part, then
+        # reassemble before the usual normalization so the full qualname
+        # (e.g. "src.lib.db.db") is preserved for the binding.
+        rewritten_target = target
+        if ts_mapping is not None and not ts_mapping.is_empty() \
+                and repo_root is not None:
+            # Extract module portion: strip trailing ".ImportedName" suffix.
+            module_part = target
+            if (
+                isinstance(imported_name_raw, str)
+                and imported_name_raw
+                and target.endswith("." + imported_name_raw)
+            ):
+                module_part = target[: -(len(imported_name_raw) + 1)]
+            rewritten_mod = rewrite_alias(module_part, ts_mapping, repo_root)
+            if rewritten_mod is not None:
+                # Re-attach the imported name to the rewritten module path.
+                if (
+                    isinstance(imported_name_raw, str)
+                    and imported_name_raw
+                    and target.endswith("." + imported_name_raw)
+                ):
+                    rewritten_target = rewritten_mod + "." + imported_name_raw
+                else:
+                    rewritten_target = rewritten_mod
+
         # Python parser may already produce absolute dotted qualnames for
         # relative imports (e.g. "pkg.models.Foo"). Only strip leading "./"
         # and "../" path noise, not bare leading dots that may be part of
         # a dotted qualname.
-        normalized = target.replace("\\", "/")
+        normalized = rewritten_target.replace("\\", "/")
         while normalized.startswith("./") or normalized.startswith("../"):
             normalized = normalized[2:] if normalized.startswith("./") \
                 else normalized[3:]
         normalized = normalized.replace("/", ".")
         if not normalized:
             continue
-        imported_name = edge.metadata.get("imported_name")
-        if isinstance(imported_name, str) and imported_name:
+
+        if isinstance(imported_name_raw, str) and imported_name_raw:
             # Bind the alias used in the source file -> full qualname.
-            bindings[src_node.id][imported_name] = normalized
+            bindings[src_node.id][imported_name_raw] = normalized
             bindings[src_node.id][normalized] = normalized
         else:
             leaf = normalized.rsplit(".", 1)[-1]
@@ -391,12 +451,24 @@ def _build_import_bindings(
     return bindings
 
 
-def resolve_unresolved_edges(store: SQLiteGraphStore) -> ResolveStats:
-    """Rewrite ``unresolved::*`` edges in-place, returning summary stats."""
+def resolve_unresolved_edges(
+    store: SQLiteGraphStore,
+    repo_root: Path | None = None,
+) -> ResolveStats:
+    """Rewrite ``unresolved::*`` edges in-place, returning summary stats.
+
+    When *repo_root* is provided, the resolver loads tsconfig.json /
+    jsconfig.json from that directory to apply TypeScript path-alias rewrites
+    (e.g. ``@/lib/db`` → ``src.lib.db``).
+    """
+    ts_mapping: TsPathMapping | None = None
+    if repo_root is not None:
+        ts_mapping = load_ts_path_mapping(repo_root)
+
     nodes = list(store.iter_nodes())
     edges = list(store.iter_edges())
     index = _Index(nodes)
-    bindings = _build_import_bindings(edges, index)
+    bindings = _build_import_bindings(edges, index, ts_mapping, repo_root)
 
     stats = ResolveStats()
     new_edges: list[Edge] = []
