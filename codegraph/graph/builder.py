@@ -160,7 +160,7 @@ class GraphBuilder:
         # Best-effort cross-file resolution of unresolved CALLS/IMPORTS edges.
         try:
             from codegraph.resolve import resolve_unresolved_edges
-            rstats = resolve_unresolved_edges(self._store)
+            rstats = resolve_unresolved_edges(self._store, self._repo_root)
             self._store.set_meta(
                 "last_resolve",
                 f"{rstats.resolved}/{rstats.inspected} resolved",

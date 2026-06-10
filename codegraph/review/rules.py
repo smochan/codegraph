@@ -275,8 +275,19 @@ def evaluate_rules(
                     )
                 )
         elif when == "removed_referenced":
+            # A removed symbol whose terminal name reappears in the added
+            # set (same kind) was moved, not deleted — callers reference the
+            # new location. PR #73 flagged esc/pyvisHref as critical after
+            # they moved from app.js to ui/helpers.js with all callers
+            # updated.
+            moved = {
+                (c.qualname.rsplit(".", 1)[-1], c.kind)
+                for c in diff.added_nodes
+            }
             for change in diff.removed_nodes:
                 if not _node_matches(rule, change):
+                    continue
+                if (change.qualname.rsplit(".", 1)[-1], change.kind) in moved:
                     continue
                 old_id = _find_node_id(change.qualname, change.kind, old_graph)
                 if old_id is None:

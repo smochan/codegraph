@@ -101,3 +101,55 @@ def test_evaluate_rules_with_custom_rule(
     )
     assert findings
     assert all(f.rule_id == "any-add" for f in findings)
+
+
+def _add_fn(
+    g: nx.MultiDiGraph,
+    qn: str,
+    *,
+    file: str = "pkg/foo.py",
+    line: int = 1,
+) -> None:
+    g.add_node(
+        f"node::{qn}",
+        qualname=qn,
+        kind="FUNCTION",
+        file=file,
+        line_start=line,
+        signature=f"{qn.rsplit('.', 1)[-1]}()",
+    )
+
+
+def test_removed_referenced_skips_moved_symbol() -> None:
+    """Regression test: a symbol moved to another module (removed at one
+    qualname, added at another with the same terminal name and kind) must
+    not fire ``removed-referenced``. PR #73 flagged esc/pyvisHref/
+    mermaidThemeVars as critical after they moved from app.js to
+    ui/helpers.js with every caller updated."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_fn(old_g, "pkg.app.esc", file="app.js")
+    _add_fn(old_g, "pkg.app.render", file="app.js", line=10)
+    old_g.add_edge("node::pkg.app.render", "node::pkg.app.esc", key="CALLS", kind="CALLS")
+    # esc moved to helpers; caller render survives.
+    _add_fn(new_g, "pkg.ui.helpers.esc", file="ui/helpers.js")
+    _add_fn(new_g, "pkg.app.render", file="app.js", line=10)
+    diff = diff_graphs(old_g, new_g)
+    findings = evaluate_rules(diff, new_graph=new_g, old_graph=old_g)
+    assert not [f for f in findings if f.rule_id == "removed-referenced"], (
+        "moved symbol must not be reported as removed-referenced"
+    )
+
+
+def test_removed_referenced_still_fires_for_real_removal() -> None:
+    """Control: genuinely deleting a symbol that callers still reference
+    keeps firing critical."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_fn(old_g, "pkg.app.esc", file="app.js")
+    _add_fn(old_g, "pkg.app.render", file="app.js", line=10)
+    old_g.add_edge("node::pkg.app.render", "node::pkg.app.esc", key="CALLS", kind="CALLS")
+    _add_fn(new_g, "pkg.app.render", file="app.js", line=10)
+    diff = diff_graphs(old_g, new_g)
+    findings = evaluate_rules(diff, new_graph=new_g, old_graph=old_g)
+    assert [f for f in findings if f.rule_id == "removed-referenced"]

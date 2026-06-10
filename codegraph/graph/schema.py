@@ -37,6 +37,10 @@ class EdgeKind(str, Enum):
     READS_FROM = "READS_FROM"     # function → SQLAlchemy model on read (DF1)
     WRITES_TO = "WRITES_TO"       # function → SQLAlchemy model on write (DF1)
     FETCH_CALL = "FETCH_CALL"     # frontend call site → URL string (DF2, fetch/axios)
+    # Intra-procedural data-flow edges (C1 — Python body analysis).
+    DATA_ASSIGN = "DATA_ASSIGN"  # source var/param → target variable (assignment)
+    DATA_ARG = "DATA_ARG"        # variable/param → call-site argument sentinel
+    DATA_RETURN = "DATA_RETURN"  # variable/param → function return sentinel
 
 
 class Node(BaseModel):

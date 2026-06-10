@@ -6,6 +6,13 @@ from typing import Any
 
 import networkx as nx
 
+# Sub-symbol granularity introduced by the dataflow pass. Variable and
+# parameter qualnames embed line numbers (``pkg.fn.<var:x:42>``), so any
+# edit that shifts lines makes every local appear removed+added. Review
+# operates on API-level symbols; dataflow plumbing is excluded outright.
+_EXCLUDED_NODE_KINDS = frozenset({"VARIABLE", "PARAMETER"})
+_EXCLUDED_EDGE_KINDS = frozenset({"DATA_ASSIGN", "DATA_ARG", "DATA_RETURN"})
+
 
 @dataclass
 class NodeChange:
@@ -55,7 +62,7 @@ def _kind_str(value: object) -> str:
 def _node_key(attrs: dict[str, Any]) -> _NodeKey | None:
     qualname = str(attrs.get("qualname") or "")
     kind = _kind_str(attrs.get("kind"))
-    if not qualname or not kind:
+    if not qualname or not kind or kind in _EXCLUDED_NODE_KINDS:
         return None
     return (qualname, kind)
 
@@ -99,6 +106,8 @@ def _edge_keys(
     keys: set[tuple[str, str, str]] = set()
     for src, dst, data in graph.edges(data=True):
         kind = _kind_str(data.get("kind"))
+        if kind in _EXCLUDED_EDGE_KINDS:
+            continue
         src_qn = id_map.get(src, src)
         dst_qn = id_map.get(dst, dst)
         keys.add((src_qn, dst_qn, kind))
