@@ -66,6 +66,15 @@
 </div>
 <div id="tooltip" class="pointer-events-none fixed opacity-0 transition-opacity z-50 bg-ink-700/95 backdrop-blur border border-ink-500/80 rounded-md px-3 py-2 text-xs shadow-card max-w-sm"></div>
 <div id="toast-host" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+<!-- Shared UI helpers (defines window.CGUI and window.CGViews) -->
+<script src="/static/ui/helpers.js"></script>
+<!-- Per-view modules (depend on CGUI; loaded before app.js) -->
+<script src="/static/views/overview.js"></script>
+<script src="/static/views/hld.js"></script>
+<script src="/static/views/flows.js"></script>
+<script src="/static/views/matrix.js"></script>
+<script src="/static/views/sankey.js"></script>
+<script src="/static/views/treemap.js"></script>
 <script src="/static/views/graph3d_transform.js"></script>
 <script src="/static/views/graph3d.js"></script>
 <script src="/static/views/architecture.js"></script>

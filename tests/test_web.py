@@ -104,7 +104,7 @@ _CDN_PATTERN = re.compile(
 
 #: Static files to scan (relative to the static root, excluding vendor/).
 _STATIC_ROOT = Path(__file__).parent.parent / "codegraph" / "web" / "static"
-_SCAN_GLOBS = ["*.html", "*.js", "*.css", "views/*.html", "views/*.js", "views/*.css"]
+_SCAN_GLOBS = ["*.html", "*.js", "*.css", "ui/*.js", "views/*.html", "views/*.js", "views/*.css"]
 
 
 def _collect_static_files() -> list[Path]:
