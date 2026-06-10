@@ -1,0 +1,10 @@
+{
+  // TypeScript path alias configuration
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+    },
+    "strict": true, // trailing comma is intentional (tests tolerant parse)
+  }
+}
