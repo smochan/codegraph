@@ -906,6 +906,12 @@ class PythonExtractor(ExtractorBase):
     # ``_is_entry_point``.
     extra_entry_point_decorators: tuple[str, ...] = ()
 
+    # Kill-switch for intra-procedural data-flow edge emission (C1).
+    # Set to False to disable DATA_ASSIGN / DATA_ARG / DATA_RETURN edges
+    # and PARAMETER node emission entirely. Attribute hook for future config
+    # file plumbing — the builder's _apply_config_to_extractors can flip it.
+    emit_data_edges: bool = True
+
     def parse_file(
         self, path: Path, repo_root: Path
     ) -> tuple[list[Node], list[Edge]]:
@@ -1247,12 +1253,29 @@ class PythonExtractor(ExtractorBase):
                 nodes, edges,
             )
 
+        # C1 — PARAMETER nodes + intra-procedural data edges.
+        # Emit one PARAMETER node per logical parameter (already filtered by
+        # skip_self_or_cls in metadata["params"]).  We also collect the raw
+        # params_node here so we can correlate line numbers.
+        param_scope: dict[str, str] = {}  # name → node-id for data-edge seeding
+        if self.emit_data_edges and params is not None:
+            param_scope = self._emit_param_nodes(
+                params, src, rel, qualname, func_id,
+                kind == NodeKind.METHOD, node.start_point[0] + 1,
+                nodes, edges,
+            )
+
         if body is not None:
             self._collect_calls(body, rel, func_id, src, edges)
             # DF1 — SQLAlchemy READS_FROM / WRITES_TO. Walk the body for
             # ORM session calls; emits ``unresolved::Model`` edges that
             # the post-build resolver rewrites to real CLASS ids.
             self._collect_sql_io(body, rel, func_id, src, edges)
+            # C1 — intra-procedural data-flow edges (DATA_ASSIGN/ARG/RETURN).
+            if self.emit_data_edges:
+                self._collect_data_edges(
+                    body, rel, func_id, qualname, src, param_scope, nodes, edges,
+                )
             # Visit nested defs so their bodies and calls are not lost.
             # The innermost named function owns its calls — that mirrors
             # the runtime attribution and matches what users expect when
@@ -1261,6 +1284,599 @@ class PythonExtractor(ExtractorBase):
                 body, rel, qualname, func_id, kind == NodeKind.METHOD,
                 src, nodes, edges,
             )
+
+    def _emit_param_nodes(
+        self,
+        params_node: tree_sitter.Node,
+        src: bytes,
+        rel: str,
+        func_qualname: str,
+        func_id: str,
+        skip_self_or_cls: bool,
+        func_line: int,
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> dict[str, str]:
+        """Emit a PARAMETER node and PARAM_OF edge for each function parameter.
+
+        Returns a scope seed dict ``{param_name: param_node_id}`` for use by
+        ``_collect_data_edges``.
+
+        Limitations (documented):
+        - Variadic params (*args, **kwargs) are included with their prefixed
+          names and cannot be individually resolved in the data-flow scope.
+        - self/cls is skipped for methods, consistent with DF0 behaviour.
+        """
+        scope: dict[str, str] = {}
+        first_seen = False
+        index = 0
+        for child in params_node.children:
+            if not child.is_named:
+                continue
+            # Determine name, type, line from the parameter AST node.
+            param_name: str | None = None
+            param_type: str | None = None
+            param_line = child.start_point[0] + 1
+            if child.type == "identifier":
+                param_name = node_text(child, src)
+            elif child.type == "typed_parameter":
+                name_n = next(
+                    (c for c in child.children if c.type == "identifier"), None
+                )
+                type_n = next(
+                    (c for c in child.children if c.type == "type"), None
+                )
+                if name_n is not None:
+                    param_name = node_text(name_n, src)
+                    param_type = node_text(type_n, src) if type_n else None
+            elif child.type == "default_parameter":
+                name_n = child.child_by_field_name("name")
+                if name_n is not None:
+                    param_name = node_text(name_n, src)
+            elif child.type == "typed_default_parameter":
+                name_n = child.child_by_field_name("name")
+                type_n = child.child_by_field_name("type")
+                if name_n is not None:
+                    param_name = node_text(name_n, src)
+                    param_type = node_text(type_n, src) if type_n else None
+            elif child.type == "list_splat_pattern":
+                inner = next(
+                    (c for c in child.children if c.type == "identifier"), None
+                )
+                if inner is not None:
+                    param_name = f"*{node_text(inner, src)}"
+            elif child.type == "dictionary_splat_pattern":
+                inner = next(
+                    (c for c in child.children if c.type == "identifier"), None
+                )
+                if inner is not None:
+                    param_name = f"**{node_text(inner, src)}"
+            if param_name is None:
+                continue
+            if (
+                skip_self_or_cls
+                and not first_seen
+                and param_name in ("self", "cls")
+            ):
+                first_seen = True
+                continue
+            first_seen = True
+            param_qualname = f"{func_qualname}.<param:{param_name}>"
+            param_id = make_node_id(NodeKind.PARAMETER, param_qualname, rel)
+            nodes.append(Node(
+                id=param_id,
+                kind=NodeKind.PARAMETER,
+                name=param_name,
+                qualname=param_qualname,
+                file=rel,
+                line_start=param_line,
+                line_end=param_line,
+                language="python",
+                metadata={
+                    "index": index,
+                    "name": param_name,
+                    "type": param_type,
+                },
+            ))
+            edges.append(Edge(
+                src=param_id,
+                dst=func_id,
+                kind=EdgeKind.PARAM_OF,
+                file=rel,
+                line=func_line,
+            ))
+            # Seed the scope with the bare name (strip variadic prefix for
+            # *args/**kwargs so callers referencing ``args`` in the body work).
+            bare_name = param_name.lstrip("*")
+            if bare_name:
+                scope[bare_name] = param_id
+            index += 1
+        return scope
+
+    def _collect_data_edges(
+        self,
+        body: tree_sitter.Node,
+        rel: str,
+        func_id: str,
+        func_qualname: str,
+        src: bytes,
+        param_scope: dict[str, str],
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> None:
+        """Walk a function body and emit intra-procedural data-flow edges.
+
+        Emits DATA_ASSIGN, DATA_ARG, and DATA_RETURN edges for simple scalar
+        variable flow within a single function.  The scope maps variable names
+        to their most-recent definition node-id (a PARAMETER or VARIABLE node).
+
+        **Design decisions / limitations (intentional simplifications)**:
+
+        * Single-level shadowing by line: ``x = a; x = b`` emits two distinct
+          VARIABLE nodes qualified by line, so shadow chains are traceable.
+        * No attribute tracking: ``obj.field = x`` is not captured.
+        * No tuple unpacking: ``a, b = f()`` — the first target only is taken
+          when the LHS is a tuple; the others are skipped.
+        * Comprehension scopes: treated as part of the surrounding function
+          scope (no inner binding isolation).
+        * Calls in RHS: ``x = foo(a)`` emits DATA_ASSIGN from the synthetic
+          sentinel ``unresolved::ret::foo`` → VARIABLE x, metadata
+          ``{"callee": "foo"}``.  Cross-file binding of the sentinel to the
+          callee's return node happens in a later PR.
+        * Only plain identifiers in RHS are tracked — binary ops, subscripts,
+          and attribute access on in-scope names do NOT propagate.  This keeps
+          the implementation correct (no false positives) at the cost of
+          missing some true positives.
+        """
+        # Mutable scope: maps current name → most recent PARAMETER/VARIABLE id.
+        scope: dict[str, str] = dict(param_scope)
+        # Track the return-sentinel node-id lazily (emit once per function).
+        return_node_id: str | None = None
+
+        # Walk statements in document order to maintain correct scope.
+        # We use a recursive helper to preserve forward-order processing
+        # while descending into control-flow blocks.
+        return_node_id = self._walk_data_stmts(
+            list(body.children), rel, func_id, func_qualname, src,
+            scope, return_node_id, nodes, edges,
+        )
+
+    def _walk_data_stmts(
+        self,
+        stmts: list[tree_sitter.Node],
+        rel: str,
+        func_id: str,
+        func_qualname: str,
+        src: bytes,
+        scope: dict[str, str],
+        return_node_id: str | None,
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> str | None:
+        """Walk *stmts* in document order, updating scope and emitting data edges.
+
+        Returns the (possibly newly created) return-sentinel node-id.
+        """
+        for stmt in stmts:
+            # --- assignment: x = expr  (and annotated: x: T = expr) ------
+            if stmt.type == "expression_statement":
+                inner = next((c for c in stmt.children if c.is_named), None)
+                if inner is not None and inner.type in (
+                    "assignment", "augmented_assignment",
+                ):
+                    self._handle_data_assign(
+                        inner, rel, func_id, func_qualname, src, scope,
+                        nodes, edges,
+                    )
+                elif inner is not None and inner.type == "call":
+                    # Standalone call statement: ``g(x)`` / ``g(user=x)``.
+                    # Emit DATA_ARG edges for in-scope identifier arguments.
+                    func_child = inner.child_by_field_name("function")
+                    callee_text = (
+                        node_text(func_child, src) if func_child else "<expr>"
+                    )
+                    arg_list = inner.child_by_field_name("arguments")
+                    if arg_list is not None:
+                        self._emit_arg_edges(
+                            arg_list, callee_text, rel, src, scope, edges,
+                            inner.start_point[0] + 1,
+                        )
+
+            # --- return expr -----------------------------------------------
+            elif stmt.type == "return_statement":
+                return_node_id = self._handle_data_return(
+                    stmt, rel, func_qualname, src, scope,
+                    return_node_id, nodes, edges,
+                )
+
+            # --- for target: ``for x in iterable:`` ------------------------
+            # The loop variable is a definition fed by the iterable —
+            # conservative element-of propagation (taint on the collection
+            # taints the element). Critical for source patterns like
+            # ``for url in scraped_urls: fetch(url)``.
+            elif stmt.type == "for_statement":
+                self._handle_for_target(
+                    stmt, rel, func_id, func_qualname, src, scope,
+                    nodes, edges,
+                )
+                body = stmt.child_by_field_name("body")
+                if body is not None:
+                    return_node_id = self._walk_data_stmts(
+                        list(body.children), rel, func_id, func_qualname,
+                        src, scope, return_node_id, nodes, edges,
+                    )
+
+            # Descend into control-flow blocks but stop at nested defs.
+            # We preserve document order by recursing rather than stacking.
+            elif stmt.type not in (
+                "function_definition", "class_definition", "decorator",
+            ):
+                for child in stmt.children:
+                    if child.type == "block":
+                        return_node_id = self._walk_data_stmts(
+                            list(child.children), rel, func_id, func_qualname,
+                            src, scope, return_node_id, nodes, edges,
+                        )
+                    elif child.type in (
+                        "if_statement", "for_statement", "while_statement",
+                        "with_statement", "try_statement",
+                        "expression_statement", "return_statement",
+                    ):
+                        return_node_id = self._walk_data_stmts(
+                            [child], rel, func_id, func_qualname,
+                            src, scope, return_node_id, nodes, edges,
+                        )
+        return return_node_id
+
+    def _handle_data_assign(
+        self,
+        assign_node: tree_sitter.Node,
+        rel: str,
+        func_id: str,
+        func_qualname: str,
+        src: bytes,
+        scope: dict[str, str],
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> None:
+        """Process one assignment or augmented-assignment statement."""
+        line = assign_node.start_point[0] + 1
+
+        if assign_node.type == "augmented_assignment":
+            # ``x += rhs`` — treat as rhs → x, but x must already be in scope
+            # (we don't re-define it since aug-assign modifies in place).
+            lhs_node = assign_node.child_by_field_name("left")
+            rhs_node = assign_node.child_by_field_name("right")
+            if lhs_node is None or rhs_node is None:
+                return
+            lhs_name = (
+                node_text(lhs_node, src)
+                if lhs_node.type == "identifier"
+                else None
+            )
+            if lhs_name is None or lhs_name not in scope:
+                return
+            var_id = scope[lhs_name]
+            self._emit_rhs_edges(
+                rhs_node, rel, var_id, func_qualname, src, scope, edges, line,
+            )
+            return
+
+        # Standard assignment (covers plain ``x = y`` and annotated ``x: T = y``).
+        # LHS: use the first simple identifier target.
+        lhs_node = assign_node.child_by_field_name("left")
+        rhs_node = assign_node.child_by_field_name("right")
+        # Also handle annotated assignment where the field name is "name"
+        # (tree-sitter grammar variation).
+        if lhs_node is None:
+            lhs_node = next(
+                (
+                    c for c in assign_node.children
+                    if c.is_named and c.type == "identifier"
+                ),
+                None,
+            )
+        if rhs_node is None or lhs_node is None:
+            return
+
+        # Tuple unpacking — take first simple identifier only.
+        if lhs_node.type in ("tuple_pattern", "tuple"):
+            lhs_node = next(
+                (c for c in lhs_node.children if c.is_named and c.type == "identifier"),
+                None,
+            )
+        if lhs_node is None or lhs_node.type != "identifier":
+            return
+
+        lhs_name = node_text(lhs_node, src)
+        if not lhs_name:
+            return
+
+        # Create a new VARIABLE node (line-qualified so shadowing is distinct).
+        var_qualname = f"{func_qualname}.<var:{lhs_name}:{line}>"
+        var_id = make_node_id(NodeKind.VARIABLE, var_qualname, rel)
+        nodes.append(Node(
+            id=var_id,
+            kind=NodeKind.VARIABLE,
+            name=lhs_name,
+            qualname=var_qualname,
+            file=rel,
+            line_start=line,
+            line_end=line,
+            language="python",
+            metadata={"assigned_in": func_qualname},
+        ))
+        edges.append(Edge(
+            src=var_id,
+            dst=func_id,
+            kind=EdgeKind.DEFINED_IN,
+            file=rel,
+            line=line,
+        ))
+
+        # Update scope BEFORE emitting RHS edges so self-referential
+        # assignments (``x = x + 1``) use the *old* binding for the RHS.
+        old_id = scope.get(lhs_name)
+        scope[lhs_name] = var_id
+
+        self._emit_rhs_edges(
+            rhs_node, rel, var_id, func_qualname, src,
+            # Use scope snapshot with old binding for the RHS reads.
+            {**scope, lhs_name: old_id} if old_id else scope,
+            edges, line,
+        )
+
+    def _handle_for_target(
+        self,
+        for_node: tree_sitter.Node,
+        rel: str,
+        func_id: str,
+        func_qualname: str,
+        src: bytes,
+        scope: dict[str, str],
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> None:
+        """Register a for-loop target as a scoped VARIABLE fed by its iterable.
+
+        ``for x in items`` emits DATA_ASSIGN edges from in-scope identifiers
+        inside ``items`` to a new VARIABLE node for ``x`` (element-of
+        propagation). Tuple targets take the first simple identifier only,
+        mirroring :meth:`_handle_data_assign`.
+        """
+        left = for_node.child_by_field_name("left")
+        right = for_node.child_by_field_name("right")
+        if left is not None and left.type in ("tuple_pattern", "tuple", "pattern_list"):
+            left = next(
+                (c for c in left.children if c.is_named and c.type == "identifier"),
+                None,
+            )
+        if left is None or left.type != "identifier":
+            return
+        name = node_text(left, src)
+        if not name:
+            return
+        line = left.start_point[0] + 1
+        var_qualname = f"{func_qualname}.<var:{name}:{line}>"
+        var_id = make_node_id(NodeKind.VARIABLE, var_qualname, rel)
+        nodes.append(Node(
+            id=var_id,
+            kind=NodeKind.VARIABLE,
+            name=name,
+            qualname=var_qualname,
+            file=rel,
+            line_start=line,
+            line_end=line,
+            language="python",
+            metadata={"assigned_in": func_qualname, "loop_target": True},
+        ))
+        edges.append(Edge(
+            src=var_id,
+            dst=func_id,
+            kind=EdgeKind.DEFINED_IN,
+            file=rel,
+            line=line,
+        ))
+        if right is not None:
+            self._emit_rhs_edges(
+                right, rel, var_id, func_qualname, src, scope, edges, line,
+            )
+        scope[name] = var_id
+
+    def _emit_rhs_edges(
+        self,
+        rhs_node: tree_sitter.Node,
+        rel: str,
+        dst_id: str,
+        func_qualname: str,
+        src: bytes,
+        scope: dict[str, str],
+        edges: list[Edge],
+        line: int,
+    ) -> None:
+        """Emit DATA_ASSIGN edges from identifiers/call-results in *rhs_node*.
+
+        Walks the RHS expression tree collecting:
+        * Plain identifier → DATA_ASSIGN if name is in scope.
+        * ``call`` node → DATA_ASSIGN from the sentinel
+          ``unresolved::ret::<callee>``, and also DATA_ARG edges for each
+          plain-identifier argument that resolves in scope.
+        """
+        # BFS over the RHS to collect all identifiers and calls.
+        rhs_stack = [rhs_node]
+        while rhs_stack:
+            node = rhs_stack.pop()
+            if node.type == "identifier":
+                name = node_text(node, src)
+                if name and name in scope and scope[name] is not None:
+                    edges.append(Edge(
+                        src=scope[name],
+                        dst=dst_id,
+                        kind=EdgeKind.DATA_ASSIGN,
+                        file=rel,
+                        line=line,
+                    ))
+            elif node.type == "call":
+                func_child = node.child_by_field_name("function")
+                callee_text = node_text(func_child, src) if func_child else "<expr>"
+                # DATA_ASSIGN from return-value sentinel.
+                edges.append(Edge(
+                    src=f"unresolved::ret::{callee_text}",
+                    dst=dst_id,
+                    kind=EdgeKind.DATA_ASSIGN,
+                    file=rel,
+                    line=line,
+                    metadata={"callee": callee_text},
+                ))
+                # DATA_ARG edges for in-scope arguments.
+                arg_list = node.child_by_field_name("arguments")
+                if arg_list is not None:
+                    self._emit_arg_edges(
+                        arg_list, callee_text, rel, src, scope, edges, line,
+                    )
+                # Do NOT recurse into nested calls via rhs_stack here — the
+                # call itself already represents the value, and recursing
+                # would incorrectly attribute identifier nodes inside the
+                # argument list as direct sources of dst_id.
+                continue
+            else:
+                rhs_stack.extend(c for c in node.children if c.is_named)
+
+    def _emit_arg_edges(
+        self,
+        arg_list: tree_sitter.Node,
+        callee_text: str,
+        rel: str,
+        src: bytes,
+        scope: dict[str, str],
+        edges: list[Edge],
+        line: int,
+    ) -> None:
+        """Emit DATA_ARG edges for plain-identifier arguments in a call.
+
+        Cross-file binding of the sentinel dst to the callee's PARAMETER node
+        is deferred to a later PR.  Here we emit unresolved sentinels of the
+        form ``unresolved::arg::<callee>::<position_or_kwarg>``.
+
+        Limitations: only plain identifier arguments produce edges; complex
+        expressions (``f(a + b)``, ``f(obj.attr)``) are silently skipped.
+        """
+        pos = 0
+        for child in arg_list.children:
+            if not child.is_named:
+                continue
+            if child.type == "keyword_argument":
+                kw_name_n = child.child_by_field_name("name")
+                kw_val_n = child.child_by_field_name("value")
+                if (
+                    kw_name_n is not None
+                    and kw_val_n is not None
+                    and kw_val_n.type == "identifier"
+                ):
+                    arg_name = node_text(kw_val_n, src)
+                    kw = node_text(kw_name_n, src)
+                    if arg_name and arg_name in scope and scope[arg_name] is not None:
+                        edges.append(Edge(
+                            src=scope[arg_name],
+                            dst=f"unresolved::arg::{callee_text}::{kw}",
+                            kind=EdgeKind.DATA_ARG,
+                            file=rel,
+                            line=line,
+                            metadata={
+                                "callee": callee_text,
+                                "kwarg": kw,
+                                "call_line": line,
+                            },
+                        ))
+            elif child.type == "identifier":
+                arg_name = node_text(child, src)
+                if arg_name and arg_name in scope and scope[arg_name] is not None:
+                    edges.append(Edge(
+                        src=scope[arg_name],
+                        dst=f"unresolved::arg::{callee_text}::{pos}",
+                        kind=EdgeKind.DATA_ARG,
+                        file=rel,
+                        line=line,
+                        metadata={
+                            "callee": callee_text,
+                            "position": pos,
+                            "call_line": line,
+                        },
+                    ))
+                pos += 1
+            else:
+                pos += 1
+
+    def _handle_data_return(
+        self,
+        return_node: tree_sitter.Node,
+        rel: str,
+        func_qualname: str,
+        src: bytes,
+        scope: dict[str, str],
+        return_node_id: str | None,
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> str | None:
+        """Emit DATA_RETURN edges from in-scope identifiers in a return expr.
+
+        The synthetic return sentinel node (kind VARIABLE,
+        qualname ``<func>.<return>``) is created lazily on first return
+        encountered and reused for all subsequent returns in the same function.
+
+        Returns the sentinel's node-id (possibly newly created).
+        """
+        # Find the expression being returned.
+        expr_node = next(
+            (c for c in return_node.children if c.is_named and c.type != "return"),
+            None,
+        )
+        if expr_node is None:
+            return return_node_id
+
+        # Collect plain identifiers in the return expression.
+        id_names: list[str] = []
+        expr_stack = [expr_node]
+        while expr_stack:
+            n = expr_stack.pop()
+            if n.type == "identifier":
+                id_names.append(node_text(n, src))
+            else:
+                expr_stack.extend(c for c in n.children if c.is_named)
+
+        sources = [
+            scope[nm] for nm in id_names
+            if nm in scope and scope[nm] is not None
+        ]
+        if not sources:
+            return return_node_id
+
+        # Create return sentinel node lazily.
+        if return_node_id is None:
+            ret_qualname = f"{func_qualname}.<return>"
+            return_node_id = make_node_id(NodeKind.VARIABLE, ret_qualname, rel)
+            nodes.append(Node(
+                id=return_node_id,
+                kind=NodeKind.VARIABLE,
+                name="<return>",
+                qualname=ret_qualname,
+                file=rel,
+                line_start=return_node.start_point[0] + 1,
+                line_end=return_node.start_point[0] + 1,
+                language="python",
+                metadata={"synthetic_kind": "RETURN", "func": func_qualname},
+            ))
+
+        line = return_node.start_point[0] + 1
+        for src_id in sources:
+            edges.append(Edge(
+                src=src_id,
+                dst=return_node_id,
+                kind=EdgeKind.DATA_RETURN,
+                file=rel,
+                line=line,
+            ))
+        return return_node_id
 
     def _visit_nested_defs(
         self,
