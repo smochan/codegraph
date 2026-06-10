@@ -683,6 +683,13 @@ class TypeScriptExtractor(ExtractorBase):
                 self._handle_lexical_decl(
                     child, rel, parent_qualname, parent_id, lang, src, nodes, edges
                 )
+            elif ct == "expression_statement":
+                for sub in child.children:
+                    if sub.type == "assignment_expression":
+                        self._handle_assigned_function(
+                            sub, rel, parent_qualname, parent_id, lang,
+                            src, nodes, edges,
+                        )
             elif ct == "export_statement":
                 for sub in child.children:
                     if sub.type in (
@@ -840,6 +847,8 @@ class TypeScriptExtractor(ExtractorBase):
                 if c.type == "class_body":
                     body = c
                     break
+        self._emit_decorator_calls(node, rel, class_id, src, edges)
+
         if body is not None:
             for child in body.children:
                 if child.type == "method_definition":
@@ -899,6 +908,8 @@ class TypeScriptExtractor(ExtractorBase):
             src=method_id, dst=parent_id, kind=EdgeKind.DEFINED_IN,
             file=rel, line=node.start_point[0] + 1,
         ))
+
+        self._emit_decorator_calls(node, rel, method_id, src, edges)
 
         body = node.child_by_field_name("body")
         if body is not None:
@@ -1061,6 +1072,96 @@ class TypeScriptExtractor(ExtractorBase):
                     self._collect_calls(body, rel, func_id, src, edges)
                     self._collect_fetches(body, rel, func_id, src, nodes, edges)
 
+    def _handle_assigned_function(
+        self,
+        node: tree_sitter.Node,
+        rel: str,
+        parent_qualname: str,
+        parent_id: str,
+        lang: str,
+        src: bytes,
+        nodes: list[Node],
+        edges: list[Edge],
+    ) -> None:
+        """Emit a FUNCTION node for ``Namespace.name = function (...)``.
+
+        Plain-script JS (no ES modules) attaches its API to namespace
+        objects — ``CGUI.esc = function esc(s) {...}``,
+        ``window.CGViews.flows = (host) => {...}``. Without this handler
+        those functions are invisible to the graph: review flagged the
+        dashboard helper move as removed-referenced because the new
+        definitions produced no nodes at all.
+        """
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        if left is None or right is None:
+            return
+        if left.type != "member_expression":
+            return
+        if right.type not in ("arrow_function", "function", "function_expression"):
+            return
+        lhs_path = node_text(left, src)
+        # ``window.`` is an environment artifact, not a namespace.
+        if lhs_path.startswith("window."):
+            lhs_path = lhs_path[len("window."):]
+        # Computed members (``obj[key] = ...``) render with brackets; skip.
+        if not lhs_path or not all(
+            part.isidentifier() for part in lhs_path.split(".")
+        ):
+            return
+        name = lhs_path.rsplit(".", 1)[-1]
+        qualname = f"{parent_qualname}.{lhs_path}" if parent_qualname else lhs_path
+        func_id = make_node_id(NodeKind.FUNCTION, qualname, rel)
+
+        params_node = right.child_by_field_name("parameters")
+        if params_node is None:
+            for c in right.children:
+                if c.type == "formal_parameters":
+                    params_node = c
+                    break
+        params_list = _extract_params(params_node, src)
+        return_type = _extract_return_type(right, params_node, src)
+
+        func_md: dict[str, Any] = {
+            "assigned": True,
+            "params": params_list,
+            "returns": return_type,
+        }
+        fn_name_node = right.child_by_field_name("name")
+        if fn_name_node is not None:
+            inner = node_text(fn_name_node, src)
+            if inner and inner != name:
+                func_md["function_name"] = inner
+        any_params = [
+            p["name"]
+            for p in params_list
+            if isinstance(p, dict) and _type_mentions_any(p.get("type"))
+        ]
+        if any_params:
+            func_md["any_params"] = any_params
+        if _type_mentions_any(return_type):
+            func_md["any_return"] = True
+
+        nodes.append(Node(
+            id=func_id,
+            kind=NodeKind.FUNCTION,
+            name=name,
+            qualname=qualname,
+            file=rel,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            language=lang,
+            metadata=func_md,
+        ))
+        edges.append(Edge(
+            src=func_id, dst=parent_id, kind=EdgeKind.DEFINED_IN,
+            file=rel, line=node.start_point[0] + 1,
+        ))
+        body = right.child_by_field_name("body")
+        if body is not None:
+            self._collect_calls(body, rel, func_id, src, edges)
+            self._collect_fetches(body, rel, func_id, src, nodes, edges)
+
     # Higher-order iteration methods whose function-typed arguments are treated
     # as implicit loop bodies for loop-depth tracking purposes.
     _ITER_METHODS: frozenset[str] = frozenset(
@@ -1074,6 +1175,103 @@ class TypeScriptExtractor(ExtractorBase):
     _FUNC_ARG_TYPES: frozenset[str] = frozenset(
         {"arrow_function", "function_expression", "function"}
     )
+
+    def _emit_decorator_calls(
+        self,
+        def_node: tree_sitter.Node,
+        rel: str,
+        scope_id: str,
+        src: bytes,
+        edges: list[Edge],
+    ) -> None:
+        """Emit a CALLS edge for each invoked decorator on a TS class or method.
+
+        Mirrors the Python parser's ``_emit_decorator_calls`` convention:
+        ``@Controller('/users')`` and ``@Get(':id')`` are calls — they invoke
+        the decorator factory at definition time. Without these edges,
+        NestJS-style decorated classes/methods appear unreferenced.
+
+        For class nodes the decorator siblings may live on the enclosing
+        ``export_statement`` (exported) or on the ``class_declaration`` itself
+        (non-exported). For method nodes they appear as preceding siblings
+        inside ``class_body``.
+
+        Only invoked decorators (``@Foo(...)``) emit edges; bare references
+        (``@Foo`` without parentheses) are NOT calls and are skipped.
+        """
+        # Collect the decorator nodes that belong to this definition.
+        decorator_nodes: list[tree_sitter.Node] = []
+        node_type = def_node.type
+
+        if node_type in ("class_declaration", "abstract_class_declaration"):
+            # Class decorators may be children of the class node itself
+            # (non-exported) or of the parent export_statement (exported).
+            for child in def_node.children:
+                if child.type == "decorator":
+                    decorator_nodes.append(child)
+            parent = def_node.parent
+            if parent is not None and parent.type == "export_statement":
+                for child in parent.children:
+                    if child.type == "decorator":
+                        decorator_nodes.append(child)
+
+        elif node_type == "method_definition":
+            # Method decorators are siblings in class_body that immediately
+            # precede this method_definition. Walk backward from def_node's
+            # position; stop on any non-decorator sibling.
+            # Note: tree-sitter wraps nodes in new Python objects on each
+            # access so ``is`` identity does not work; use start_byte instead.
+            parent = def_node.parent
+            if parent is not None and parent.type == "class_body":
+                siblings = parent.children
+                idx = next(
+                    (
+                        i for i, s in enumerate(siblings)
+                        if s.start_byte == def_node.start_byte
+                    ),
+                    -1,
+                )
+                if idx > 0:
+                    j = idx - 1
+                    while j >= 0 and siblings[j].type == "decorator":
+                        decorator_nodes.insert(0, siblings[j])
+                        j -= 1
+
+        for dec_node in decorator_nodes:
+            for sub in dec_node.children:
+                if sub.type != "call_expression":
+                    continue
+                func_child = sub.child_by_field_name("function")
+                if func_child is None and sub.children:
+                    func_child = sub.children[0]
+                if func_child is None:
+                    continue
+                name = node_text(func_child, src)
+                args_node = sub.child_by_field_name("arguments")
+                if args_node is None:
+                    for c in sub.children:
+                        if c.type == "arguments":
+                            args_node = c
+                            break
+                if args_node is not None:
+                    call_args, call_kwargs = _split_call_arguments(
+                        args_node, src
+                    )
+                else:
+                    call_args, call_kwargs = [], {}
+                edges.append(Edge(
+                    src=scope_id,
+                    dst=f"unresolved::{name}",
+                    kind=EdgeKind.CALLS,
+                    file=rel,
+                    line=sub.start_point[0] + 1,
+                    metadata={
+                        "target_name": name,
+                        "args": call_args,
+                        "kwargs": call_kwargs,
+                        "decorator": True,
+                    },
+                ))
 
     def _collect_calls(
         self,

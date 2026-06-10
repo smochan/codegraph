@@ -151,3 +151,57 @@ def test_any_return_absent_for_typed_return(
     assert not funcs["typedHandler"].metadata.get("any_return")
     # arrow with any param but typed return should NOT set any_return
     assert not funcs["handleInput"].metadata.get("any_return")
+
+
+def test_namespace_assigned_functions_emit_nodes(
+    extractor: TypeScriptExtractor,
+) -> None:
+    """Regression test: ``CGUI.esc = function esc(s)`` style namespace
+    assignments produced NO graph nodes, so the dashboard helper move
+    (app.js -> ui/helpers.js) was flagged removed-referenced by review —
+    the new definitions were invisible."""
+    nodes, edges = extractor.parse_file(
+        FIXTURE_DIR / "namespace_helpers.js", FIXTURE_DIR
+    )
+    funcs = {n.qualname: n for n in nodes if n.kind == NodeKind.FUNCTION}
+    assert "namespace_helpers.CGUI.esc" in funcs
+    assert funcs["namespace_helpers.CGUI.esc"].name == "esc"
+    # Arrow assignment works too.
+    assert "namespace_helpers.CGUI.short" in funcs
+    # window. prefix is stripped; property name wins over the inner
+    # function-expression name (callers use CGViews.flows).
+    assert "namespace_helpers.CGViews.flows" in funcs
+    flows = funcs["namespace_helpers.CGViews.flows"]
+    assert flows.name == "flows"
+    assert flows.metadata.get("function_name") == "renderFlows"
+    assert flows.metadata.get("assigned") is True
+    # Each assigned function is DEFINED_IN the module.
+    defined = {
+        e.src for e in edges if e.kind == EdgeKind.DEFINED_IN
+    }
+    assert flows.id in defined
+
+
+def test_namespace_assignment_non_function_and_computed_skipped(
+    extractor: TypeScriptExtractor,
+) -> None:
+    nodes, _ = extractor.parse_file(
+        FIXTURE_DIR / "namespace_helpers.js", FIXTURE_DIR
+    )
+    names = {n.name for n in nodes if n.kind == NodeKind.FUNCTION}
+    assert "VERSION" not in names  # value assignment, not a function
+    assert "hidden" not in names   # computed member target
+
+
+def test_namespace_assigned_function_body_emits_calls(
+    extractor: TypeScriptExtractor,
+) -> None:
+    nodes, edges = extractor.parse_file(
+        FIXTURE_DIR / "namespace_helpers.js", FIXTURE_DIR
+    )
+    funcs = {n.qualname: n for n in nodes if n.kind == NodeKind.FUNCTION}
+    flows_id = funcs["namespace_helpers.CGViews.flows"].id
+    calls_from_flows = [
+        e for e in edges if e.kind == EdgeKind.CALLS and e.src == flows_id
+    ]
+    assert calls_from_flows, "body calls must be attributed to the function"

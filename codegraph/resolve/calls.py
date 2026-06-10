@@ -58,6 +58,38 @@ def _strip_unresolved(dst: str) -> str:
     return dst[len(prefix):] if dst.startswith(prefix) else dst
 
 
+def _fresh_instance_class_name(raw_target: str) -> str | None:
+    """Return the class/constructor name when *raw_target* is a fresh-instance
+    chain like ``new Builder().method`` or ``Builder().method``.
+
+    Returns ``None`` when the target does not match that pattern.
+
+    A fresh-instance target has the shape ``<ctor>(...).method`` where the
+    opening ``(`` appears before the final ``.method`` segment. Both
+    ``new ClassName(...)`` and bare ``factory(...)`` are detected; the
+    caller is responsible for checking that the resolved name maps to a CLASS
+    node before emitting the extra edge.
+    """
+    cleaned = raw_target.strip()
+    if cleaned.startswith("await "):
+        cleaned = cleaned[len("await "):]
+    has_new = cleaned.startswith("new ")
+    if has_new:
+        cleaned = cleaned[len("new "):]
+    # Must contain '(' before the final '.method' part.
+    paren_pos = cleaned.find("(")
+    if paren_pos < 0:
+        return None
+    dot_after_parens = cleaned.find(".", paren_pos)
+    if dot_after_parens < 0:
+        return None
+    # The class/factory name is everything before the first '('.
+    ctor_name = cleaned[:paren_pos].strip()
+    if not ctor_name:
+        return None
+    return ctor_name
+
+
 def _normalize_target(name: str) -> str:
     """Strip call-syntax noise so "foo.bar()" / "foo()" become "foo.bar".
 
@@ -543,6 +575,38 @@ def resolve_unresolved_edges(
             )
         )
         stats.resolved += 1
+
+        # Fresh-instance binding: when the call was ``new Foo().method`` or
+        # ``foo().method`` AND the method resolved successfully, also emit a
+        # CALLS edge to the constructor/class if ``Foo`` resolves to a CLASS
+        # node. This lets callers see that the class was instantiated, not
+        # just that one of its methods was called.
+        if edge.kind == EdgeKind.CALLS:
+            ctor_name = _fresh_instance_class_name(target)
+            if ctor_name is not None:
+                ctor_node = _resolve_target(
+                    ctor_name, src_node, index, bindings
+                )
+                if (
+                    ctor_node is not None
+                    and ctor_node.kind == NodeKind.CLASS
+                    and ctor_node.id != edge.src
+                    and ctor_node.id != resolved.id
+                ):
+                    new_edges.append(
+                        Edge(
+                            src=edge.src,
+                            dst=ctor_node.id,
+                            kind=EdgeKind.CALLS,
+                            file=edge.file,
+                            line=edge.line,
+                            metadata={
+                                "target_name": ctor_name,
+                                "fresh_instance": True,
+                                "resolved_from": edge.dst,
+                            },
+                        )
+                    )
 
     for src, dst, kind in deletions:
         store.delete_edge(src, dst, kind)
