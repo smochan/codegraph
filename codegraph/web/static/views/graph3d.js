@@ -66,7 +66,7 @@
     'codegraph.parsers.python.PythonExtractor._handle_class',
   ];
 
-  var CDN_URL = 'https://unpkg.com/3d-force-graph@1/dist/3d-force-graph.min.js';
+  var CDN_URL = '/static/vendor/3d-force-graph@1.min.js';
 
   // ---- Sprite label cache (Change 1) -------------------------------------
   //
@@ -164,7 +164,7 @@
       s.async = true;
       s.dataset.cg3dfg = '1';
       s.onload = resolve;
-      s.onerror = function () { reject(new Error('CDN load failed')); };
+      s.onerror = function () { reject(new Error('vendor file missing: ' + CDN_URL)); };
       document.head.appendChild(s);
     });
   }

@@ -4,40 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>codegraph</title>
-<link rel="preconnect" href="https://rsms.me/">
-<link rel="stylesheet" href="https://rsms.me/inter/inter.css">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap">
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-tailwind.config = {
-  theme: {
-    extend: {
-      fontFamily: {
-        sans: ['Inter var', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
-      },
-      colors: {
-        ink: { 950:'#05070d', 900:'#0a0f1c', 800:'#0f1626', 700:'#161f33',
-               600:'#1d2942', 500:'#2a3957', 400:'#3b4a6a', 300:'#5b6b8c',
-               200:'#8b9ab8', 100:'#c4cfe2', 50:'#e6ecf5' },
-        brand: { 700:'#4f46e5', 600:'#6366f1', 500:'#818cf8', 400:'#a5b4fc', 300:'#c7d2fe' },
-        accent: { cyan:'#22d3ee', emerald:'#34d399', amber:'#fbbf24',
-                  rose:'#f87171', violet:'#a78bfa', orange:'#fb923c' },
-      },
-      boxShadow: {
-        'card': '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 12px 32px -16px rgba(0,0,0,0.65)',
-        'glow': '0 0 0 1px rgba(129,140,248,0.4), 0 0 32px -8px rgba(129,140,248,0.45)',
-      },
-    }
-  }
-};
-</script>
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
-<script src="https://unpkg.com/lucide@0.414.0"></script>
+<!-- Fonts: vendored locally — no network required -->
+<link rel="stylesheet" href="/static/vendor/fonts.css">
+<!-- JS libraries: vendored locally — no CDN required -->
+<script src="/static/vendor/d3.v7.min.js"></script>
+<script src="/static/vendor/d3-sankey@0.12.3.min.js"></script>
+<script src="/static/vendor/mermaid@10.9.1.min.js"
+        onerror="console.error('[codegraph] mermaid vendor file missing at /static/vendor/mermaid@10.9.1.min.js')"></script>
+<script src="/static/vendor/lucide@0.414.0.min.js"
+        onerror="console.error('[codegraph] lucide vendor file missing at /static/vendor/lucide@0.414.0.min.js')"></script>
 <link rel="stylesheet" href="/static/app.css">
 <link rel="stylesheet" href="/static/views/graph3d.css">
 </head>
@@ -94,17 +69,22 @@ tailwind.config = {
 <script src="/static/views/graph3d_transform.js"></script>
 <script src="/static/views/graph3d.js"></script>
 <script src="/static/views/architecture.js"></script>
-<!-- three-spritetext (ESM via esm.sh): pulls its own three bundle and exposes
-     a SpriteText class. Used by graph3d.js for always-visible node + edge
-     labels. Silently no-op if esm.sh is unreachable; HTML hover labels remain. -->
+<!-- three-spritetext (vendored ESM stub): see /static/vendor/README.md for
+     why this resolves to undefined. window.SpriteText stays unset; graph3d.js
+     falls back to HTML hover labels — the 3D graph works fully offline. -->
 <script type="module">
   try {
-    const mod = await import('https://esm.sh/three-spritetext@1.10.0');
-    window.SpriteText = mod.default || mod.SpriteText || mod;
-    window.dispatchEvent(new Event('cg-spritetext-ready'));
+    const mod = await import('/static/vendor/three-spritetext@1.10.0.mjs');
+    const SpriteText = mod.default || mod.SpriteText;
+    if (typeof SpriteText === 'function') {
+      window.SpriteText = SpriteText;
+      window.dispatchEvent(new Event('cg-spritetext-ready'));
+    }
+    // If stub returns undefined, window.SpriteText stays unset and graph3d.js
+    // falls back gracefully to HTML hover labels.
   } catch (e) {
-    // esm.sh blocked or offline — leave window.SpriteText undefined and
-    // let graph3d.js fall back to HTML hover labels.
+    // Vendor file missing — leave window.SpriteText undefined.
+    console.warn('[codegraph] three-spritetext vendor file unavailable:', e.message);
   }
 </script>
 <script src="/static/app.js"></script>
