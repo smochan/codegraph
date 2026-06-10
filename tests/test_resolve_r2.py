@@ -100,5 +100,104 @@ def test_r2_instance_chain_method_call(tmp_path: Path) -> None:
     )
 
 
+def test_ts_fresh_instance_both_edges(tmp_path: Path) -> None:
+    """``new UserService().getUser(id)`` emits CALLS to both UserService
+    (class, fresh_instance=True) and UserService.getUser (method).
+    """
+    store = _build(tmp_path, "ts_fresh_instance.ts")
+    cls = _find_one(store, kind=NodeKind.CLASS, suffix=".UserService")
+    method = _find_one(store, kind=NodeKind.METHOD, suffix=".UserService.getUser")
+    method_calls = _calls_to(store, method.id)
+    assert method_calls, (
+        "expected CALLS edge into UserService.getUser from new UserService().getUser()"
+    )
+    class_calls = _calls_to(store, cls.id)
+    fresh_calls = [e for e in class_calls if e.metadata.get("fresh_instance")]
+    assert fresh_calls, (
+        "expected CALLS edge with fresh_instance=True into UserService class"
+    )
+
+
+def test_ts_fresh_instance_factory_no_class_edge(tmp_path: Path) -> None:
+    """``factory().run()`` must NOT produce a fresh_instance CALLS edge when
+    ``factory`` is a plain function, not a class.
+    """
+    store = _build(tmp_path, "ts_fresh_instance_factory.ts")
+    # factory is a FUNCTION; there should be no fresh_instance edge to it.
+    factory_nodes = [
+        n for n in store.iter_nodes(kind=NodeKind.FUNCTION)
+        if n.qualname.endswith(".factory")
+    ]
+    assert factory_nodes, "expected a 'factory' function node in the graph"
+    factory_id = factory_nodes[0].id
+    calls_to_factory = _calls_to(store, factory_id)
+    fresh_class_calls = [
+        e for e in calls_to_factory if e.metadata.get("fresh_instance")
+    ]
+    assert not fresh_class_calls, (
+        "factory() is a function, not a class — no fresh_instance edge expected"
+    )
+
+
+def test_ts_decorator_calls_edges(tmp_path: Path) -> None:
+    """@Injectable() on a class and @Get(':id') on a method each emit a
+    CALLS edge with decorator=True metadata.
+    """
+    store = _build(tmp_path, "ts_decorators.ts")
+    injectable = _find_one(store, kind=NodeKind.FUNCTION, suffix=".Injectable")
+    get_fn = _find_one(store, kind=NodeKind.FUNCTION, suffix=".Get")
+    cls = _find_one(store, kind=NodeKind.CLASS, suffix=".UserController")
+    method = _find_one(store, kind=NodeKind.METHOD, suffix=".UserController.getUser")
+
+    # @Injectable() -> CALLS edge to Injectable from the class node.
+    injectable_calls = [
+        e for e in _calls_to(store, injectable.id)
+        if e.src == cls.id and e.metadata.get("decorator")
+    ]
+    assert injectable_calls, (
+        "expected decorator CALLS edge from UserController class to Injectable"
+    )
+
+    # @Get(':id') -> CALLS edge to Get from the method node.
+    get_calls = [
+        e for e in _calls_to(store, get_fn.id)
+        if e.src == method.id and e.metadata.get("decorator")
+    ]
+    assert get_calls, (
+        "expected decorator CALLS edge from getUser method to Get"
+    )
+
+
+def test_ts_decorator_unresolved_stays_unresolved(tmp_path: Path) -> None:
+    """When the decorator is defined outside the repo, the CALLS edge stays
+    unresolved (no crash, decorator metadata still present on the raw edge).
+    """
+    from codegraph.graph.store_sqlite import SQLiteGraphStore as _Store
+    repo = tmp_path / "repo2"
+    repo.mkdir()
+    # Only the controller; decorators come from an external package.
+    src = repo / "ctrl.ts"
+    src.write_text(
+        "import { Controller, Get } from '@nestjs/common';\n"
+        "@Controller('users')\n"
+        "export class UsersController {\n"
+        "  @Get(':id')\n"
+        "  getUser(id: string): string { return id; }\n"
+        "}\n"
+    )
+    db = tmp_path / "g2.db"
+    st = _Store(db)
+    from codegraph.graph.builder import GraphBuilder
+    GraphBuilder(repo, st).build(incremental=False)
+    # Decorator edges should have been emitted with decorator=True but remain
+    # unresolved (since nestjs is not in-repo). The graph must not crash.
+    all_calls = list(st.iter_edges(kind=EdgeKind.CALLS))
+    decorator_calls = [e for e in all_calls if e.metadata.get("decorator")]
+    # There should be at least two decorator edges (Controller, Get).
+    assert len(decorator_calls) >= 2, (
+        f"expected >=2 unresolved decorator CALLS edges, got {len(decorator_calls)}"
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])
