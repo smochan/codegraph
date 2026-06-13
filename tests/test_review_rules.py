@@ -153,3 +153,57 @@ def test_removed_referenced_still_fires_for_real_removal() -> None:
     diff = diff_graphs(old_g, new_g)
     findings = evaluate_rules(diff, new_graph=new_g, old_graph=old_g)
     assert [f for f in findings if f.rule_id == "removed-referenced"]
+
+
+def test_new_untested_hotspot_skips_moved_symbol() -> None:
+    """Regression test: a symbol that MOVED modules is not NEW code — its
+    test-coverage state predates the PR. PR #73 flagged formatQn as a new
+    untested hotspot after it moved from app.js to ui/helpers.js."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_fn(old_g, "pkg.app.formatQn", file="app.js")
+    _add_fn(new_g, "pkg.ui.helpers.formatQn", file="ui/helpers.js")
+    # Give the moved symbol >= 5 non-test callers in the new graph.
+    for i in range(5):
+        caller = f"pkg.views.v{i}.render"
+        _add_fn(old_g, caller, file=f"views/v{i}.js")
+        _add_fn(new_g, caller, file=f"views/v{i}.js")
+        new_g.add_edge(
+            f"node::{caller}", "node::pkg.ui.helpers.formatQn",
+            key="CALLS", kind="CALLS",
+        )
+    diff = diff_graphs(old_g, new_g)
+    findings = evaluate_rules(diff, new_graph=new_g, old_graph=old_g)
+    assert not [f for f in findings if f.rule_id == "new-untested-hotspot"], (
+        "moved symbol must not be reported as a new untested hotspot"
+    )
+
+
+def test_new_untested_hotspot_still_fires_for_genuinely_new() -> None:
+    """Control: a genuinely new high-fan-in untested function still fires."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_fn(new_g, "pkg.core.hotNew", file="core.py")
+    for i in range(5):
+        caller = f"pkg.views.v{i}.render"
+        _add_fn(old_g, caller, file=f"views/v{i}.py")
+        _add_fn(new_g, caller, file=f"views/v{i}.py")
+        new_g.add_edge(
+            f"node::{caller}", "node::pkg.core.hotNew",
+            key="CALLS", kind="CALLS",
+        )
+    diff = diff_graphs(old_g, new_g)
+    findings = evaluate_rules(diff, new_graph=new_g, old_graph=old_g)
+    assert [f for f in findings if f.rule_id == "new-untested-hotspot"]
+
+
+def test_new_dead_code_skips_moved_symbol() -> None:
+    """A moved symbol with zero callers was already dead before the PR;
+    new-dead-code only reports genuinely new unreachable code."""
+    old_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    new_g: nx.MultiDiGraph = nx.MultiDiGraph()
+    _add_fn(old_g, "pkg.app.orphan", file="app.js")
+    _add_fn(new_g, "pkg.ui.helpers.orphan", file="ui/helpers.js")
+    diff = diff_graphs(old_g, new_g)
+    findings = evaluate_rules(diff, new_graph=new_g, old_graph=old_g)
+    assert not [f for f in findings if f.rule_id == "new-dead-code"]

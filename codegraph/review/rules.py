@@ -235,6 +235,20 @@ def evaluate_rules(
     findings: list[Finding] = []
     cycle_introduced = _introduces_cycle(new_graph, old_graph, cycle_cache)
 
+    # Move detection: a symbol removed at one qualname and added at another
+    # with the same terminal name and kind was relocated, not deleted/created.
+    # Removed-side rules skip when the name reappears in the added set;
+    # added-side "new code" rules skip when it came from the removed set.
+    added_names = {
+        (c.qualname.rsplit(".", 1)[-1], c.kind) for c in diff.added_nodes
+    }
+    removed_names = {
+        (c.qualname.rsplit(".", 1)[-1], c.kind) for c in diff.removed_nodes
+    }
+
+    def _is_moved(change: NodeChange, counterpart: set[tuple[str, str]]) -> bool:
+        return (change.qualname.rsplit(".", 1)[-1], change.kind) in counterpart
+
     for rule in rules:
         when = rule.when
         if when == "added_node":
@@ -275,19 +289,12 @@ def evaluate_rules(
                     )
                 )
         elif when == "removed_referenced":
-            # A removed symbol whose terminal name reappears in the added
-            # set (same kind) was moved, not deleted — callers reference the
-            # new location. PR #73 flagged esc/pyvisHref as critical after
-            # they moved from app.js to ui/helpers.js with all callers
-            # updated.
-            moved = {
-                (c.qualname.rsplit(".", 1)[-1], c.kind)
-                for c in diff.added_nodes
-            }
+            # PR #73 flagged esc/pyvisHref as critical after they moved
+            # from app.js to ui/helpers.js with all callers updated.
             for change in diff.removed_nodes:
                 if not _node_matches(rule, change):
                     continue
-                if (change.qualname.rsplit(".", 1)[-1], change.kind) in moved:
+                if _is_moved(change, added_names):
                     continue
                 old_id = _find_node_id(change.qualname, change.kind, old_graph)
                 if old_id is None:
@@ -324,6 +331,8 @@ def evaluate_rules(
                     continue
                 if change.kind not in ("FUNCTION", "METHOD"):
                     continue
+                if _is_moved(change, removed_names):
+                    continue
                 new_id = _find_node_id(change.qualname, change.kind, new_graph)
                 if new_id is None:
                     continue
@@ -346,6 +355,11 @@ def evaluate_rules(
                     NodeKind.FUNCTION.value,
                     NodeKind.METHOD.value,
                 ):
+                    continue
+                # A moved symbol is not NEW code — its (lack of) test
+                # coverage predates the PR. PR #73 flagged formatQn as a
+                # new untested hotspot after it moved app.js -> helpers.js.
+                if _is_moved(change, removed_names):
                     continue
                 new_id = _find_node_id(change.qualname, change.kind, new_graph)
                 if new_id is None:
