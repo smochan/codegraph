@@ -131,6 +131,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every caller updated was flagged critical three times. Genuine
   deletions with surviving callers still fire. (Both surfaced by the
   self-review gate on the wave-2 dashboard/resolver PRs.)
+  Move detection is symmetric since the follow-up: `new-untested-hotspot`
+  and `new-dead-code` likewise skip ADDED symbols whose terminal name
+  exists in the removed set — a relocated function is not new code, so
+  its pre-existing coverage state doesn't gate the PR that moved it
+  (`formatQn` was flagged as a "new" untested hotspot by the same
+  app.js split).
 - **`codegraph init` now writes a robust `.mcp.json`** — uses the absolute
   path to the `codegraph` binary (resolved from the running interpreter's
   bin dir, then `shutil.which`, then bare fallback), passes an explicit
